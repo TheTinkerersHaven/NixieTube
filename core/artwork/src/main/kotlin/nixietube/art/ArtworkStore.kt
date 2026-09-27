@@ -47,6 +47,9 @@ object ArtworkStore {
     private const val BANNER_CACHE_BYTES = 64L * 1024 * 1024
     private const val MAX_FAILURE_KEYS = 2000
 
+    /** Consecutive download failures before a URL is skipped. */
+    private const val MAX_FAILURES = 3
+
     private val memCache: MutableMap<String, BufferedImage> =
         Collections.synchronizedMap(LinkedHashMap(160, 0.75f, true))
 
@@ -165,22 +168,24 @@ object ArtworkStore {
      */
     suspend fun image(url: String?): BufferedImage? {
         if (url.isNullOrBlank()) return null
-        memCache[url]?.let { return it }
-        if ((failures[url] ?: 0) >= 3) return null
-        return keyed(url) {
-            memCache[url]?.let { return@keyed it }
-            withContext(Dispatchers.IO) {
-                val cached = readCachedBytes(url)
-                val bytes = cached ?: run {
-                    val downloaded = download(url)
-                    if (downloaded != null) {
-                        runCatching { writeAtomically(rawFile(url), downloaded) }
-                    } else {
-                        noteFailure(failures, url)
+        return memCache[url] ?: if ((failures[url] ?: 0) >= MAX_FAILURES) {
+            null
+        } else {
+            keyed(url) {
+                memCache[url]?.let { return@keyed it }
+                withContext(Dispatchers.IO) {
+                    val cached = readCachedBytes(url)
+                    val bytes = cached ?: run {
+                        val downloaded = download(url)
+                        if (downloaded != null) {
+                            runCatching { writeAtomically(rawFile(url), downloaded) }
+                        } else {
+                            noteFailure(failures, url)
+                        }
+                        downloaded
                     }
-                    downloaded
+                    bytes?.let { decode(it) }?.also { cachePut(memCache, url, it, COVER_CACHE_BYTES) }
                 }
-                bytes?.let { decode(it) }?.also { cachePut(memCache, url, it, COVER_CACHE_BYTES) }
             }
         }
     }
@@ -195,37 +200,39 @@ object ArtworkStore {
      */
     suspend fun source(url: String?): BufferedImage? {
         if (url.isNullOrBlank()) return null
-        sourceMemCache[url]?.let { return it }
-        if ((sourceFailures[url] ?: 0) >= 3) return null
-        return keyed(url) {
-            sourceMemCache[url]?.let { return@keyed it }
-            withContext(Dispatchers.IO) {
-                val cached = readCachedBytes(sourceFile(url))
-                val bytes = cached ?: run {
-                    // Banners: the stripped "original" URL often serves a
-                    // small default rendition, so ask for a large one first
-                    // and only fall back down from there.
-                    val candidates = linkedSetOf(
-                        upscaleArtworkUrl(url, 1920),
-                        url,
-                        originalArt(url),
-                    )
-                    var downloaded: ByteArray? = null
-                    for (candidate in candidates) {
-                        downloaded = tryDownload(candidate)
-                        if (downloaded != null) break
+        return sourceMemCache[url] ?: if ((sourceFailures[url] ?: 0) >= MAX_FAILURES) {
+            null
+        } else {
+            keyed(url) {
+                sourceMemCache[url]?.let { return@keyed it }
+                withContext(Dispatchers.IO) {
+                    val cached = readCachedBytes(sourceFile(url))
+                    val bytes = cached ?: run {
+                        // Banners: the stripped "original" URL often serves a
+                        // small default rendition, so ask for a large one first
+                        // and only fall back down from there.
+                        val candidates = linkedSetOf(
+                            upscaleArtworkUrl(url, 1920),
+                            url,
+                            originalArt(url),
+                        )
+                        var downloaded: ByteArray? = null
+                        for (candidate in candidates) {
+                            downloaded = tryDownload(candidate)
+                            if (downloaded != null) break
+                        }
+                        if (downloaded != null) {
+                            runCatching { writeAtomically(sourceFile(url), downloaded) }
+                        } else {
+                            noteFailure(sourceFailures, url)
+                        }
+                        downloaded
                     }
-                    if (downloaded != null) {
-                        runCatching { writeAtomically(sourceFile(url), downloaded) }
-                    } else {
-                        noteFailure(sourceFailures, url)
-                    }
-                    downloaded
+                    // Banners render as-served: border stripping is for
+                    // letterboxed video frames and eats dark banner edges.
+                    bytes?.let { decode(it, cropSquare = false, stripBorders = false) }
+                        ?.also { cachePut(sourceMemCache, url, it, BANNER_CACHE_BYTES) }
                 }
-                // Banners render as-served: border stripping is for
-                // letterboxed video frames and eats dark banner edges.
-                bytes?.let { decode(it, cropSquare = false, stripBorders = false) }
-                    ?.also { cachePut(sourceMemCache, url, it, BANNER_CACHE_BYTES) }
             }
         }
     }

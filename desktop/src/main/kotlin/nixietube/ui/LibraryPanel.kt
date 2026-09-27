@@ -59,7 +59,7 @@ import nixietube.innertube.ArtistRef
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(state: AppState) {
+fun LibraryPanel(state: AppState) {
     val account by state.account.collectAsState()
     val playlists by state.playlists.collectAsState()
     val liked by state.liked.collectAsState()
@@ -83,7 +83,9 @@ fun LibraryScreen(state: AppState) {
             Button(onClick = { state.go(Screen.Settings) }) { Text("Open Settings") }
             return@Column
         }
-        if (libLoading && playlists.isEmpty() && liked.isEmpty() && artists.isEmpty() && openPl == null) {
+        val coldStart = libLoading && playlists.isEmpty() && liked.isEmpty() &&
+            artists.isEmpty() && openPl == null
+        if (coldStart) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
@@ -214,7 +216,13 @@ fun LibraryScreen(state: AppState) {
                                             Modifier.size(48.dp).clip(CircleShape),
                                         )
                                     },
-                                    headlineContent = { Text(artist.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    headlineContent = {
+                                        Text(
+                                            artist.title,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
                                     supportingContent = { Text("Recently listened") },
                                 )
                             }

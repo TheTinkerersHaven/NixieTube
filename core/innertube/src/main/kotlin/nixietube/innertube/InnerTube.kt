@@ -33,6 +33,20 @@ import kotlinx.serialization.json.put
 import java.util.concurrent.ConcurrentHashMap
 import java.net.URLEncoder
 
+/** InnerTube HTTP timeouts: hung sockets must never stall playback reporting. */
+private const val HTTP_REQUEST_TIMEOUT_MS = 30_000L
+private const val HTTP_CONNECT_TIMEOUT_MS = 10_000L
+private const val HTTP_SOCKET_TIMEOUT_MS = 30_000L
+
+/** Per-playback watchtime contexts kept (one entry per track playback). */
+private const val WATCHTIME_CONTEXT_CACHE_SIZE = 16
+
+/** First rtn counter per playback; rti chains the previous value. */
+private const val WATCHTIME_INITIAL_RTN = 28
+
+/** rtn increment between watchtime heartbeats of one playback. */
+private const val WATCHTIME_RTN_STEP = 10
+
 // Minimal YouTube Music InnerTube client over the public WEB_REMIX client.
 // Anonymous by default; AuthSession headers (cookie + SAPISIDHASH) unlock
 // library, likes and playlists.
@@ -64,9 +78,9 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
     /** HTTP client with timeouts and JSON content negotiation. */
     private val client = HttpClient(CIO) {
         install(HttpTimeout) {
-            requestTimeoutMillis = 30_000
-            connectTimeoutMillis = 10_000
-            socketTimeoutMillis = 30_000
+            requestTimeoutMillis = HTTP_REQUEST_TIMEOUT_MS
+            connectTimeoutMillis = HTTP_CONNECT_TIMEOUT_MS
+            socketTimeoutMillis = HTTP_SOCKET_TIMEOUT_MS
         }
         install(ContentNegotiation) { json(json) }
     }
@@ -232,7 +246,8 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             val title = shelf.nav("title", "runs").runsText()
             val items = (shelf.nav("contents") as? JsonArray)
                 ?.mapNotNull {
-                    it.nav("musicResponsiveListItemRenderer")?.let { li -> parseListItem(li)?.let { t -> ShelfItem.Song(t) } }
+                    it.nav("musicResponsiveListItemRenderer")
+                        ?.let { li -> parseListItem(li)?.let { t -> ShelfItem.Song(t) } }
                 }.orEmpty()
             if (items.isEmpty()) return@let null
             return Shelf(title.ifBlank { "Songs" }, items)
@@ -337,12 +352,31 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         // title track(s) first so the exact match is playable. Bounded to
         // singles/EPs (at most two fetches); albums are left alone.
         val queryCanon = canonicalMetadata(query)
+        // The query's dominant artist(s): exact title matches credited to
+        // them outrank same-titled covers (e.g. Mahmood's "TUTA GOLD"
+        // above its 147K-view covers).
+        val dominantIds = artists.values.map { it.browseId }.toSet()
+        val dominantNames = artists.values.map { canonicalMetadata(it.title) }
+            .filter { it.isNotBlank() }.toSet()
+        fun ShelfItem.Song.isDominantMatch(): Boolean =
+            track.artists.any { artist ->
+                (!artist.browseId.isNullOrBlank() && artist.browseId in dominantIds) ||
+                    canonicalMetadata(artist.name).takeIf { it.isNotBlank() } in dominantNames
+            }
+        fun ShelfItem.Browse.isDominantRelease(): Boolean {
+            if (dominantNames.isEmpty()) return false
+            val subtitle = " ${canonicalMetadata(this.subtitle)} "
+            return dominantNames.any { name -> subtitle.contains(" $name ") }
+        }
         if (queryCanon.isNotBlank()) {
             val added = releases.values
                 .filter {
                     (it.kind == ReleaseKind.SINGLE || it.kind == ReleaseKind.EP) &&
                         canonicalMetadata(it.title) == queryCanon
                 }
+                // Prefer the dominant artist's release: without this the
+                // first two same-titled covers win and get prepended below.
+                .sortedByDescending { it.isDominantRelease() }
                 .take(2)
                 .flatMap { release ->
                     runCatching { album(release.browseId)?.tracks }.getOrNull().orEmpty()
@@ -355,6 +389,22 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
                 songs.forEach { (id, item) -> ordered.putIfAbsent(id, item) }
                 songs.clear()
                 songs.putAll(ordered)
+            }
+            // Exact title matches first — the dominant artist's recording
+            // above same-titled covers — then everything else in YouTube's
+            // order. No-op for artist-name queries (no title matches).
+            val (exact, rest) = songs.values.partition { canonicalMetadata(it.track.title) == queryCanon }
+            val (mine, others) = exact.partition { it.isDominantMatch() }
+            val rankedSongs = mine + others + rest
+            songs.clear()
+            rankedSongs.forEach { songs[it.track.videoId] = it }
+            // Same preference inside releases: the artist's own single/EP
+            // above same-titled ones.
+            if (dominantNames.isNotEmpty()) {
+                val (ownReleases, otherReleases) = releases.values.partition { it.isDominantRelease() }
+                val rankedReleases = ownReleases + otherReleases
+                releases.clear()
+                rankedReleases.forEach { releases[it.browseId] = it }
             }
         }
         return buildMap {
@@ -435,9 +485,9 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         title: String,
         titleRuns: JsonElement?,
     ) {
-        if (title.isBlank() || title.equals("Top result", ignoreCase = true) ||
+        val genericTitle = title.isBlank() || title.equals("Top result", ignoreCase = true) ||
             title.equals("Results", ignoreCase = true) || title.equals("Artist", ignoreCase = true)
-        ) return
+        if (genericTitle) return
         val browseId = titleRuns.artistBrowseId() ?: return
         if (!browseId.startsWith("UC")) return
         val artists = out.getOrPut("Artists") { mutableListOf() }
@@ -595,7 +645,12 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             if (fixed.thumbnails.isEmpty() && headerThumbs.isNotEmpty()) {
                 fixed = fixed.copy(thumbnails = headerThumbs)
             }
-            if (fixed.artists.isEmpty() && headerArtist != null) {
+            // Only linked header artists backfill track rows: stamping an
+            // unlinked credit (e.g. Various Artists) would poison
+            // artist-based matching downstream (lyrics lookup treats a
+            // blank artist as match-all). The header row itself still uses
+            // headerArtist via AlbumDetail.artist.
+            if (fixed.artists.isEmpty() && headerArtist?.browseId != null) {
                 fixed = fixed.copy(artists = listOf(headerArtist), artistId = headerArtist.browseId)
             }
             if (fixed.album == null && albumTitle.isNotBlank()) {
@@ -843,11 +898,11 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
                 currentAlbum.kind == null && panelAlbum.kind != null -> panelAlbum
                 else -> currentAlbum
             }
+            val panelAddsValue = replaceGenericArtist || panelHasMoreArtists ||
+                panelAddsArtist || panelAddsIdentity
             result = result.copy(
                 title = preferredTrackTitle(result.title, panel.title),
-                artists = if (panel.artists.isNotEmpty() &&
-                    (replaceGenericArtist || panelHasMoreArtists || panelAddsArtist || panelAddsIdentity)
-                ) panel.artists else result.artists,
+                artists = if (panel.artists.isNotEmpty() && panelAddsValue) panel.artists else result.artists,
                 album = preferredAlbum,
                 thumbnails = (result.thumbnails + panel.thumbnails).distinctBy { it.url },
             )
@@ -884,7 +939,10 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             "tabbedRenderer", "watchNextTabbedResultsRenderer", "tabs",
         ) as? JsonArray ?: return emptyList()
         val panels = tabs.firstOrNull()
-            ?.nav("tabRenderer", "content", "musicQueueRenderer", "content", "playlistPanelRenderer", "contents") as? JsonArray
+            ?.nav(
+                "tabRenderer", "content", "musicQueueRenderer",
+                "content", "playlistPanelRenderer", "contents",
+            ) as? JsonArray
             ?: return emptyList()
         return panels.mapNotNull { it.nav("playlistPanelVideoRenderer")?.parsePanelVideo() }
     }
@@ -1157,7 +1215,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         // first attempt failed transiently.
         val ctx = watchtimeContexts[cpn]
             ?: runCatching { watchtimeContext(videoId) }.getOrNull()?.also { fresh ->
-                if (watchtimeContexts.size > 16) {
+                if (watchtimeContexts.size > WATCHTIME_CONTEXT_CACHE_SIZE) {
                     watchtimeContexts.keys.firstOrNull()?.let { old ->
                         watchtimeContexts.remove(old)
                         watchtimeStartMs.remove(old)
@@ -1169,7 +1227,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         val nowMs = System.currentTimeMillis()
         val startMs = watchtimeStartMs.getOrPut(cpn) { nowMs }
         val lactMs = (nowMs - startMs).coerceAtLeast(0L)
-        val rtn = (watchtimeLastRtn[cpn] ?: 28) + 10
+        val rtn = (watchtimeLastRtn[cpn] ?: WATCHTIME_INITIAL_RTN) + WATCHTIME_RTN_STEP
         val rti = rtn - 10
         watchtimeLastRtn[cpn] = rtn
         // stats/playback creates the watch record that stats/watchtime
@@ -1551,7 +1609,9 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         if (auth == AuthSession.Anonymous) return null
         return try {
             val res = post("account/account_menu", contextBlock())
-            res.findAll("accountName").mapNotNull { it.nav("runs").runsText().takeIf { t -> t.isNotBlank() } }.firstOrNull()
+            res.findAll("accountName")
+                .mapNotNull { it.nav("runs").runsText().takeIf { t -> t.isNotBlank() } }
+                .firstOrNull()
                 ?: res.findAll("accountName").mapNotNull { it.nav("simpleText")?.str() }.firstOrNull()
         } catch (_: Exception) {
             null
@@ -1789,9 +1849,9 @@ internal fun parseListItem(li: JsonElement): Track? {
                     val credit = text
                         .replace(Regex("""(?i)^(feat\.?|ft\.?|featuring)\s+"""), "")
                         .trim().trimEnd(',', ';', ':')
-                    if (inArtistZone && credit.isNotBlank() && !isBylineNoise(credit) &&
+                    val isArtistCredit = inArtistZone && credit.isNotBlank() && !isBylineNoise(credit) &&
                         !isCreditConjunction(credit)
-                    ) {
+                    if (isArtistCredit) {
                         artists.add(ArtistRef(credit))
                     } else {
                         // Runs before the first bullet form one artist credit;
@@ -1944,7 +2004,9 @@ private fun detectReleaseKind(text: String): ReleaseKind? {
 private val DURATION_RE = Regex("""\d{1,3}:\d{2}(:\d{2})?""")
 
 private val VIEWS_RE = Regex(
-    """(?i)\d[\d.,\s]*(mila|mln|k|m|b)?\s*(views|views|riproduzioni|visualizzazioni|vues|vistas|aufrufe|weergaven|reproducciones|visualiza|visualizações|streams?|plays|再生|조회수|просмотров)""",
+    """(?i)\d[\d.,\s]*(mila|mln|k|m|b)?\s*(views|views|riproduzioni|""" +
+        """visualizzazioni|vues|vistas|aufrufe|weergaven|reproducciones|visualiza|""" +
+        """visualizações|streams?|plays|再生|조회수|просмотров)""",
 )
 
 private val TYPE_LABELS = setOf(

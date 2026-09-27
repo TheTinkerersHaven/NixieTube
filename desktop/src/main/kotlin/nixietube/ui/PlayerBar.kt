@@ -62,7 +62,12 @@ fun PlayerBar(state: AppState, onExpand: () -> Unit) {
                         Column(
                             Modifier.weight(1f).padding(vertical = 2.dp),
                         ) {
-                            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                track.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
                             Text(
                                 track.artistNames, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,

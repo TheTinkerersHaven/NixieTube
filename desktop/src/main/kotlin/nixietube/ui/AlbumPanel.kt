@@ -124,7 +124,11 @@ fun AlbumPanel(
                 Artwork(art, Modifier.size(280.dp).clip(CardRadius))
             }
             Spacer(Modifier.height(16.dp))
-            Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
             if (owner != null && owner.name.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 // Profile picture and artist-page check resolve

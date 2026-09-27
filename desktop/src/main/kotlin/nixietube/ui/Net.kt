@@ -273,19 +273,20 @@ private fun normalizeLrc(value: String): String {
 }
 
 /** Extracts lyric lines from one LRCLIB JSON object, preferring synced over plain lyrics. */
-private fun lyricsFrom(el: kotlinx.serialization.json.JsonElement): List<LyricLine> {
-    val obj = el as? kotlinx.serialization.json.JsonObject ?: return emptyList()
-    val synced = obj["syncedLyrics"]?.jsonPrimitive?.contentOrNull
-    if (!synced.isNullOrBlank()) {
-        val parsed = parseLrc(synced)
-        if (parsed.isNotEmpty()) return parsed
-    }
-    val plain = obj["plainLyrics"]?.jsonPrimitive?.contentOrNull
-    if (!plain.isNullOrBlank()) {
-        return plain.lines().filter { it.isNotBlank() }.map { LyricLine(-1, it) }
-    }
-    return emptyList()
-}
+private fun lyricsFrom(el: kotlinx.serialization.json.JsonElement): List<LyricLine> =
+    (el as? kotlinx.serialization.json.JsonObject)?.let { obj ->
+        val synced = obj["syncedLyrics"]?.jsonPrimitive?.contentOrNull
+        if (!synced.isNullOrBlank()) {
+            val parsed = parseLrc(synced)
+            if (parsed.isNotEmpty()) return parsed
+        }
+        val plain = obj["plainLyrics"]?.jsonPrimitive?.contentOrNull
+        if (!plain.isNullOrBlank()) {
+            plain.lines().filter { it.isNotBlank() }.map { LyricLine(-1, it) }
+        } else {
+            emptyList()
+        }
+    } ?: emptyList()
 
 /** URL-encodes [s] as UTF-8 for LRCLIB query parameters. */
 private fun enc(s: String) = URLEncoder.encode(s, Charsets.UTF_8)

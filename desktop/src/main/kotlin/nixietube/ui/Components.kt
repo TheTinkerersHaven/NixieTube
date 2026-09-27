@@ -206,7 +206,9 @@ fun TrackRow(
                     Text(
                         "$index",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color =
+                            if (playing) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.width(28.dp),
                     )
                 }
@@ -242,18 +244,25 @@ fun TrackRow(
                         Icon(
                             Icons.Rounded.ThumbUp,
                             if (rating == RatingStatus.LIKE) "Remove like" else "Like",
-                            tint = if (rating == RatingStatus.LIKE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            tint =
+                                if (rating == RatingStatus.LIKE) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
                         )
                     }
                     IconButton(
                         onClick = {
-                            onRate(if (rating == RatingStatus.DISLIKE) RatingStatus.INDIFFERENT else RatingStatus.DISLIKE)
+                            onRate(
+                                if (rating == RatingStatus.DISLIKE) RatingStatus.INDIFFERENT
+                                else RatingStatus.DISLIKE,
+                            )
                         },
                     ) {
                         Icon(
                             Icons.Rounded.ThumbDown,
                             if (rating == RatingStatus.DISLIKE) "Remove dislike" else "Dislike",
-                            tint = if (rating == RatingStatus.DISLIKE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            tint =
+                                if (rating == RatingStatus.DISLIKE) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 } else if (showLike && onLike != null) {
@@ -261,7 +270,9 @@ fun TrackRow(
                         Icon(
                             Icons.Rounded.ThumbUp,
                             "Like",
-                            tint = if (rating == RatingStatus.LIKE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            tint =
+                                if (rating == RatingStatus.LIKE) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 } else if (rating == RatingStatus.LIKE || rating == RatingStatus.DISLIKE) {

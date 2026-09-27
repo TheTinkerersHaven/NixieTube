@@ -19,6 +19,15 @@ import java.util.UUID
 
 private val DISCORD_SQUARE_SIZE_RE = Regex("""=w\d+-h\d+[^?]*""")
 private val DISCORD_URL_SIZE_RE = Regex("""=w(\d+)-h(\d+)(?:\D|$)""")
+
+/** IPC frame header size in bytes (little-endian opcode + length). */
+private const val IPC_HEADER_BYTES = 8
+
+/** Largest accepted IPC frame body; larger lengths are protocol errors. */
+private const val IPC_MAX_FRAME_BYTES = 8 * 1024 * 1024
+
+/** Keep-alive ping interval for the Discord IPC socket. */
+private const val IPC_PING_INTERVAL_MS = 20_000L
 /** Rewrites a YouTube Music artwork URL to a 540px square crop for Discord. */
 private fun squareDiscordArtwork(url: String): String =
     DISCORD_SQUARE_SIZE_RE.replace(url, "=w540-h540-l90-rj")
@@ -473,7 +482,7 @@ class DiscordPresence(
     private suspend fun pingLoop(ch: SocketChannel) {
         try {
             while (ch.isOpen && scope.isActive) {
-                delay(20_000)
+                delay(IPC_PING_INTERVAL_MS)
                 writeFrame(ch, OP_PING, """{"cmd":"PING"}""")
             }
         } catch (_: Exception) {
@@ -483,7 +492,7 @@ class DiscordPresence(
     /** Writes one little-endian (opcode, length, payload) IPC frame. */
     private fun writeFrame(ch: SocketChannel, op: Int, payload: String) {
         val bytes = payload.toByteArray(Charsets.UTF_8)
-        val buf = ByteBuffer.allocate(8 + bytes.size).order(ByteOrder.LITTLE_ENDIAN)
+        val buf = ByteBuffer.allocate(IPC_HEADER_BYTES + bytes.size).order(ByteOrder.LITTLE_ENDIAN)
         buf.putInt(op)
         buf.putInt(bytes.size)
         buf.put(bytes)
@@ -493,19 +502,22 @@ class DiscordPresence(
 
     /** Reads one IPC frame, throwing when the socket closes or the length is invalid. */
     private fun readFrame(ch: SocketChannel): Pair<Int, String> {
-        val header = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
-        while (header.hasRemaining()) {
-            if (ch.read(header) < 0) throw IllegalStateException("closed")
-        }
+        val header = ByteBuffer.allocate(IPC_HEADER_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        ch.readFully(header)
         header.flip()
         val op = header.int
         val len = header.int
-        if (len < 0 || len > 8 * 1024 * 1024) throw IllegalStateException("bad frame len $len")
+        if (len < 0 || len > IPC_MAX_FRAME_BYTES) throw IllegalStateException("bad frame len $len")
         val body = ByteBuffer.allocate(len)
-        while (body.hasRemaining()) {
-            if (ch.read(body) < 0) throw IllegalStateException("closed")
-        }
+        ch.readFully(body)
         return op to String(body.array(), Charsets.UTF_8)
+    }
+
+    /** Fills [buf], throwing when the socket closes first. */
+    private fun SocketChannel.readFully(buf: ByteBuffer) {
+        while (buf.hasRemaining()) {
+            if (read(buf) < 0) throw IllegalStateException("closed")
+        }
     }
 
     companion object {
