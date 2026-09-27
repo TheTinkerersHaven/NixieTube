@@ -21,6 +21,7 @@ import nixietube.sys.SysConfig
 import nixietube.sys.SysHandles
 import nixietube.ui.App
 import nixietube.ui.AppState
+import kotlin.time.Duration.Companion.milliseconds
 
 /** True when running on Linux, where MPRIS and .desktop integration apply. */
 private val isLinux = System.getProperty("os.name").lowercase().contains("linux")
@@ -28,7 +29,7 @@ private val isLinux = System.getProperty("os.name").lowercase().contains("linux"
 /**
  * User-facing build tag, bumped on every user-facing fix to identify the running build.
  */
-const val BUILD_TAG = "dev-71"
+const val BUILD_TAG = "dev-72"
 
 // Shells resolve the player entry (icon, actions) through the DesktopEntry
 // name; without an installed .desktop file some panels degrade it.
@@ -131,8 +132,9 @@ fun main() {
                     return@launch
                 }
                 sys.setMprisError(mpris.lastError ?: "unknown error (attempt ${attempt + 1}/6)")
-                kotlinx.coroutines.delay(2000)
+                kotlinx.coroutines.delay(2000.milliseconds)
             }
+            @Suppress("KotlinConstantConditions") // false positive: `ok` can be set to true inside the repeat lambda
             if (!ok) {
                 sys.setMprisError((mpris.lastError ?: "failed to start") + " — toggle MPRIS off/on in Settings to retry")
                 sys.refreshMprisState()

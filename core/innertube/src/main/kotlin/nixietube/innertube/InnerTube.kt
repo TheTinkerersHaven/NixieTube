@@ -197,7 +197,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
 
     /** Merges the client context with extra top-level body fields. */
     private fun bodyWith(extra: Map<String, String>): JsonElement = buildJsonObject {
-        put("context", contextBlock().jsonObject["context"]!!)
+        put("context", contextBlock().jsonObject.getValue("context"))
         extra.forEach { (k, v) -> put(k, v) }
     }
 
@@ -411,6 +411,13 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             if (items.isNotEmpty()) {
                 out.getOrPut(title) { mutableListOf() }.addAll(items)
             }
+            // Exact-match cards sometimes carry no rows at all — just the
+            // entity header (thumbnail/title/onTap). The artist case is
+            // covered above; surface a linked album the same way so exact
+            // album searches never come back empty.
+            if (!generic) {
+                addAlbumSearchResult(out, shelf, title, titleRuns)
+            }
         }
     }
 
@@ -451,6 +458,51 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         return runs.asSequence()
             .mapNotNull { it.nav("navigationEndpoint", "browseEndpoint") }
             .firstOrNull()
+    }
+
+    /** Returns the first album browse endpoint in title runs, or null. */
+    private fun JsonElement?.albumEndpointFromRuns(): JsonElement? {
+        val runs = this as? JsonArray ?: return null
+        return runs.asSequence()
+            .mapNotNull { it.nav("navigationEndpoint", "browseEndpoint") }
+            .firstOrNull { it.nav("browseId")?.str()?.startsWith("MPRE") == true }
+    }
+
+    /**
+     * Adds an album entry from a card header when it links to a release.
+     *
+     * Top-result cards for exact album matches often carry no rows — the
+     * header (title runs or onTap) is the only link to the release.
+     *
+     * @param out categorized output map to append to.
+     * @param shelf shelf JSON holding the header, artwork and onTap endpoint.
+     * @param title card title text (the entity name).
+     * @param titleRuns title runs holding the browse endpoint.
+     */
+    private fun addAlbumSearchResult(
+        out: MutableMap<String, MutableList<ShelfItem>>,
+        shelf: JsonElement,
+        title: String,
+        titleRuns: JsonElement?,
+    ) {
+        if (title.isBlank()) return
+        val endpoint = titleRuns.albumEndpointFromRuns()
+            ?: shelf.nav("onTap", "browseEndpoint")?.takeIf {
+                it.nav("browseId")?.str()?.startsWith("MPRE") == true
+            } ?: return
+        val browseId = endpoint.nav("browseId")?.str() ?: return
+        val subtitle = shelf.nav("subtitle", "runs").runsText()
+        val releases = out.getOrPut("Albums") { mutableListOf() }
+        if (releases.none { it is ShelfItem.Browse && it.browseId == browseId }) {
+            releases += ShelfItem.Browse(
+                title = title,
+                subtitle = subtitle,
+                browseId = browseId,
+                thumbnails = shelf.nav("thumbnail")?.parseThumbnails().orEmpty(),
+                kind = detectReleaseKind(subtitle),
+                browseParams = endpoint.nav("params")?.str(),
+            )
+        }
     }
 
     /** Returns the first browse id found in title runs, or null. */
@@ -521,20 +573,20 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         val headerThumbs = header.parseThumbnails()
         // Album track rows usually carry no thumbnail and no artist runs;
         // the header art and header artist apply to the whole release.
-        val headerArtist = listOfNotNull(
-            header.nav("subtitle", "runs") as? JsonArray,
-            header.nav("secondSubtitle", "runs") as? JsonArray,
-        ).asSequence()
-            .flatMap { runs -> runs.asSequence() }
-            .mapNotNull { run ->
-                val id = run.nav("navigationEndpoint", "browseEndpoint", "browseId")?.str()
-                if (id?.startsWith("UC") == true) {
-                    ArtistRef(run.nav("text")?.str().orEmpty().trim(), id)
-                } else {
-                    null
-                }
-            }
-            .firstOrNull { it.name.isNotBlank() }
+        // Unlinked headers (e.g. Various Artists compilations, credited in
+        // the strapline) fall back to the plain-text credit so the author
+        // row still shows.
+        val headerArtist = channelRefFromRuns(
+            header.nav("subtitle", "runs"),
+            header.nav("straplineTextOne", "runs"),
+            header.nav("straplineTextTwo", "runs"),
+            header.nav("secondSubtitle", "runs"),
+        ) ?: plainRefFromRuns(
+            header.nav("subtitle", "runs"),
+            header.nav("straplineTextOne", "runs"),
+            header.nav("straplineTextTwo", "runs"),
+            header.nav("secondSubtitle", "runs"),
+        )
         val kind = detectReleaseKind(subtitle) ?: detectReleaseKind(description)
         val tracks = (shelf?.nav("contents") as? JsonArray)?.mapNotNull {
             it.nav("musicResponsiveListItemRenderer")?.let { li -> parseListItem(li) }
@@ -558,6 +610,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             thumbnails = headerThumbs,
             tracks = tracks,
             kind = kind,
+            artist = headerArtist,
         )
     }
 
@@ -653,11 +706,18 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
      * @return playlist detail, or null when the track shelf is missing.
      */
     suspend fun playlist(browseId: String, params: String? = null): PlaylistDetail? {
-        val browse = buildMap {
-            put("browseId", browseId)
+        fun bodyFor(id: String) = bodyWith(buildMap {
+            put("browseId", id)
             params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
-        }
-        val res = post("browse", bodyWith(browse))
+        })
+        // Raw PL ids answer HTTP 400 / an error envelope (not a playlist),
+        // while the canonical VL form succeeds — try both, keeping the
+        // first non-error response.
+        val ids = if (browseId.startsWith("PL")) listOf(browseId, "VL$browseId") else listOf(browseId)
+        val res = ids.firstNotNullOfOrNull { id ->
+            runCatching { post("browse", bodyFor(id)) }.getOrNull()
+                ?.takeIf { attempt -> attempt !is JsonObject || attempt["error"] == null }
+        } ?: return null
         val header = (res.findFirst("musicDetailHeaderRenderer")
             ?: res.findFirst("musicEditablePlaylistDetailHeaderRenderer")
             ?: res.findFirst("musicHeaderRenderer")) as? JsonObject
@@ -681,11 +741,22 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         }.ifEmpty {
             micro?.nav("thumbnail")?.parseThumbnails().orEmpty()
         }
+        // Playlist headers link the owner channel the same way album
+        // headers link the artist; surface it for the author row.
+        val author = header?.let {
+            channelRefFromRuns(
+                it.nav("subtitle", "runs"),
+                it.nav("straplineTextOne", "runs"),
+                it.nav("straplineTextTwo", "runs"),
+                it.nav("secondSubtitle", "runs"),
+            )
+        }
         return PlaylistDetail(
             title = title,
             subtitle = subtitle,
             thumbnails = thumbnails,
             tracks = tracks,
+            author = author,
         )
     }
 
@@ -918,7 +989,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         }
         return try {
             val body = buildJsonObject {
-                put("context", contextBlock().jsonObject["context"]!!)
+                put("context", contextBlock().jsonObject.getValue("context"))
                 put("target", buildJsonObject { put("videoId", videoId) })
             }
             val response = post(endpoint, body)
@@ -935,7 +1006,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
     suspend fun feedback(videoId: String, type: String, currentTimeMs: Long, cpn: String = ""): Boolean {
         if (videoId.isBlank()) return false
         val body = buildJsonObject {
-            put("context", contextBlock().jsonObject["context"]!!)
+            put("context", contextBlock().jsonObject.getValue("context"))
             put("actions", buildJsonArray {
                 add(buildJsonObject {
                     put("action", "playerEvent")
@@ -1002,7 +1073,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         if (videoId.isBlank()) return null
         return try {
             val body = buildJsonObject {
-                put("context", contextBlock().jsonObject["context"]!!)
+                put("context", contextBlock().jsonObject.getValue("context"))
                 put("videoId", videoId)
                 put("playbackContext", buildJsonObject {
                     put("contentPlaybackContext", buildJsonObject {
@@ -1073,7 +1144,6 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         playlistId: String? = null,
     ): Boolean {
         if (videoId.isBlank() || cpn.isBlank()) return false
-        fun fmt(v: Double): String = "%.3f".format(java.util.Locale.US, v.coerceAtLeast(0.0))
         // The XSRF token is the auth that makes beacons record history.
         // Refresh it lazily on first use after launch/login.
         var token = auth.sessionToken
@@ -1136,6 +1206,9 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         return beaconOk || fb
     }
 
+    /** Formats seconds for beacon params, clamping negatives to zero. */
+    private fun fmtSec(v: Double): String = "%.3f".format(java.util.Locale.US, v.coerceAtLeast(0.0))
+
     /** Builds a `stats/playback` URL in the real web client's shape. */
     private fun playbackUrl(
         ctx: WatchtimeContext,
@@ -1146,13 +1219,12 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         playlistId: String?,
         lactMs: Long,
     ): String {
-        fun fmt(v: Double): String = "%.3f".format(java.util.Locale.US, v.coerceAtLeast(0.0))
         val len = if (durationSec > 0.0) durationSec else ctx.lenSec
         return buildString {
             append("https://music.youtube.com/api/stats/playback")
             append("?ns=yt&el=detailpage&cpn=").append(cpn)
-            append("&ver=2&cmt=").append(fmt(currentSec))
-            append("&fmt=0&fs=0&rt=").append(fmt(currentSec + RT_OFFSET_SEC))
+            append("&ver=2&cmt=").append(fmtSec(currentSec))
+            append("&fmt=0&fs=0&rt=").append(fmtSec(currentSec + RT_OFFSET_SEC))
             append("&euri&lact=").append(lactMs)
             append("&cl=").append(CL)
             append("&mos=0&volume=100")
@@ -1160,7 +1232,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             append("&c=WEB_REMIX&cver=").append(currentClientVersion())
             append("&cplayer=UNIPLAYER&cos=X11&cplatform=DESKTOP")
             append("&hl=en_US&cr=US&uga=m18")
-            append("&len=").append(fmt(len))
+            append("&len=").append(fmtSec(len))
             appendBeaconTail(this, ctx, videoId, playlistId)
         }
     }
@@ -1180,13 +1252,12 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         rti: Int,
         final: Boolean,
     ): String {
-        fun fmt(v: Double): String = "%.3f".format(java.util.Locale.US, v.coerceAtLeast(0.0))
         val len = if (durationSec > 0.0) durationSec else ctx.lenSec
         return buildString {
             append("https://music.youtube.com/api/stats/watchtime")
             append("?ns=yt&el=detailpage&cpn=").append(cpn)
-            append("&ver=2&cmt=").append(fmt(currentSec))
-            append("&fmt=0&fs=0&rt=").append(fmt(currentSec + RT_OFFSET_SEC))
+            append("&ver=2&cmt=").append(fmtSec(currentSec))
+            append("&fmt=0&fs=0&rt=").append(fmtSec(currentSec + RT_OFFSET_SEC))
             append("&euri&lact=").append(lactMs)
             append("&cl=").append(CL)
             append("&state=").append(state)
@@ -1195,9 +1266,9 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             append("&c=WEB_REMIX&cver=").append(currentClientVersion())
             append("&cplayer=UNIPLAYER&cos=X11&cplatform=DESKTOP")
             append("&hl=en_US&cr=US&uga=m18")
-            append("&len=").append(fmt(len))
+            append("&len=").append(fmtSec(len))
             append("&rtn=").append(rtn).append("&afmt=251&idpj=-8&ldpj=-16&rti=").append(rti)
-            append("&st=").append(fmt(startSec)).append("&et=").append(fmt(currentSec))
+            append("&st=").append(fmtSec(startSec)).append("&et=").append(fmtSec(currentSec))
             append("&muted=0&vis=10")
             appendBeaconTail(this, ctx, videoId, playlistId)
             // final=1 on pause signals end-of-session so YT finalises the watch record.
@@ -1810,6 +1881,49 @@ private fun isCreditConjunction(value: String): Boolean =
     !value.any { it.isWhitespace() } && canonicalMetadata(value) in setOf(
         "x", "e", "y", "et", "vs", "versus", "meets", "pres", "presents",
     )
+
+// First linked channel (artist/owner) across header run lists, used for
+// album artists and playlist authors alike.
+/**
+ * Returns the first channel reference in [runs], or null when none is linked.
+ *
+ * @param runs header run lists (subtitle, second subtitle) to scan.
+ * @return artist/owner ref with a UC browse id, or null.
+ */
+private fun channelRefFromRuns(vararg runs: JsonElement?): ArtistRef? =
+    runs.asSequence()
+        .filterIsInstance<JsonArray>()
+        .flatMap { it.asSequence() }
+        .mapNotNull { run ->
+            val id = run.nav("navigationEndpoint", "browseEndpoint", "browseId")?.str()
+            if (id?.startsWith("UC") == true) {
+                ArtistRef(run.nav("text")?.str().orEmpty().trim(), id)
+            } else {
+                null
+            }
+        }
+        .firstOrNull { it.name.isNotBlank() }
+
+// Plain-text fallback for headers with no linked channel (e.g. Various
+// Artists compilations, credited in the strapline). Composite runs carrying
+// bullets are skipped so a packed "Album • 2023" line never becomes an
+// author name, as are digit-leading runs (counts, years and durations like
+// "23 songs" or "1 hour, 36 minutes" live in these lists; a genuinely
+// unlinked digit-leading artist is vanishingly rare and stays hidden).
+/**
+ * Returns the first meaningful plain-text run in [runs] as an unlinked ref.
+ *
+ * @param runs header run lists (subtitle, strapline, second subtitle) to scan.
+ * @return artist ref without a browse id, or null.
+ */
+private fun plainRefFromRuns(vararg runs: JsonElement?): ArtistRef? =
+    runs.asSequence()
+        .filterIsInstance<JsonArray>()
+        .flatMap { it.asSequence() }
+        .mapNotNull { run -> run.nav("text")?.str()?.trim()?.takeIf { it.isNotBlank() } }
+        .filter { !it.contains('•') && !it.contains('·') && !it.first().isDigit() && !isBylineNoise(it) }
+        .map { ArtistRef(it) }
+        .firstOrNull()
 
 private fun detectReleaseKind(text: String): ReleaseKind? {
     val tokens = text.lowercase()
