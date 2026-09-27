@@ -372,7 +372,11 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
                             }
                         }
                     } else if (tab == 1) {
-                        LyricsView(lyrics = lyrics, positionMs = player.positionMs)
+                        LyricsView(
+                            lyrics = lyrics,
+                            positionMs = player.positionMs,
+                            onSeek = { state.player.seekTo(it) },
+                        )
                     } else {
                         SongInfoView(state = state, track = track, onClose = onClose)
                     }
@@ -485,11 +489,14 @@ fun SongInfoView(state: AppState, track: Track, onClose: () -> Unit) {
 /**
  * Renders scrollable lyrics with the active line highlighted and auto-scrolled into view.
  *
- * @param lyrics lines to display; untimed lines render without highlighting.
+ * Timed lines are clickable: tapping one seeks playback to that timestamp.
+ *
+ * @param lyrics lines to display; untimed lines render without highlighting and are not clickable.
  * @param positionMs current playback position used to pick the active line.
+ * @param onSeek invoked with the target position in milliseconds when a timed line is clicked.
  */
 @Composable
-fun LyricsView(lyrics: List<LyricLine>, positionMs: Long) {
+fun LyricsView(lyrics: List<LyricLine>, positionMs: Long, onSeek: (Long) -> Unit = {}) {
     if (lyrics.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("No lyrics found", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -523,12 +530,17 @@ fun LyricsView(lyrics: List<LyricLine>, positionMs: Long) {
                 },
                 label = "lyric-color",
             )
+            val seekModifier = if (line.timeMs >= 0) {
+                Modifier.clickable { onSeek(line.timeMs) }
+            } else {
+                Modifier
+            }
             Text(
                 line.text,
                 style = if (active) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge,
                 color = tint,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier
+                modifier = seekModifier
                     .graphicsLayer {
                         scaleX = emphasis
                         scaleY = emphasis

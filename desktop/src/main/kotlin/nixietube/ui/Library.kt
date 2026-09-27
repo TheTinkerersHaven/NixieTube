@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.key.key
+import nixietube.innertube.ArtistRef
 
 /**
  * Renders the Library screen with Playlists/Artists/Liked tabs, or the open playlist detail.
@@ -64,12 +65,15 @@ fun LibraryScreen(state: AppState) {
     val liked by state.liked.collectAsState()
     val artists by state.artists.collectAsState()
     val openPl by state.openPlaylist.collectAsState()
+    val accountAvatar by state.accountAvatar.collectAsState()
     val libLoading by state.libraryLoading.collectAsState()
     val player by state.player.state.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().padding(ScreenPadding)) {
-        Text("Library", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(16.dp))
+        if (openPl == null) {
+            Text("Library", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(16.dp))
+        }
         if (account == null) {
             Text(
                 "Your playlists, liked songs and followed artists live here once you're signed in.",
@@ -90,8 +94,10 @@ fun LibraryScreen(state: AppState) {
                 IconButton(onClick = { state.closePlaylist() }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                 }
+                Text("Library", style = MaterialTheme.typography.headlineSmall)
             }
-            CollectionDetailView(
+            Spacer(Modifier.height(8.dp))
+            AlbumPanel(
                 modifier = Modifier.weight(1f),
                 state = state,
                 playingId = player.current?.videoId,
@@ -109,7 +115,12 @@ fun LibraryScreen(state: AppState) {
                 tracks = tracks,
                 blurb = "",
                 numbered = false,
-                ownerName = if (pl.id == "__liked") (account ?: "") else pl.owner,
+                owner = if (pl.id == "__liked") {
+                    ArtistRef(account.orEmpty())
+                } else {
+                    ArtistRef(pl.owner, pl.ownerId.takeIf { it.isNotBlank() })
+                },
+                ownerAvatar = if (pl.id == "__liked") accountAvatar else null,
                 collageArts = pl.arts,
                 listLoading = tracks.isEmpty() && libLoading,
             )

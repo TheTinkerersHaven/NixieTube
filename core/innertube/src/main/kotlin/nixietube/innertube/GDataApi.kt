@@ -42,6 +42,7 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
         val art: String?,
         val arts: List<String> = emptyList(),
         val owner: String = "",
+        val ownerId: String = "",
     )
 
     // Playlist/video thumbnails come in varying sizes; take the best available.
@@ -237,6 +238,22 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
     }
 
     /**
+     * Returns the signed-in channel's id, used to never link to yourself.
+     *
+     * @return channel id, or null on failure.
+     */
+    suspend fun ownChannelId(): String? {
+        return try {
+            val el = json.parseToJsonElement(get("channels", mapOf("part" to "id", "mine" to "true")))
+            el.jsonObject["items"]?.jsonArray?.firstOrNull()
+                ?.jsonObject?.get("id")?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
      * Lists the account's music playlists, excluding likes and non-music lists.
      *
      * @return music playlists in account order.
@@ -261,6 +278,7 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
                             itemCount = cd?.get("itemCount")?.jsonPrimitive?.intOrNull ?: 0,
                             art = thumbOf(sn),
                             owner = sn?.get("channelTitle")?.jsonPrimitive?.contentOrNull.orEmpty(),
+                            ownerId = sn?.get("channelId")?.jsonPrimitive?.contentOrNull.orEmpty(),
                         ),
                     )
                 }

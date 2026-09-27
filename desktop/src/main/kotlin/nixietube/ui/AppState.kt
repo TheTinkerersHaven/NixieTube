@@ -25,6 +25,7 @@ import nixietube.innertube.AuthSession
 import nixietube.innertube.GDataApi
 import nixietube.innertube.InnerTube
 import nixietube.innertube.LyricLine
+import nixietube.innertube.isSquare
 import nixietube.innertube.PlaylistDetail
 import nixietube.innertube.RatingStatus
 import nixietube.innertube.Shelf
@@ -36,6 +37,7 @@ import nixietube.sys.SysConfig
 import nixietube.sys.SysHandles
 import java.io.File
 import java.util.ArrayDeque
+import java.util.Collections
 import java.util.Properties
 
 /** Navigation destinations for the single-window app, with [Detail] carrying a browse item. */
@@ -233,6 +235,84 @@ class AppState(
         scope.launch {
             _accountAvatar.value = runCatching { gdata?.channelAvatar() }.getOrNull()
         }
+    }
+
+    // Author avatar URLs by artist/channel browse id (null = looked up and
+    // missing), backing the profile pictures in collection headers.
+    private val authorAvatarCache: MutableMap<String, String?> =
+        Collections.synchronizedMap(mutableMapOf())
+
+    // Whether a browse id opens a real artist page. Playlist owners are
+    // often plain user channels, which must not be clickable.
+    private val artistPageCache: MutableMap<String, Boolean> =
+        Collections.synchronizedMap(mutableMapOf())
+
+    // Signed-in channel id (null = unknown or logged out), so author rows
+    // never link to yourself.
+    private var ownChannelId: String? = null
+    private var ownChannelIdLoaded = false
+
+    /**
+     * Returns true when [browseId] opens a real artist page.
+     *
+     * Results are cached per session; transient failures read as false
+     * until the view is revisited.
+     *
+     * @param browseId artist/channel browse id (UC…).
+     */
+    suspend fun isArtistPage(browseId: String): Boolean {
+        if (browseId.isBlank() || !browseId.startsWith("UC")) return false
+        synchronized(artistPageCache) {
+            artistPageCache[browseId]?.let { return it }
+        }
+        val ok = runCatching { tube.artist(browseId) }.getOrNull() != null
+        synchronized(artistPageCache) { artistPageCache[browseId] = ok }
+        return ok
+    }
+
+    /**
+     * Whether an author row may link out: never yourself, otherwise only
+     * verified artist pages (plain user channels stay inert text).
+     *
+     * @param browseId author channel browse id (UC…).
+     */
+    suspend fun isAuthorClickable(browseId: String): Boolean {
+        if (browseId.isBlank() || !browseId.startsWith("UC")) return false
+        if (!ownChannelIdLoaded) {
+            ownChannelIdLoaded = true
+            ownChannelId = runCatching { gdata?.ownChannelId() }.getOrNull()
+        }
+        if (!ownChannelId.isNullOrBlank() && browseId == ownChannelId) return false
+        return isArtistPage(browseId)
+    }
+
+    /**
+     * Resolves a profile avatar for an artist/channel id, caching misses too.
+     *
+     * Prefers the Data API channel thumbnail (true square avatar) and falls
+     * back to InnerTube artist imagery (square preferred, largest otherwise).
+     *
+     * @param browseId artist/channel browse id (UC…).
+     * @return avatar URL, or null when none resolves.
+     */
+    suspend fun resolveAuthorAvatar(browseId: String): String? {
+        if (browseId.isBlank()) return null
+        synchronized(authorAvatarCache) {
+            if (authorAvatarCache.containsKey(browseId)) return authorAvatarCache[browseId]
+        }
+        val api = gdata
+        var avatar = if (api != null) {
+            runCatching { api.channelAvatars(listOf(browseId))[browseId] }.getOrNull()
+        } else {
+            null
+        }
+        if (avatar.isNullOrBlank()) {
+            val thumbs = runCatching { tube.artist(browseId) }.getOrNull()?.thumbnails.orEmpty()
+            avatar = thumbs.filter { it.isSquare() }.maxByOrNull { it.width }?.url
+                ?: thumbs.maxByOrNull { it.width }?.url
+        }
+        synchronized(authorAvatarCache) { authorAvatarCache[browseId] = avatar }
+        return avatar
     }
 
     private val _lyrics = MutableStateFlow<List<LyricLine>>(emptyList())
@@ -1692,6 +1772,8 @@ class AppState(
         }
         lastRatingVideoId = null
         lastRatingQueueKey = null
+        ownChannelId = null
+        ownChannelIdLoaded = false
         player.state.value.current?.let { player.updateTrackRating(it.videoId, RatingStatus.UNKNOWN) }
         authFile().delete()
     }

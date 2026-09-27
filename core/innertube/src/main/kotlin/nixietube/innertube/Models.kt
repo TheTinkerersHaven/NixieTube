@@ -198,6 +198,7 @@ sealed interface ShelfItem {
  * @property tracks Release track list in order.
  * @property kind Release kind, or null when undetected.
  * @property year Release year label, or empty.
+ * @property artist Release artist from the header, or null when unlinked.
  */
 data class AlbumDetail(
     val title: String,
@@ -207,6 +208,7 @@ data class AlbumDetail(
     val tracks: List<Track>,
     val kind: ReleaseKind? = null,
     val year: String = "",
+    val artist: ArtistRef? = null,
 )
 
 /** Full artist page.
@@ -243,12 +245,14 @@ data class ArtistDetail(
  * @property subtitle Playlist subtitle/byline.
  * @property thumbnails Playlist artwork.
  * @property tracks Playlist tracks in order.
+ * @property author Playlist owner from the header, or null when unlinked.
  */
 data class PlaylistDetail(
     val title: String,
     val subtitle: String,
     val thumbnails: List<Thumbnail>,
     val tracks: List<Track>,
+    val author: ArtistRef? = null,
 )
 
 /** One synced lyric line.

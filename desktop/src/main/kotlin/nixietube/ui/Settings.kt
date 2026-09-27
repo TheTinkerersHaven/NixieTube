@@ -3,7 +3,6 @@ package nixietube.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,12 +19,12 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -135,7 +134,6 @@ fun IntegrationsCard(sys: nixietube.sys.SysHandles) {
     var discordOn by remember { mutableStateOf(nixietube.sys.SysConfig.discordEnabled) }
     var appId by remember { mutableStateOf(nixietube.sys.SysConfig.discordAppIdRaw) }
     var statusText by remember { mutableStateOf(nixietube.sys.SysConfig.discordStatusText) }
-    var statusMenuOpen by remember { mutableStateOf(false) }
 
     Text("Desktop integrations", style = MaterialTheme.typography.headlineSmall)
     Spacer(Modifier.height(8.dp))
@@ -204,24 +202,22 @@ fun IntegrationsCard(sys: nixietube.sys.SysHandles) {
             )
             Spacer(Modifier.height(12.dp))
             Text("Status text", style = MaterialTheme.typography.bodyMedium)
-            Box {
-                OutlinedButton(onClick = { statusMenuOpen = true }) {
-                    Text(nixietube.sys.DiscordStatusText.fromKey(statusText).label)
-                }
-                DropdownMenu(
-                    expanded = statusMenuOpen,
-                    onDismissRequest = { statusMenuOpen = false },
-                ) {
-                    nixietube.sys.DiscordStatusText.values().forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option.label) },
-                            onClick = {
-                                statusText = option.key
-                                statusMenuOpen = false
-                                sys.saveDiscord(appId, discordOn, option.key)
-                            },
-                        )
-                    }
+            Spacer(Modifier.height(4.dp))
+            val statusOptions = nixietube.sys.DiscordStatusText.entries
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                statusOptions.forEachIndexed { index, option ->
+                    SegmentedButton(
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = statusOptions.size,
+                        ),
+                        onClick = {
+                            statusText = option.key
+                            sys.saveDiscord(appId, discordOn, option.key)
+                        },
+                        selected = statusText == option.key,
+                        label = { Text(option.label) },
+                    )
                 }
             }
             Text(
