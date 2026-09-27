@@ -79,14 +79,11 @@ fun main() {
         e.printStackTrace()
     }
     val tube = InnerTube()
-    val engine: PlayerEngine = when (SysConfig.playerBackend) {
-        "mpv" -> MpvPlayerEngine().also { println("Audio backend: mpv") }
-        else -> if (MpvPlayerEngine.isAvailable()) {
-            MpvPlayerEngine().also { println("Audio backend: mpv") }
-        } else {
-            System.err.println("mpv not found; audio backend unavailable.")
-            MpvPlayerEngine(audioOutput = "null").also { println("Audio backend: mpv (no audio)") }
-        }
+    val engine: PlayerEngine = if (MpvPlayerEngine.isAvailable()) {
+        MpvPlayerEngine().also { println("Audio backend: mpv") }
+    } else {
+        System.err.println("mpv not found; audio backend unavailable.")
+        MpvPlayerEngine(audioOutput = "null").also { println("Audio backend: mpv (no audio)") }
     }
     val player = PlayerController(engine, tube)
     val sysScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

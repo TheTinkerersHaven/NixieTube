@@ -28,8 +28,7 @@ All business logic lives in UI-free `core` modules on purpose: only
 ## Requirements
 
 - JDK 21+ to build and run (tested on 26)
-- mpv installed (required audio backend; selectable via Settings → Playback
-  or `player.backend`)
+- mpv installed (required audio backend)
 - A display (X11/Wayland) for `:desktop:run`
 - Gradle wrapper (`./gradlew`) — no system Gradle needed
 - For account features: a Google Cloud OAuth client of type

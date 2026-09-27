@@ -166,21 +166,6 @@ object SysConfig {
         }
 
     /**
-     * Audio backend selection: "auto" (mpv, required) or "mpv".
-     *
-     * Takes effect on restart; unknown values are normalized to "auto".
-     */
-    // Audio backend: "auto" (mpv) or "mpv". Takes effect on restart.
-    // VLC support has been removed; mpv is now required.
-    var playerBackend: String
-        get() = load().getProperty("player.backend") ?: "auto"
-        set(v) {
-            val p = load()
-            p.setProperty("player.backend", if (v in setOf("auto", "mpv")) v else "auto")
-            save(p)
-        }
-
-    /**
      * Opt-in flag for reporting playback to YouTube's stats/watchtime beacons.
      *
      * When true, listening history feeds into recaps (Year in Review, Most
