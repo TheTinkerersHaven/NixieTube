@@ -366,23 +366,22 @@ class MpvPlayerEngine(
         val r = reader ?: return
         thread(name = "mpv-ipc", isDaemon = true) {
             try {
-                while (true) {
-                    val line = try {
-                        r.readLine()
-                    } catch (_: Exception) {
-                        null
-                    } ?: break
-                    if (line.isBlank()) continue
-                    try {
-                        handleLine(line)
-                    } catch (_: Exception) {
-                    }
-                }
+                generateSequence { readIpcLine(r) }
+                    .filter { it.isNotBlank() }
+                    .forEach { line -> runCatching { handleLine(line) } }
             } finally {
                 markDead()
             }
         }
     }
+
+    /** Reads one IPC line, or null on EOF/error to end the reader loop. */
+    private fun readIpcLine(r: BufferedReader): String? =
+        try {
+            r.readLine()
+        } catch (_: Exception) {
+            null
+        }
 
     /** Routes one IPC line to a pending request or to property-change/end-file handling. */
     private fun handleLine(line: String) {

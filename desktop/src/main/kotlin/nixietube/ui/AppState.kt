@@ -40,6 +40,12 @@ import java.util.ArrayDeque
 import java.util.Collections
 import java.util.Properties
 
+/** Re-verification cadence for the cookie session behind watchtime beacons. */
+private const val LOGIN_CHECK_INTERVAL_MS = 300_000L
+
+/** Progress-heartbeat cadence for playback reporting while playing. */
+private const val REPORT_HEARTBEAT_MS = 10_000L
+
 /** Navigation destinations for the single-window app, with [Detail] carrying a browse item. */
 sealed interface Screen {
     /** Home shelves feed. */
@@ -170,7 +176,7 @@ class AppState(
         // stats/* beacons return 204 (blind ack) regardless of auth,
         // so without this check we'd silently fail when LOGIN_INFO expires.
         val now = System.currentTimeMillis()
-        if (now - loginCheckedAt > 300_000) {
+        if (now - loginCheckedAt > LOGIN_CHECK_INTERVAL_MS) {
             loginCheckedAt = now
             loginValid = try { tube.verifyLogin() } catch (_: Exception) { false }
             if (!loginValid) {
@@ -207,7 +213,9 @@ class AppState(
                 }
                 val tokenTag = if (tokenPresent) "TOKEN_YES" else "TOKEN_NO"
                 java.io.File("/tmp/nixietube-watchtime.log")
-                    .appendText("${java.time.Instant.now()} FAILED $state $videoId cmt=$currentSec auth=$tag $tokenTag\n")
+                    .appendText(
+                        "${java.time.Instant.now()} FAILED $state $videoId cmt=$currentSec auth=$tag $tokenTag\n",
+                    )
             } catch (_: Exception) {
             }
         }
@@ -409,13 +417,18 @@ class AppState(
         val seen = linkedMapOf<String, ShelfItem.Browse>()
         for (t in _activity.value) {
             for (artist in t.artists) {
-                val id = artist.browseId?.takeIf { it.startsWith("UC") } ?: continue
-                val name = artist.name.trim().takeIf { it.isNotBlank() } ?: continue
-                seen.putIfAbsent(id, ShelfItem.Browse(name, "Artist", id, t.thumbnails))
+                artistEntry(artist, t.thumbnails)?.let { (id, entry) -> seen.putIfAbsent(id, entry) }
             }
         }
         _recentArtists.value = seen.values.take(20)
         enrichRecentArtistArtwork()
+    }
+
+    /** Channel-linked artist credit as a library entry, or null when unlinked/nameless. */
+    private fun artistEntry(artist: ArtistRef, thumbnails: List<Thumbnail>): Pair<String, ShelfItem.Browse>? {
+        val id = artist.browseId?.takeIf { it.startsWith("UC") } ?: return null
+        val name = artist.name.trim().takeIf { it.isNotBlank() } ?: return null
+        return id to ShelfItem.Browse(name, "Artist", id, thumbnails)
     }
 
     private val artistAvatarCache = mutableMapOf<String, List<Thumbnail>>()
@@ -500,7 +513,8 @@ class AppState(
                 } else if (canFetch && id.isNotBlank() && ratingRequests.add(id)) {
                     pending += id
                 }
-                if (canFetch && id.isNotBlank() && onComplete != null && ratingRequests.contains(id)) {
+                val awaitingFetch = canFetch && id.isNotBlank() && ratingRequests.contains(id)
+                if (awaitingFetch && onComplete != null) {
                     ratingWaiters.getOrPut(id) { mutableListOf() } += onComplete
                 }
             }
@@ -733,9 +747,11 @@ class AppState(
                             enriched.forEach { resolved ->
                                 val original = targets.firstOrNull { it.videoId == resolved.videoId }
                                     ?: return@forEach
-                                if (resolved.artists != original.artists || resolved.album != original.album ||
-                                    resolved.thumbnails != original.thumbnails || resolved.title != original.title
-                                ) {
+                                val metadataChanged = resolved.artists != original.artists ||
+                                    resolved.album != original.album ||
+                                    resolved.thumbnails != original.thumbnails ||
+                                    resolved.title != original.title
+                                if (metadataChanged) {
                                     player.updateTrackMetadata(
                                         resolved.videoId,
                                         artists = resolved.artists,
@@ -838,7 +854,7 @@ class AppState(
                                 lastWatchSegmentStartSec = posSec
                             } else if (st.playing) {
                                 val now = System.currentTimeMillis()
-                                if (now - progMs >= 10_000) {
+                                if (now - progMs >= REPORT_HEARTBEAT_MS) {
                                     lastProgressMs = now
                                     lastReportedPositionMs = st.positionMs
                                     sendWatchtime(vid, prevCpn, prevSegStartSec, posSec, "playing", durSec, playlistId)
@@ -1363,7 +1379,9 @@ class AppState(
                                         album = current.album.copy(tracks = current.album.tracks.applyMetadata()),
                                     )
                                     current.playlist != null -> current.copy(
-                                        playlist = current.playlist.copy(tracks = current.playlist.tracks.applyMetadata()),
+                                        playlist = current.playlist.copy(
+                                            tracks = current.playlist.tracks.applyMetadata(),
+                                        ),
                                     )
                                     else -> current
                                 }
@@ -1450,7 +1468,9 @@ class AppState(
                 onDone(true)
             } else {
                 tube.auth = AuthSession.Anonymous
-                _loginDetail.value = "Cookie has SAPISID but YouTube rejected it — the browser session may be logged out or expired. Log in on music.youtube.com and copy a fresh Cookie header."
+                _loginDetail.value =
+                    "Cookie has SAPISID but YouTube rejected it — the browser session may be logged out or " +
+                        "expired. Log in on music.youtube.com and copy a fresh Cookie header."
                 onDone(false)
             }
         }
@@ -1699,8 +1719,12 @@ class AppState(
             if (track.videoId == videoId) track.copy(rating = rating) else track
         val detail = _detail.value
         _detail.value = when {
-            detail.album != null -> detail.copy(album = detail.album.copy(tracks = detail.album.tracks.map(::updateTrack)))
-            detail.playlist != null -> detail.copy(playlist = detail.playlist.copy(tracks = detail.playlist.tracks.map(::updateTrack)))
+            detail.album != null ->
+                detail.copy(album = detail.album.copy(tracks = detail.album.tracks.map(::updateTrack)))
+            detail.playlist != null ->
+                detail.copy(
+                    playlist = detail.playlist.copy(tracks = detail.playlist.tracks.map(::updateTrack)),
+                )
             else -> detail
         }
         val opened = _openPlaylist.value

@@ -221,13 +221,16 @@ fun IntegrationsCard(sys: nixietube.sys.SysHandles) {
                 }
             }
             Text(
-                "Choose what Discord shows as the activity name. The song and artist remain in the lower activity fields.",
+                "Choose what Discord shows as the activity name. " +
+                    "The song and artist remain in the lower activity fields.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Optional. Leave empty to use the built-in application ID (${SysConfig.DEFAULT_DISCORD_APP_ID}), or paste your own from discord.com/developers/applications. Requires the Discord desktop client running.",
+                "Optional. Leave empty to use the built-in application ID " +
+                    "(${SysConfig.DEFAULT_DISCORD_APP_ID}), or paste your own from " +
+                    "discord.com/developers/applications. Requires the Discord desktop client running.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -322,7 +325,8 @@ private fun openUrl(url: String) {
  * @param state shared app state driving the device login handshake.
  */
 @Composable
-fun GoogleSignInCard(state: AppState) {    var clientId by remember { mutableStateOf(nixietube.sys.SysConfig.googleClientId) }
+fun GoogleSignInCard(state: AppState) {
+    var clientId by remember { mutableStateOf(nixietube.sys.SysConfig.googleClientId) }
     var clientSecret by remember { mutableStateOf(nixietube.sys.SysConfig.googleClientSecret) }
     var busy by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
@@ -334,7 +338,8 @@ fun GoogleSignInCard(state: AppState) {    var clientId by remember { mutableSta
             Spacer(Modifier.height(4.dp))
             Text(
                 "Uses a TV-device OAuth client from Google Cloud Console. " +
-                    "You get a short code, approve it at google.com/device, and tokens stay on this machine with auto-refresh.",
+                    "You get a short code, approve it at google.com/device, " +
+                    "and tokens stay on this machine with auto-refresh.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

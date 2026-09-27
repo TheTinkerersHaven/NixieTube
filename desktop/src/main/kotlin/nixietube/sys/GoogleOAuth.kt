@@ -20,6 +20,22 @@ import java.net.URLEncoder
 import java.util.Properties
 
 
+/** Clock skew tolerated when judging an OAuth token as still valid. */
+private const val TOKEN_EXPIRY_SKEW_SEC = 120L
+
+/** Device-code expiry fallback when the endpoint omits it. */
+private const val DEFAULT_EXPIRES_IN_SEC = 1800L
+
+/** Device-code poll interval fallback when the endpoint omits it. */
+private const val DEFAULT_POLL_INTERVAL_SEC = 5L
+
+/** Upper bound on one device-login polling session. */
+private const val MAX_POLL_DURATION_MS = 600_000L
+
+/** Added wait after a server slow_down response while polling. */
+private const val SLOW_DOWN_BACKOFF_MS = 5000L
+
+
 // Google OAuth via the TV-device flow (client type "TVs and Limited Input
 // devices"). music.youtube.com's InnerTube only accepts Bearer tokens minted
 // for TV-device clients — Desktop-type clients get HTTP 400 on every call.
@@ -100,7 +116,7 @@ class GoogleOAuth(private val tube: InnerTube) {
     suspend fun validSession(): AuthSession? {
         val (clientId, tokens) = loadTokens() ?: return null
         val now = System.currentTimeMillis() / 1000
-        if (tokens.expiresAtSec - now > 120) {
+        if (tokens.expiresAtSec - now > TOKEN_EXPIRY_SKEW_SEC) {
             return AuthSession(accessToken = tokens.accessToken)
         }
         val refreshed = refresh(clientId, tokens) ?: return null
@@ -130,31 +146,29 @@ class GoogleOAuth(private val tube: InnerTube) {
     )
 
     /** Requests a user/device code pair from the TV-device code endpoint. */
-    private suspend fun requestDeviceCode(clientId: String): DeviceCode? {
-        return try {
-            val text = http.submitForm(
-                url = "https://www.youtube.com/o/oauth2/device/code",
-                formParameters = parameters {
-                    append("client_id", clientId)
-                    append("scope", SCOPE)
-                },
-            ) {
-                header("User-Agent", OAUTH_USER_AGENT)
-            }.bodyAsText()
-            val obj = json.parseToJsonElement(text).jsonObject
-            DeviceCode(
-                deviceCode = obj["device_code"]?.jsonPrimitive?.contentOrNull ?: return null,
-                userCode = obj["user_code"]?.jsonPrimitive?.contentOrNull ?: return null,
-                verifyUrl = obj["verification_url"]?.jsonPrimitive?.contentOrNull
-                    ?: "https://www.google.com/device",
-                verifyUrlComplete = obj["verification_url_complete"]?.jsonPrimitive?.contentOrNull,
-                expiresIn = obj["expires_in"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 1800L,
-                interval = obj["interval"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 5L,
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
+    private suspend fun requestDeviceCode(clientId: String): DeviceCode? = runCatching {
+        val text = http.submitForm(
+            url = "https://www.youtube.com/o/oauth2/device/code",
+            formParameters = parameters {
+                append("client_id", clientId)
+                append("scope", SCOPE)
+            },
+        ) {
+            header("User-Agent", OAUTH_USER_AGENT)
+        }.bodyAsText()
+        val obj = json.parseToJsonElement(text).jsonObject
+        val deviceCode = obj["device_code"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
+        val userCode = obj["user_code"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
+        DeviceCode(
+            deviceCode = deviceCode,
+            userCode = userCode,
+            verifyUrl = obj["verification_url"]?.jsonPrimitive?.contentOrNull
+                ?: "https://www.google.com/device",
+            verifyUrlComplete = obj["verification_url_complete"]?.jsonPrimitive?.contentOrNull,
+            expiresIn = obj["expires_in"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: DEFAULT_EXPIRES_IN_SEC,
+            interval = obj["interval"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: DEFAULT_POLL_INTERVAL_SEC,
+        )
+    }.getOrNull()
 
     /** Polls the legacy TV-device grant until approved, denied, expired, or cancelled. */
     private suspend fun pollForTokens(
@@ -163,8 +177,8 @@ class GoogleOAuth(private val tube: InnerTube) {
         device: DeviceCode,
         cancelled: () -> Boolean,
     ): Tokens? {
-        val deadline = System.currentTimeMillis() + (device.expiresIn * 1000).coerceAtMost(600_000)
-        var intervalMs = (device.interval.coerceAtLeast(5)) * 1000
+        val deadline = System.currentTimeMillis() + (device.expiresIn * 1000).coerceAtMost(MAX_POLL_DURATION_MS)
+        var intervalMs = (device.interval.coerceAtLeast(DEFAULT_POLL_INTERVAL_SEC)) * 1000
         while (System.currentTimeMillis() < deadline && !cancelled()) {
             kotlinx.coroutines.delay(intervalMs)
             try {
@@ -186,7 +200,7 @@ class GoogleOAuth(private val tube: InnerTube) {
                 }
                 when (obj["error"]?.jsonPrimitive?.contentOrNull) {
                     "authorization_pending" -> Unit // keep polling
-                    "slow_down" -> intervalMs += 5000
+                    "slow_down" -> intervalMs += SLOW_DOWN_BACKOFF_MS
                     else -> return null // access_denied, expired_token, …
                 }
             } catch (_: Exception) {

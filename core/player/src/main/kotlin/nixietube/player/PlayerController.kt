@@ -23,6 +23,21 @@ import nixietube.innertube.Thumbnail
 import nixietube.innertube.RatingStatus
 import nixietube.innertube.Track
 
+/** Mid-stream resume attempts before surfacing the error. */
+private const val MAX_STREAM_RETRIES = 2
+
+/** Position ticker cadence while playing. */
+private const val TICKER_INTERVAL_MS = 500L
+
+/** Below this position, previous restarts the track instead of going back. */
+private const val PREVIOUS_RESTART_THRESHOLD_MS = 3000L
+
+/** How long a seek target is held before the engine position wins. */
+private const val SEEK_SETTLE_TIMEOUT_NS = 6_000_000_000L
+
+/** Engine positions within this window count as arrived after a seek. */
+private const val SEEK_ARRIVAL_TOLERANCE_MS = 1000L
+
 /**
  * Queue repeat behavior.
  */
@@ -164,11 +179,14 @@ class PlayerController(
         // Expiring URLs and flaky streams die mid-playback; mint a fresh
         // URL and resume where we left off. Bounded retries: a permanently
         // unplayable track still surfaces its error.
-        if (track != null && !failed.stopped && streamRetries < 2 &&
+        val retrySameTrack = track != null && !failed.stopped && streamRetries < MAX_STREAM_RETRIES &&
             _state.value.current?.videoId == track.videoId
-        ) {
+        if (track != null && retrySameTrack) {
             streamRetries++
-            PlayerDebug.log("stream retry #${streamRetries} videoId=${track.videoId} at=${resumeAt}ms cause=${message.take(120)}")
+            PlayerDebug.log(
+                "stream retry #${streamRetries} videoId=${track.videoId} at=${resumeAt}ms " +
+                    "cause=${message.take(120)}",
+            )
             val stream = StreamResolver.resolve(track.videoId)
             val now = _state.value
             if (stream != null && now.current?.videoId == track.videoId && !now.stopped) {
@@ -319,9 +337,12 @@ class PlayerController(
     fun restoreSession(): Boolean {
         return try {
             val f = sessionFile()
-            if (!f.exists()) return false
-            val data = sessionJson.decodeFromString<SessionData>(f.readText())
-            if (data.queue.isEmpty() || data.index !in data.queue.indices) return false
+            val data = if (f.exists()) {
+                sessionJson.decodeFromString<SessionData>(f.readText())
+            } else {
+                null
+            }
+            if (data == null || data.queue.isEmpty() || data.index !in data.queue.indices) return false
             val track = data.queue[data.index]
             val catalogMs = track.durationSec * 1000L
             val pos = data.positionMs.coerceIn(0L, if (catalogMs > 0L) catalogMs else Long.MAX_VALUE)
@@ -382,7 +403,7 @@ class PlayerController(
     /** Goes to the previous track, or restarts when past 3s or at the queue head. */
     fun previous() {
         val s = _state.value
-        if (s.positionMs > 3000 || s.index <= 0) {
+        if (s.positionMs > PREVIOUS_RESTART_THRESHOLD_MS || s.index <= 0) {
             seekTo(0)
         } else {
             _state.update { it.copy(index = s.index - 1) }
@@ -448,7 +469,9 @@ class PlayerController(
     ) {
         val incomingAlbum: AlbumRef? = album
         val incomingTitle = title?.trim()?.takeIf { it.isNotBlank() }
-        if (artists.isEmpty() && incomingAlbum == null && thumbnails.isEmpty() && incomingTitle == null) return
+        val hasNoUpdates = artists.isEmpty() && incomingAlbum == null &&
+            thumbnails.isEmpty() && incomingTitle == null
+        if (hasNoUpdates) return
         _state.update { s ->
             fun fix(t: Track): Track {
                 if (t.videoId != videoId) return t
@@ -675,7 +698,7 @@ class PlayerController(
         val token = playToken
         ticker = scope.launch {
             while (isActive && token == playToken) {
-                delay(500)
+                delay(TICKER_INTERVAL_MS)
                 if (token != playToken) return@launch
                 val rawPos = engine.positionMs().let { if (it < 0) 0 else it }
                 val target = pendingSeekTargetMs
@@ -685,15 +708,15 @@ class PlayerController(
                 // target until the engine demonstrably arrives (1s window)
                 // or a generous timeout elapses.
                 val seekAgeNanos = if (target != null) System.nanoTime() - pendingSeekAtNanos else 0L
-                val pos = if (target != null && seekAgeNanos in 0..6_000_000_000L &&
-                    kotlin.math.abs(rawPos - target) > 1_000L
+                val pos = if (target != null && seekAgeNanos in 0..SEEK_SETTLE_TIMEOUT_NS &&
+                    kotlin.math.abs(rawPos - target) > SEEK_ARRIVAL_TOLERANCE_MS
                 ) {
                     target
                 } else {
-                    if (target != null && kotlin.math.abs(rawPos - target) <= 1_000L) {
+                    if (target != null && kotlin.math.abs(rawPos - target) <= SEEK_ARRIVAL_TOLERANCE_MS) {
                         pendingSeekTargetMs = null
                         pendingSeekAtNanos = 0L
-                    } else if (target != null && seekAgeNanos >= 6_000_000_000L) {
+                    } else if (target != null && seekAgeNanos >= SEEK_SETTLE_TIMEOUT_NS) {
                         pendingSeekTargetMs = null
                         pendingSeekAtNanos = 0L
                     }

@@ -289,6 +289,26 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
         return keepMusicPlaylists(out.filter { !it.id.startsWith("LL") })
     }
 
+    /** First classifiable video id in [pl], or null for empty/unreadable playlists. */
+    private suspend fun firstPlaylistVideo(pl: GPlaylist): String? {
+        if (pl.itemCount == 0) return null
+        val el = json.parseToJsonElement(
+            get(
+                "playlistItems",
+                mapOf(
+                    "part" to "snippet,contentDetails",
+                    "playlistId" to pl.id,
+                    "maxResults" to "3",
+                ),
+            ),
+        )
+        return el.jsonObject["items"]?.jsonArray
+            ?.mapNotNull {
+                it.jsonObject["contentDetails"]?.jsonObject?.get("videoId")?.jsonPrimitive?.contentOrNull
+            }
+            ?.firstOrNull { it != "UCBR8-60-B28hp2BmDPdntcQ" }
+    }
+
     // Drops non-music playlists (plain YouTube video collections). Probe
     // only enough items to classify the playlist; a video thumbnail is not a
     // playlist cover and must never be used as one.
@@ -298,22 +318,7 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
         val firstIds = mutableMapOf<String, String>() // playlistId -> videoId
         try {
             for (pl in all) {
-                if (pl.itemCount == 0) continue
-                val el = json.parseToJsonElement(
-                    get(
-                        "playlistItems",
-                        mapOf(
-                            "part" to "snippet,contentDetails",
-                            "playlistId" to pl.id,
-                            "maxResults" to "3",
-                        ),
-                    ),
-                )
-                val items = el.jsonObject["items"]?.jsonArray ?: continue
-                val vid = items.mapNotNull {
-                    it.jsonObject["contentDetails"]?.jsonObject?.get("videoId")?.jsonPrimitive?.contentOrNull
-                }.firstOrNull { it != "UCBR8-60-B28hp2BmDPdntcQ" }
-                if (vid != null) firstIds[pl.id] = vid
+                firstPlaylistVideo(pl)?.let { firstIds[pl.id] = it }
             }
             if (firstIds.isEmpty()) return all
             val musical = mutableSetOf<String>()
@@ -522,7 +527,7 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
         return n.ifBlank { name }
     }
 
-    private val VERSION_WORDS = setOf(
+    private val versionWords = setOf(
         "live", "remaster", "remastered", "remix", "edit", "mix", "acoustic",
         "unplugged", "demo", "extended", "vip", "bootleg", "cover",
         "instrumental", "karaoke", "sped up", "slowed", "nightcore",
@@ -564,7 +569,7 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
             return artist to cleanTitle
         }
         val suffixHead = suffix.split(Regex("[\\s(\\[]"))[0].lowercase()
-        if (suffixHead in VERSION_WORDS) return artist to cleanTitle
+        if (suffixHead in versionWords) return artist to cleanTitle
         return candidate to suffix
     }
 

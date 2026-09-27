@@ -59,7 +59,7 @@ import nixietube.innertube.ShelfItem
  * @param state app state providing search results, history, and playback/navigation actions.
  */
 @Composable
-fun SearchScreen(state: AppState) {
+fun SearchPanel(state: AppState) {
     val ui by state.search.collectAsState()
     val history by state.searchHistory.collectAsState()
     val player by state.player.state.collectAsState()
@@ -184,7 +184,12 @@ fun SearchScreen(state: AppState) {
                 }
                 itemsIndexed(
                     items,
-                    key = { _, it -> when (it) { is ShelfItem.Song -> "s-" + it.track.videoId; is ShelfItem.Browse -> "b-" + it.browseId } },
+                    key = { _, item ->
+                        when (item) {
+                            is ShelfItem.Song -> "s-" + item.track.videoId
+                            is ShelfItem.Browse -> "b-" + item.browseId
+                        }
+                    },
                 ) { _, item ->
                     when (item) {
                         is ShelfItem.Song -> TrackRow(

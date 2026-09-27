@@ -50,9 +50,9 @@ fun App(state: AppState) {
     MaterialTheme(colorScheme = YtmDarkScheme) {
         Scaffold(
             modifier = Modifier.onPreviewKeyEvent { event ->
-                if (event.key == Key.Spacebar && event.type == KeyEventType.KeyDown &&
+                val toggleShortcut = event.key == Key.Spacebar && event.type == KeyEventType.KeyDown &&
                     !state.searchFieldFocused && player.current != null
-                ) {
+                if (toggleShortcut) {
                     state.player.togglePlayPause()
                     true
                 } else {
@@ -88,9 +88,9 @@ fun App(state: AppState) {
                 }
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     when (val s = screen) {
-                        is Screen.Home -> HomeScreen(state)
-                        is Screen.Search -> SearchScreen(state)
-                        is Screen.Library -> LibraryScreen(state)
+                        is Screen.Home -> HomePanel(state)
+                        is Screen.Search -> SearchPanel(state)
+                        is Screen.Library -> LibraryPanel(state)
                         is Screen.Settings -> SettingsScreen(state)
                         is Screen.Detail -> DetailScreen(state, s.item)
                     }
@@ -117,7 +117,12 @@ fun App(state: AppState) {
  * @param onClick invoked when the entry is selected.
  */
 @Composable
-private fun RailEntry(selected: Boolean, icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+private fun RailEntry(
+    selected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
     NavigationRailItem(
         selected = selected,
         onClick = onClick,

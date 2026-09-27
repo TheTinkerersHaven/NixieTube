@@ -423,20 +423,19 @@ class MprisService(
         synchronized(signalLock) {
             val previousEpoch = lastSeekEpoch
             val trackId = s.current?.videoId
-            if (previousEpoch != null &&
+            val seeked = previousEpoch != null &&
                 s.seekEpoch != previousEpoch &&
                 trackId != null && trackId == lastSeekTrackId
-            ) {
+            if (seeked) {
                 seekPositionUs = positionUs(s)
             }
             lastSeekEpoch = s.seekEpoch
             lastSeekTrackId = trackId
             val nowMs = System.currentTimeMillis()
             val trackChanged = trackId != lastPositionTrack
-            if (s.current != null &&
-                (trackChanged || seekPositionUs != null ||
-                    (s.playing && nowMs - lastPositionSentMs >= 2_000))
-            ) {
+            val positionStale = trackChanged || seekPositionUs != null ||
+                (s.playing && nowMs - lastPositionSentMs >= 2_000)
+            if (s.current != null && positionStale) {
                 includePosition = true
                 lastPositionSentMs = nowMs
                 lastPositionTrack = trackId

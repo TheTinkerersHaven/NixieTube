@@ -225,11 +225,16 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
                         }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         IconButton(onClick = { state.player.toggleShuffle() }) {
                             Icon(
                                 Icons.Rounded.Shuffle, "Shuffle",
-                                tint = if (player.shuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                tint =
+                                    if (player.shuffle) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
                             )
                         }
                         // Buttons are sized to match their icons: M3 IconButton
@@ -273,7 +278,9 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
                             Icon(
                                 if (player.repeat == RepeatMode.ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                                 "Repeat",
-                                tint = if (player.repeat == RepeatMode.OFF) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                                tint =
+                                    if (player.repeat == RepeatMode.OFF) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.primary,
                             )
                         }
                     }
@@ -294,27 +301,33 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
                             IconButton(
                                 onClick = {
                                     state.rateCurrent(
-                                        if (rating == RatingStatus.LIKE) RatingStatus.INDIFFERENT else RatingStatus.LIKE,
+                                        if (rating == RatingStatus.LIKE) RatingStatus.INDIFFERENT
+                                        else RatingStatus.LIKE,
                                     )
                                 },
                             ) {
                                 Icon(
                                     Icons.Rounded.ThumbUp,
                                     if (rating == RatingStatus.LIKE) "Remove like" else "Like",
-                                    tint = if (rating == RatingStatus.LIKE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    tint =
+                                        if (rating == RatingStatus.LIKE) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface,
                                 )
                             }
                             IconButton(
                                 onClick = {
                                     state.rateCurrent(
-                                        if (rating == RatingStatus.DISLIKE) RatingStatus.INDIFFERENT else RatingStatus.DISLIKE,
+                                        if (rating == RatingStatus.DISLIKE) RatingStatus.INDIFFERENT
+                                        else RatingStatus.DISLIKE,
                                     )
                                 },
                             ) {
                                 Icon(
                                     Icons.Rounded.ThumbDown,
                                     if (rating == RatingStatus.DISLIKE) "Remove dislike" else "Dislike",
-                                    tint = if (rating == RatingStatus.DISLIKE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    tint =
+                                        if (rating == RatingStatus.DISLIKE) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface,
                                 )
                             }
                         }
@@ -357,7 +370,10 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
                             )
                         }
                         LazyColumn(Modifier.fillMaxSize()) {
-                            itemsIndexed(player.queue, key = { _, t -> t.videoId + "@" + player.queue.indexOf(t) }) { i, t ->
+                            itemsIndexed(
+                                player.queue,
+                                key = { _, t -> t.videoId + "@" + player.queue.indexOf(t) },
+                            ) { i, t ->
                                 TrackRow(
                                     track = t,
                                     playing = i == player.index,

@@ -54,7 +54,7 @@ import nixietube.innertube.Track
  * @param state app state providing home shelves, activity, liked songs, and playback actions.
  */
 @Composable
-fun HomeScreen(state: AppState) {
+fun HomePanel(state: AppState) {
     val ui by state.home.collectAsState()
     val player by state.player.state.collectAsState()
     val account by state.account.collectAsState()
@@ -377,7 +377,7 @@ private fun QuickPicksGrid(
  * @param playingId videoId of the currently playing track, or null.
  */
 @Composable
-fun ShelfSection(shelf: Shelf, state: AppState, playingId: String?) {
+private fun ShelfSection(shelf: Shelf, state: AppState, playingId: String?) {
     val songs = shelf.items.filterIsInstance<ShelfItem.Song>().map { it.track }
     val browses = shelf.items.filterIsInstance<ShelfItem.Browse>()
     if (songs.isNotEmpty() && browses.isEmpty()) {
