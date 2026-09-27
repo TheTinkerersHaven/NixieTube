@@ -19,7 +19,6 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
@@ -111,8 +110,6 @@ fun SettingsScreen(state: AppState) {
             }
         }
         Spacer(Modifier.height(24.dp))
-        PlaybackCard()
-        Spacer(Modifier.height(24.dp))
         state.sys?.let { IntegrationsCard(it) }
         Spacer(Modifier.height(24.dp))
         Text(
@@ -123,39 +120,6 @@ fun SettingsScreen(state: AppState) {
     }
 }
 
-
-/**
- * Renders the audio-backend picker card (mpv only).
- */
-@Composable
-fun PlaybackCard() {
-    var backend by remember { mutableStateOf(nixietube.sys.SysConfig.playerBackend) }
-    Text("Playback", style = MaterialTheme.typography.headlineSmall)
-    Spacer(Modifier.height(8.dp))
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Audio backend")
-            Text(
-                "mpv is the required audio backend (decode runs outside the app). Takes effect on restart.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("auto", "mpv").forEach { opt ->
-                    FilterChip(
-                        selected = backend == opt,
-                        onClick = {
-                            backend = opt
-                            nixietube.sys.SysConfig.playerBackend = opt
-                        },
-                        label = { Text(opt) },
-                    )
-                }
-            }
-        }
-    }
-}
 
 /**
  * Renders the MPRIS, Discord Rich Presence and playback-reporting toggles.
