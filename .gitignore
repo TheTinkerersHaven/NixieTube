@@ -1,0 +1,25 @@
+# Gradle / Kotlin build outputs
+.gradle/
+.kotlin/
+build/
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (Playwright capture tooling) — package.json/lock stay tracked
+node_modules/
+
+# Local debug captures: NewPipe extractor dumps, Playwright HARs, logs
+*.dump
+*.har
+*.log
+
+# Local secrets / machine config
+local.properties
