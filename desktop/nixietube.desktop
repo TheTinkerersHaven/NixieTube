@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=NixieTube
+Comment=Native YouTube Music client
+Exec=nixietube
+Icon=audio-x-generic
+Categories=Audio;Music;AudioVideo;
+StartupNotify=true
+Terminal=false
