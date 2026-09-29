@@ -143,7 +143,7 @@ fun LibraryPanel(state: AppState) {
             0 -> {
                 if (playlists.isEmpty()) {
                     Text(
-                        "No playlists yet — create some on YouTube Music.",
+                        "No playlists yet. Create some on YouTube Music.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -192,7 +192,7 @@ fun LibraryPanel(state: AppState) {
                 val recentArtists by state.recentArtists.collectAsState()
                 if (artists.isEmpty() && recentArtists.isEmpty()) {
                     Text(
-                        "No followed artists yet — subscribe on YouTube Music.",
+                        "No followed artists yet. Subscribe on YouTube Music.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -253,12 +253,12 @@ fun LibraryPanel(state: AppState) {
                     }
                     Spacer(Modifier.height(8.dp))
                     LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                        itemsIndexed(liked, key = { _, t -> t.videoId }) { i, t ->
+                        itemsIndexed(liked, key = { i, t -> "${t.videoId}@$i" }) { i, t ->
                             TrackRow(
                                 track = t,
                                 playing = t.videoId == player.current?.videoId,
                                 onPlay = { state.playSongs(liked, i) },
-                                onEnqueue = { state.player.enqueueNext(t) },
+                                onPlaylists = { state.openPlaylistDialog(t) },
                                 rating = t.rating,
                                 onRate = ({ state.rateTrack(t.videoId, it) }),
                             )

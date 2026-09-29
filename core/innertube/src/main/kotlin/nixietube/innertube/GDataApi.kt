@@ -395,7 +395,7 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
         return out.take(max)
     }
 
-    // Recently liked/uploaded/favorited videos — the closest thing the
+    // Recently liked/uploaded/favorited videos, the closest thing the
     // Data API offers to a personalized home feed. NB: snippet.channelTitle
     // here is the ACTOR (you), so artists are backfilled via videos.list.
     private data class Pending(val videoId: String, val title: String, val art: String?)
@@ -536,7 +536,7 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
     // Reconcile a Data API title/owner pair. Topic channels already carry
     // the real artist; distributor "Release - Topic" channels do not, so
     // use the video tags for those. Label uploads titled "Artist - Track"
-    // carry the uploader as owner, so split those — unless the suffix is a
+    // carry the uploader as owner, so split those, unless the suffix is a
     // version word ("Song - Live"), which stays put.
     /**
      * Reconciles a Data API title/owner pair into an artist/title pair.
@@ -814,6 +814,87 @@ class GDataApi(private val tokenProvider: suspend () -> String?) {
                 header(HttpHeaders.Authorization, "Bearer $token")
                 parameter("id", videoId)
                 parameter("rating", if (like) "like" else "none")
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Appends a video to a playlist.
+     *
+     * @param playlistId Data API playlist id.
+     * @param videoId YouTube video id to add.
+     * @return true when the insert succeeds.
+     */
+    suspend fun addToPlaylist(playlistId: String, videoId: String): Boolean {
+        return try {
+            client.post("https://www.googleapis.com/youtube/v3/playlistItems") {
+                header(HttpHeaders.Authorization, "Bearer ${token()}")
+                parameter("part", "snippet")
+                contentType(io.ktor.http.ContentType.Application.Json)
+                setBody(
+                    """{"snippet":{"playlistId":"$playlistId","resourceId":{"kind":"youtube#video","videoId":"$videoId"}}}""",
+                )
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Finds the playlist-item id backing a video inside a playlist.
+     *
+     * Removal needs the item id, not the video id, so this pages the
+     * playlist until the video is found.
+     *
+     * @param playlistId Data API playlist id.
+     * @param videoId YouTube video id to look for.
+     * @return playlist-item id, or null when absent or on failure.
+     */
+    suspend fun playlistItemId(playlistId: String, videoId: String): String? {
+        var pageToken: String? = null
+        return try {
+            var found: String? = null
+            while (found == null) {
+                val params = mutableMapOf(
+                    "part" to "snippet",
+                    "playlistId" to playlistId,
+                    "maxResults" to "50",
+                )
+                pageToken?.let { params["pageToken"] = it }
+                val el = json.parseToJsonElement(get("playlistItems", params))
+                val obj = el.jsonObject
+                found = obj["items"]?.jsonArray?.firstNotNullOfOrNull { item ->
+                    val o = item.jsonObject
+                    val vid = o["snippet"]?.jsonObject
+                        ?.get("resourceId")?.jsonObject
+                        ?.get("videoId")?.jsonPrimitive?.contentOrNull
+                    if (vid == videoId) o["id"]?.jsonPrimitive?.contentOrNull else null
+                }
+                if (found == null) {
+                    pageToken = obj["nextPageToken"]?.jsonPrimitive?.contentOrNull ?: break
+                }
+            }
+            found
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Removes one entry from a playlist by playlist-item id.
+     *
+     * @param itemId playlist-item id from [playlistItemId].
+     * @return true when the delete succeeds.
+     */
+    suspend fun removePlaylistItem(itemId: String): Boolean {
+        return try {
+            client.delete("https://www.googleapis.com/youtube/v3/playlistItems") {
+                header(HttpHeaders.Authorization, "Bearer ${token()}")
+                parameter("id", itemId)
             }
             true
         } catch (_: Exception) {

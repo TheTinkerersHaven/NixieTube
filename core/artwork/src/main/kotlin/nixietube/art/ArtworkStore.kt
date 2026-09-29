@@ -20,7 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-// Pure-JVM artwork pipeline (no UI imports — reusable under any frontend).
+// Pure-JVM artwork pipeline (no UI imports, reusable under any frontend).
 // Memory LRU + raw disk cache, integrity-checked downloads, border stripping,
 // and center-square crops for cover art. The uncropped source path is reserved
 // for aspect-ratio-sensitive banners; the cropped file is exposed as a stable
@@ -299,7 +299,7 @@ object ArtworkStore {
         }
     }
 
-    // Disk file only if already present — safe to call on D-Bus/IPC threads.
+    // Disk file only if already present, safe to call on D-Bus/IPC threads.
     /**
      * Returns the cropped file for [url] only if already rendered on disk.
      *
@@ -365,7 +365,7 @@ object ArtworkStore {
     }
 
     // Truncated downloads decode into partial (gray-banded) images and would
-    // poison the disk cache — reject them up front. JPEG must end with EOI;
+    // poison the disk cache, reject them up front. JPEG must end with EOI;
     // anything else goes through the decoder's verdict.
     /** Checks payload completeness (JPEG must end with EOI) to keep partial downloads out of cache. */
     private fun looksComplete(bytes: ByteArray): Boolean {

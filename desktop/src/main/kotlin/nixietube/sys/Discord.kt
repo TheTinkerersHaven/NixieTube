@@ -160,29 +160,65 @@ object SysConfig {
             val p = load(); p.setProperty("mpris.enabled", v.toString()); save(p)
         }
 
-    /** Stored Google TV-device OAuth client ID. */
+    /** Stored Google OAuth client ID. */
     var googleClientId: String
         get() = load().getProperty("google.clientId").orEmpty()
         set(v) {
             val p = load(); p.setProperty("google.clientId", v); save(p)
         }
 
-    /** Stored Google TV-device OAuth client secret. */
+    /** Stored Google OAuth client secret. */
     var googleClientSecret: String
         get() = load().getProperty("google.clientSecret").orEmpty()
         set(v) {
             val p = load(); p.setProperty("google.clientSecret", v); save(p)
         }
 
+    /** Whether Last.fm scrobbling is enabled. */
+    var lastfmEnabled: Boolean
+        get() = load().getProperty("lastfm.enabled")?.toBoolean() ?: false
+        set(v) {
+            val p = load(); p.setProperty("lastfm.enabled", v.toString()); save(p)
+        }
+
+    /** Stored Last.fm API key (from a last.fm/api application). */
+    var lastfmApiKey: String
+        get() = load().getProperty("lastfm.apiKey").orEmpty()
+        set(v) {
+            val p = load(); p.setProperty("lastfm.apiKey", v); save(p)
+        }
+
+    /** Stored Last.fm shared secret (from a last.fm/api application). */
+    var lastfmSecret: String
+        get() = load().getProperty("lastfm.secret").orEmpty()
+        set(v) {
+            val p = load(); p.setProperty("lastfm.secret", v); save(p)
+        }
+
+    /** Stored Last.fm session key from the auth handshake; empty when logged out. */
+    var lastfmSessionKey: String
+        get() = load().getProperty("lastfm.sessionKey").orEmpty()
+        set(v) {
+            val p = load(); p.setProperty("lastfm.sessionKey", v); save(p)
+        }
+
+    /** Stored Last.fm username from the auth handshake; empty when logged out. */
+    var lastfmUsername: String
+        get() = load().getProperty("lastfm.username").orEmpty()
+        set(v) {
+            val p = load(); p.setProperty("lastfm.username", v); save(p)
+        }
+
     /**
-     * Opt-in flag for reporting playback to YouTube's stats/watchtime beacons.
+     * Opt-in flag for syncing listening history with YouTube Music.
      *
-     * When true, listening history feeds into recaps (Year in Review, Most
-     * Listened To, etc.). Default false.
+     * When true, played tracks are reported to YouTube's stats/watchtime
+     * beacons so history and recaps (Year in Review, Most Listened To,
+     * etc.) stay in sync with this app. Default false.
      */
-    // When true, playback is reported to YouTube's stats/watchtime
-    // beacons so listening history feeds into recaps (Year in Review,
-    // Most Listened To, etc.). Default false — opt-in only.
+    // When true, played tracks are reported to YouTube's stats/watchtime
+    // beacons so history and recaps (Year in Review, Most Listened To,
+    // etc.) stay in sync with this app. Default false, opt-in only.
     var reportPlayback: Boolean
         get() = load().getProperty("reportPlayback")?.toBoolean() ?: false
         set(v) {
@@ -190,12 +226,12 @@ object SysConfig {
         }
 }
 
-// Discord Rich Presence over the local RPC socket — the same transport
+// Discord Rich Presence over the local RPC socket, the same transport
 // Discord's Social SDK docs prescribe for presence-only desktop use
 // (no auth, no native SDK needed). Requires a Discord application ID
 // (https://discord.com/developers/applications) and a running client.
 /**
- * Discord Rich Presence over the local RPC socket — the same transport Discord's
+ * Discord Rich Presence over the local RPC socket, the same transport Discord's
  * Social SDK docs prescribe for presence-only desktop use (no auth, no native SDK).
  *
  * Connects to a `discord-ipc-N` Unix socket, handshakes with the configured app ID,

@@ -137,7 +137,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         for (candidate in sessions) {
             // Transport blips (timeout, reset) throw; auth verdicts come
             // back as error bodies. Retry the transport once, then let it
-            // propagate — callers distinguish errors from empty results.
+            // propagate, callers distinguish errors from empty results.
             val response = try {
                 request(path, body, candidate)
             } catch (_: Exception) {
@@ -346,8 +346,8 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
                 }
             }
         }
-        // A single/EP sometimes arrives with no dedicated song row — only
-        // the release entity — even when unrelated same-titled songs are
+        // A single/EP sometimes arrives with no dedicated song row, only
+        // the release entity, even when unrelated same-titled songs are
         // present. When the query names such a release exactly, surface its
         // title track(s) first so the exact match is playable. Bounded to
         // singles/EPs (at most two fetches); albums are left alone.
@@ -390,8 +390,8 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
                 songs.clear()
                 songs.putAll(ordered)
             }
-            // Exact title matches first — the dominant artist's recording
-            // above same-titled covers — then everything else in YouTube's
+            // Exact title matches first, the dominant artist's recording
+            // above same-titled covers, then everything else in YouTube's
             // order. No-op for artist-name queries (no title matches).
             val (exact, rest) = songs.values.partition { canonicalMetadata(it.track.title) == queryCanon }
             val (mine, others) = exact.partition { it.isDominantMatch() }
@@ -461,7 +461,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             if (items.isNotEmpty()) {
                 out.getOrPut(title) { mutableListOf() }.addAll(items)
             }
-            // Exact-match cards sometimes carry no rows at all — just the
+            // Exact-match cards sometimes carry no rows at all, just the
             // entity header (thumbnail/title/onTap). The artist case is
             // covered above; surface a linked album the same way so exact
             // album searches never come back empty.
@@ -521,7 +521,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
     /**
      * Adds an album entry from a card header when it links to a release.
      *
-     * Top-result cards for exact album matches often carry no rows — the
+     * Top-result cards for exact album matches often carry no rows. The
      * header (title runs or onTap) is the only link to the release.
      *
      * @param out categorized output map to append to.
@@ -638,6 +638,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             header.nav("secondSubtitle", "runs"),
         )
         val kind = detectReleaseKind(subtitle) ?: detectReleaseKind(description)
+        val year = detectReleaseYear(subtitle)
         val tracks = (shelf?.nav("contents") as? JsonArray)?.mapNotNull {
             it.nav("musicResponsiveListItemRenderer")?.let { li -> parseListItem(li) }
         }.orEmpty().map { track ->
@@ -654,7 +655,9 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
                 fixed = fixed.copy(artists = listOf(headerArtist), artistId = headerArtist.browseId)
             }
             if (fixed.album == null && albumTitle.isNotBlank()) {
-                fixed = fixed.copy(album = AlbumRef(albumTitle, browseId, kind))
+                fixed = fixed.copy(album = AlbumRef(albumTitle, browseId, kind, year))
+            } else if (fixed.album != null && fixed.album.year.isBlank() && year.isNotBlank()) {
+                fixed = fixed.copy(album = fixed.album.copy(year = year))
             }
             fixed
         }
@@ -665,6 +668,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             thumbnails = headerThumbs,
             tracks = tracks,
             kind = kind,
+            year = year,
             artist = headerArtist,
         )
     }
@@ -766,7 +770,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
         })
         // Raw PL ids answer HTTP 400 / an error envelope (not a playlist),
-        // while the canonical VL form succeeds — try both, keeping the
+        // while the canonical VL form succeeds, try both, keeping the
         // first non-error response.
         val ids = if (browseId.startsWith("PL")) listOf(browseId, "VL$browseId") else listOf(browseId)
         val res = ids.firstNotNullOfOrNull { id ->
@@ -910,7 +914,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
 
         val ref = result.album
         val browseId = ref?.browseId
-        if (ref != null && browseId != null && ref.kind == null) {
+        if (ref != null && browseId != null && (ref.kind == null || ref.year.isBlank())) {
             val detail = albumDetailsCache[browseId] ?: runCatching { album(browseId) }.getOrNull()
             if (detail != null) {
                 albumDetailsCache[browseId] = detail
@@ -918,6 +922,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
                     album = ref.copy(
                         name = detail.title.ifBlank { ref.name },
                         kind = detail.kind ?: ref.kind,
+                        year = detail.year.takeIf { it.isNotBlank() } ?: ref.year,
                     ),
                 )
             }
@@ -1090,7 +1095,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
      *
      * `ei`/`plid`/`of`/`vm` are minted fresh for EVERY player call, so they
      * must be fetched once per track playback (keyed by cpn) and reused for
-     * that track's heartbeats — never shared across plays. Verified against
+     * that track's heartbeats, never shared across plays. Verified against
      * the real YTM web client: beacons built from these tokens land in
      * `FEmusic_history`; hand-built URLs without them 204 but never record.
      *
@@ -1175,7 +1180,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
      * POST to create the watch record, then `stats/watchtime` POST heartbeats;
      * every stats POST carries `{"session_token": <XSRF_TOKEN>}` as a JSON
      * body plus the player-minted `ei`/`plid`/`of`/`vm` session params. A
-     * `feedback` POST with a playerEvent is also sent — it returns structured
+     * `feedback` POST with a playerEvent is also sent, it returns structured
      * JSON, giving a real success/failure signal, since the beacons answer
      * HTTP 204 (blind ack) for all well-formed requests.
      *
@@ -1252,8 +1257,8 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
             false
         }
         // The stats/watchtime beacon returns 204 (blind ack) for all
-        // well-formed requests, so always also fire a feedback playerEvent
-        // — the InnerTube POST returns a structured response, giving us a
+        // well-formed requests, so always also fire a feedback playerEvent:
+        // the InnerTube POST returns a structured response, giving us a
         // real success/failure signal.
         val eventType = when {
             state == "playing" && startSec == 0.0 -> "playerPlay"
@@ -1361,8 +1366,8 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
      * it. The YTM web client extracts this token from `yt.config_.XSRF_TOKEN`
      * during page load and sends it as JSON `{"session_token": <value>}` in
      * the body of every stats/ endpoint POST beacon. Without it the beacons
-     * 204 (blind ack) but plays are never recorded in listening history — the
-     * SAPISIDHASH Authorization header alone does NOT cause plays to appear.
+     * 204 (blind ack) but plays are never recorded in listening history.
+     * The SAPISIDHASH Authorization header alone does NOT cause plays to appear.
      */
     suspend fun fetchSessionToken(): String? {
         val cookie = auth.cookie ?: return null
@@ -1382,7 +1387,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
 
     // Authenticated beacons for stats/* endpoints. The YTM web client sends
     // stats/playback and stats/watchtime as POST with JSON
-    // `{"session_token": <XSRF_TOKEN>}` in the body — that, together with
+    // `{"session_token": <XSRF_TOKEN>}` in the body, that, together with
     // the player-minted ei/plid/of/vm session params, is what causes plays
     // to be recorded in listening history. A form-encoded body or missing
     // session params 204 (blind ack) but silently record nothing.
@@ -1390,20 +1395,20 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
     // When sessionToken is present (cookie session), postBeacon() sends POST
     // with the token as JSON. When it is absent (Bearer-only/OAuth
     // sessions, or token extraction failed), postBeacon() falls back to GET
-    // with the SAPISIDHASH/Bearer header — 204s but may not record history.
+    // with the SAPISIDHASH/Bearer header, 204s but may not record history.
     //
     // Key insight: stats/* beacons return 204 as a *blind ack* for ALL
-    // well-formed requests — even anonymous ones. The server does not tell
+    // well-formed requests, even anonymous ones. The server does not tell
     // us whether the watch record was actually created. We MUST try every
     // available auth candidate, not short-circuit on the first 204.
     //
     // Candidate order (best → fallback):
     // 1. Cookie + SAPISIDHASH  (standard web-client auth; records history
     //    when LOGIN_INFO is valid and session_token is sent)
-    // 2. Cookie + Bearer       (combined — server picks whichever auth it
+    // 2. Cookie + Bearer       (combined, server picks whichever auth it
     //    accepts; covers the case where SAPISIDHASH is rejected but the
     //    cookie's LOGIN_INFO is still valid)
-    // 3. Bearer only           (TV-device OAuth; 204 but may not record)
+    // 3. Bearer only           (browser OAuth; 204 but may not record)
     private suspend fun postBeacon(url: String, referer: String, sessionToken: String?): Int {
         val session = try {
             authProvider?.invoke()
@@ -1420,13 +1425,13 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
         if (!cookieAuth.cookie.isNullOrBlank()) {
             candidates += cookieAuth
         }
-        // 2. Combined: Cookie + Bearer (no SAPISIDHASH — let server choose)
+        // 2. Combined: Cookie + Bearer (no SAPISIDHASH, let server choose)
         if (cookieAuth !== bearerAuth &&
             !cookieAuth.cookie.isNullOrBlank() && !bearerAuth.accessToken.isNullOrBlank()
         ) {
             candidates += AuthSession(cookie = cookieAuth.cookie, accessToken = bearerAuth.accessToken)
         }
-        // 3. Bearer only (fallback — e.g. OAuth-only users)
+        // 3. Bearer only (fallback, e.g. OAuth-only users)
         if (cookieAuth !== bearerAuth &&
             bearerAuth.cookie.isNullOrBlank() && !bearerAuth.accessToken.isNullOrBlank()
         ) {
@@ -1471,7 +1476,7 @@ class InnerTube(auth: AuthSession = AuthSession.Anonymous) {
                     }.status.value
                 }
                 if (status in 200..299) lastStatus = status
-                // DO NOT return on first 204 — it's a blind ack.
+                // DO NOT return on first 204, it's a blind ack.
                 // Try ALL candidates so that a valid cookie session is
                 // always exercised even when Bearer succeeds first.
             } catch (_: Exception) {
@@ -1669,8 +1674,8 @@ data class AuthSession(
          * @return session, or null when no SAPISID value is present.
          */
         fun fromCookie(rawCookie: String, origin: String = "https://music.youtube.com"): AuthSession? {
-            // DevTools "pretty" headers view wraps/truncates long values —
-            // normalize whitespace (a Cookie header never contains any).
+            // DevTools "pretty" headers view wraps/truncates long values,
+            // so normalize whitespace (a Cookie header never contains any).
             val cookie = rawCookie.replace(Regex("\\s+"), "")
             val sapisid = Regex("""__Secure-3PAPISID=([^;]+)""").find(cookie)?.groupValues?.get(1)
                 ?: Regex("""(?:^|;)SAPISID=([^;]+)""").find(cookie)?.groupValues?.get(1)
@@ -1679,7 +1684,7 @@ data class AuthSession(
             if (clean.isEmpty()) return null
             val timestamp = System.currentTimeMillis() / 1000
             val digest = java.security.MessageDigest.getInstance("SHA-1")
-            // NB: mask bytes — "%02x".format(byte) sign-extends negatives.
+            // NB: mask bytes, "%02x".format(byte) sign-extends negatives.
             val hash = digest.digest("$timestamp $clean $origin".toByteArray())
                 .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
             return AuthSession(cookie.trim(), "${timestamp}_${hash}")
@@ -1984,6 +1989,20 @@ private fun plainRefFromRuns(vararg runs: JsonElement?): ArtistRef? =
         .filter { !it.contains('•') && !it.contains('·') && !it.first().isDigit() && !isBylineNoise(it) }
         .map { ArtistRef(it) }
         .firstOrNull()
+
+private val RELEASE_YEAR_RE = Regex("""(?<!\d)(?:19|20)\d{2}(?!\d)""")
+
+/**
+ * Returns the first release year in an album header subtitle ("Album • 2015").
+ *
+ * Only the subtitle is scanned, never prose descriptions where stray years
+ * would false-positive.
+ *
+ * @param text header subtitle text.
+ * @return four-digit year, or empty when absent.
+ */
+private fun detectReleaseYear(text: String): String =
+    RELEASE_YEAR_RE.find(text)?.value.orEmpty()
 
 private fun detectReleaseKind(text: String): ReleaseKind? {
     val tokens = text.lowercase()

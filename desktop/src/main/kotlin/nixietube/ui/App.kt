@@ -46,6 +46,7 @@ fun App(state: AppState) {
     var showNowPlaying by remember { mutableStateOf(false) }
     val screen by state.screen.collectAsState()
     val player by state.player.state.collectAsState()
+    val playlistTrack by state.playlistDialogTrack.collectAsState()
 
     MaterialTheme(colorScheme = YtmDarkScheme) {
         Scaffold(
@@ -89,7 +90,7 @@ fun App(state: AppState) {
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     when (val s = screen) {
                         is Screen.Home -> HomePanel(state)
-                        is Screen.Search -> SearchPanel(state)
+                        is Screen.Search -> searchPanel(state)
                         is Screen.Library -> LibraryPanel(state)
                         is Screen.Settings -> SettingsScreen(state)
                         is Screen.Detail -> DetailScreen(state, s.item)
@@ -106,6 +107,7 @@ fun App(state: AppState) {
         ) {
             NowPlaying(state = state, onClose = { showNowPlaying = false })
         }
+        playlistTrack?.let { PlaylistPickerDialog(state, it) }
     }
 }
 
