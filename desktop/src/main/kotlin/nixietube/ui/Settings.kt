@@ -1,3 +1,6 @@
+@file:Suppress("FunctionName")
+// Composables conventionally use UpperCamelCase (Kotlin coding conventions);
+// the generic function-name rule does not know that.
 package nixietube.ui
 
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -33,7 +35,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,7 +51,6 @@ import nixietube.sys.SysConfig
  *
  * @param state shared app state backing sign-in state and system handles.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(state: AppState) {
     val account by state.account.collectAsState()
@@ -57,7 +60,7 @@ fun SettingsScreen(state: AppState) {
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(16.dp))
-        Text("Account", style = MaterialTheme.typography.titleMedium)
+        Text("Account", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
         if (account == null) {
             GoogleSignInCard(state)
@@ -111,6 +114,10 @@ fun SettingsScreen(state: AppState) {
         Spacer(Modifier.height(24.dp))
         state.sys?.let { IntegrationsCard(it) }
         Spacer(Modifier.height(24.dp))
+        ListeningHistoryCard()
+        Spacer(Modifier.height(24.dp))
+        state.sys?.let { LastFmCard(it) }
+        Spacer(Modifier.height(24.dp))
         Text(
             "NixieTube • build ${nixietube.BUILD_TAG}",
             style = MaterialTheme.typography.bodySmall,
@@ -121,7 +128,7 @@ fun SettingsScreen(state: AppState) {
 
 
 /**
- * Renders the MPRIS, Discord Rich Presence and playback-reporting toggles.
+ * Renders the MPRIS and Discord Rich Presence toggles.
  *
  * @param sys system handles exposing integration state and persistence.
  */
@@ -195,7 +202,10 @@ fun IntegrationsCard(sys: nixietube.sys.SysHandles) {
                 label = { Text("Discord application ID") },
                 placeholder = { Text(SysConfig.DEFAULT_DISCORD_APP_ID) },
                 supportingText = {
-                    Text("Optional — defaults to the built-in application ID")
+                    Text(
+                        "Optional, leave empty for the built-in ID, " +
+                            "or paste your own from discord.com/developers/applications",
+                    )
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -228,31 +238,272 @@ fun IntegrationsCard(sys: nixietube.sys.SysHandles) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Optional. Leave empty to use the built-in application ID " +
-                    "(${SysConfig.DEFAULT_DISCORD_APP_ID}), or paste your own from " +
-                    "discord.com/developers/applications. Requires the Discord desktop client running.",
+                "Requires the Discord desktop client running.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(16.dp))
-            var reportPlayback by remember { mutableStateOf(nixietube.sys.SysConfig.reportPlayback) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Report playback to recaps")
-                    Text(
-                        "Send play/pause/progress events so listening history feeds into YouTube recaps.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = reportPlayback,
-                    onCheckedChange = {
-                        reportPlayback = it
-                        nixietube.sys.SysConfig.reportPlayback = it
-                    },
+        }
+    }
+}
+
+/**
+ * Renders the listening-history opt-in: reporting playback to YouTube so it
+ * feeds recaps and history.
+ */
+@Composable
+fun ListeningHistoryCard() {
+    var reportPlayback by remember { mutableStateOf(nixietube.sys.SysConfig.reportPlayback) }
+
+    Text("Listening history", style = MaterialTheme.typography.headlineSmall)
+    Spacer(Modifier.height(8.dp))
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Sync with YouTube Music")
+                Text(
+                    "Report played tracks so your YouTube Music history and recaps stay in sync with this app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Switch(
+                checked = reportPlayback,
+                onCheckedChange = {
+                    reportPlayback = it
+                    nixietube.sys.SysConfig.reportPlayback = it
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Renders the Last.fm scrobbling card: credentials, enable toggle, and the browser-approval login.
+ *
+ * @param sys system handles exposing the Last.fm client and persistence.
+ */
+@Composable
+fun LastFmCard(sys: nixietube.sys.SysHandles) {
+    val status by sys.lastfmStatus.collectAsState()
+    var enabled by remember { mutableStateOf(nixietube.sys.SysConfig.lastfmEnabled) }
+    var apiKey by remember { mutableStateOf(nixietube.sys.SysConfig.lastfmApiKey) }
+    var secret by remember { mutableStateOf(nixietube.sys.SysConfig.lastfmSecret) }
+    var busy by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    var token by remember { mutableStateOf<String?>(null) }
+    val signedIn = status.startsWith("signed in as")
+
+    Text("Last.fm scrobbling", style = MaterialTheme.typography.headlineSmall)
+    Spacer(Modifier.height(8.dp))
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            LastFmHeaderRow(
+                enabled = enabled,
+                status = status,
+                onToggle = {
+                    enabled = it
+                    sys.saveLastFm(apiKey, secret, it)
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+            LastFmCredentialsFields(
+                apiKey = apiKey,
+                secret = secret,
+                onApiKeyChange = {
+                    apiKey = it.trim()
+                    sys.saveLastFm(apiKey, secret, enabled)
+                },
+                onSecretChange = {
+                    secret = it.trim()
+                    sys.saveLastFm(apiKey, secret, enabled)
+                },
+            )
+            Spacer(Modifier.height(12.dp))
+            if (failed) {
+                Text(
+                    "Sign-in failed or was denied. Check the key/secret and try again.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            if (signedIn) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { sys.logoutLastFm() }) {
+                        Text("Sign out")
+                    }
+                }
+            } else {
+                LastFmAuthActions(
+                    sys = sys,
+                    token = token,
+                    busy = busy,
+                    apiKeyReady = apiKey.isNotBlank() && secret.isNotBlank(),
+                    onStart = {
+                        failed = false
+                        busy = true
+                    },
+                    onToken = { token = it },
+                    onBusyChange = { busy = it },
+                    onFailed = { failed = true },
+                    onSignedIn = { token = null },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Scrobbles tracks over 30 seconds once half played or 4 minutes pass; " +
+                    "now-playing shows on track start.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Renders the Last.fm card header: title, live status, and enable toggle.
+ *
+ * @param enabled Whether scrobbling is on.
+ * @param status Human-readable client state.
+ * @param onToggle Invoked with the new toggle value.
+ */
+@Composable
+private fun LastFmHeaderRow(
+    enabled: Boolean,
+    status: String,
+    onToggle: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Scrobble plays")
+            Text(
+                "Status: $status",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (status.startsWith("error")) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = onToggle,
+        )
+    }
+}
+
+/**
+ * Renders the Last.fm API key/secret fields, persisting on every change.
+ *
+ * @param apiKey Current API key text.
+ * @param secret Current shared-secret text.
+ * @param onApiKeyChange Invoked with the trimmed key.
+ * @param onSecretChange Invoked with the trimmed secret.
+ */
+@Composable
+private fun LastFmCredentialsFields(
+    apiKey: String,
+    secret: String,
+    onApiKeyChange: (String) -> Unit,
+    onSecretChange: (String) -> Unit,
+) {
+    OutlinedTextField(
+        value = apiKey,
+        onValueChange = { onApiKeyChange(it.trim()) },
+        label = { Text("Last.fm API key") },
+        supportingText = {
+            Text("From a last.fm/api application you create")
+        },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = secret,
+        onValueChange = { onSecretChange(it.trim()) },
+        label = { Text("Last.fm shared secret") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+}
+
+/**
+ * Renders the Last.fm browser-approval flow: connect, confirm, or reopen.
+ *
+ * @param sys System handles exposing the Last.fm client.
+ * @param token Pending request token, or null before requesting one.
+ * @param busy True while a network step runs.
+ * @param apiKeyReady True when key and secret are filled in.
+ * @param onStart Begins a step: clears errors and marks busy.
+ * @param onToken Stores a fresh request token (null clears it).
+ * @param onBusyChange Tracks network activity.
+ * @param onFailed Reports a failed step.
+ * @param onSignedIn Clears the token after a completed handshake.
+ */
+@Composable
+private fun LastFmAuthActions(
+    sys: nixietube.sys.SysHandles,
+    token: String?,
+    busy: Boolean,
+    apiKeyReady: Boolean,
+    onStart: () -> Unit,
+    onToken: (String?) -> Unit,
+    onBusyChange: (Boolean) -> Unit,
+    onFailed: () -> Unit,
+    onSignedIn: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    if (token == null) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    onStart()
+                    scope.launch {
+                        val fresh = sys.lastfm.requestToken()
+                        if (fresh != null) {
+                            onToken(fresh)
+                            openUrl(sys.lastfm.authorizeUrl(fresh))
+                        } else {
+                            onFailed()
+                        }
+                        onBusyChange(false)
+                    }
+                },
+                enabled = !busy && apiKeyReady,
+            ) {
+                Text(if (busy) "Requesting…" else "Connect with last.fm")
+            }
+        }
+        return
+    }
+    Text(
+        "Approve NixieTube in the browser tab, then continue here.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = {
+                onStart()
+                scope.launch {
+                    if (sys.lastfm.completeAuth(token)) {
+                        onSignedIn()
+                    } else {
+                        onFailed()
+                    }
+                    onBusyChange(false)
+                }
+            },
+            enabled = !busy,
+        ) {
+            Text(if (busy) "Verifying…" else "I've authorized it")
+        }
+        TextButton(onClick = { openUrl(sys.lastfm.authorizeUrl(token)) }) {
+            Text("Reopen browser")
         }
     }
 }
@@ -288,7 +539,7 @@ private fun CookieSignInCard(state: AppState) {
     if (failed) {
         Text(
             loginDetail
-                ?: "Sign-in failed — the cookie needs a SAPISID value from a logged-in session. Try copying it again.",
+                ?: "Sign-in failed: the cookie needs a SAPISID value from a logged-in session. Try copying it again.",
             color = MaterialTheme.colorScheme.error,
         )
         Spacer(Modifier.height(8.dp))
@@ -320,9 +571,9 @@ private fun openUrl(url: String) {
 }
 
 /**
- * Renders the Google TV-device OAuth sign-in card with client-ID fields and device-code flow.
+ * Renders the Google OAuth sign-in card with client-ID fields and browser login.
  *
- * @param state shared app state driving the device login handshake.
+ * @param state shared app state driving the browser login handshake.
  */
 @Composable
 fun GoogleSignInCard(state: AppState) {
@@ -330,15 +581,14 @@ fun GoogleSignInCard(state: AppState) {
     var clientSecret by remember { mutableStateOf(nixietube.sys.SysConfig.googleClientSecret) }
     var busy by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
-    var userCode by remember { mutableStateOf<String?>(null) }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Sign in with Google", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Uses a TV-device OAuth client from Google Cloud Console. " +
-                    "You get a short code, approve it at google.com/device, " +
+                "Uses a Desktop-type OAuth client from Google Cloud Console. " +
+                    "Approval happens in the browser on this machine, " +
                     "and tokens stay on this machine with auto-refresh.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -350,7 +600,7 @@ fun GoogleSignInCard(state: AppState) {
                     clientId = it
                     nixietube.sys.SysConfig.googleClientId = it
                 },
-                label = { Text("OAuth client ID (TV / Limited Input type)") },
+                label = { Text("OAuth client ID (Desktop type)") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
@@ -373,42 +623,27 @@ fun GoogleSignInCard(state: AppState) {
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            userCode?.let { code ->
-                Text(
-                    "Enter this code at google.com/device:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(code, style = MaterialTheme.typography.headlineMedium)
-                Spacer(Modifier.height(8.dp))
-            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
                         busy = true
                         failed = false
-                        userCode = null
                         state.beginGoogleLogin()
-                        state.googleLogin(
-                            onUserCode = { code, url ->
-                                userCode = code
-                                openUrl(url)
-                            },
+                        state.googleBrowserLogin(
+                            onBrowse = { openUrl(it) },
                         ) { ok ->
                             busy = false
                             failed = !ok
-                            if (ok) userCode = null
                         }
                     },
                     enabled = !busy && clientId.isNotBlank() && clientSecret.isNotBlank(),
                 ) {
-                    Text(if (busy) "Waiting for approval…" else "Sign in with Google")
+                    Text(if (busy) "Waiting for browser…" else "Sign in with Google")
                 }
                 if (busy) {
                     TextButton(onClick = {
                         state.cancelGoogleLogin()
                         busy = false
-                        userCode = null
                     }) { Text("Cancel") }
                 }
             }

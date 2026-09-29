@@ -134,7 +134,7 @@ fun AlbumPanel(
                 // Profile picture and artist-page check resolve
                 // asynchronously (Data API avatar, else InnerTube artist
                 // imagery); the initial box shows meanwhile. Only verified
-                // artist pages are clickable — plain user channels are not.
+                // artist pages are clickable, plain user channels are not.
                 var avatarUrl by remember(owner.browseId) { mutableStateOf(ownerAvatar) }
                 var authorIsArtist by remember(owner.browseId) { mutableStateOf<Boolean?>(null) }
                 LaunchedEffect(owner.browseId, ownerAvatar) {
@@ -171,11 +171,7 @@ fun AlbumPanel(
                     Text(
                         owner.name,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (openAuthor != null) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -257,13 +253,13 @@ fun AlbumPanel(
                     }
                 }
                 LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
-                    itemsIndexed(sorted, key = { _, t -> t.videoId }) { i, t ->
+                    itemsIndexed(sorted, key = { i, t -> "${t.videoId}@$i" }) { i, t ->
                         TrackRow(
                             track = t,
                             index = if (numbered) i + 1 else null,
                             playing = t.videoId == playingId,
                             onPlay = { state.playSongs(sorted, i) },
-                            onEnqueue = { state.player.enqueueNext(t) },
+                            onPlaylists = { state.openPlaylistDialog(t) },
                             showLike = canRate,
                             onLike = { state.rateTrack(t.videoId, RatingStatus.LIKE) },
                             rating = t.rating,

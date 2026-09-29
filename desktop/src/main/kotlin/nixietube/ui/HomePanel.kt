@@ -42,9 +42,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.key.key
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import nixietube.innertube.Shelf
 import nixietube.innertube.ShelfItem
 import nixietube.innertube.Track
@@ -177,17 +181,21 @@ fun HomePanel(state: AppState) {
                 // capped grid + shorter list on narrow ones.
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     if (maxWidth >= 900.dp) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        ) {
-                            Column(Modifier.weight(1.55f)) {
+                        QuickPicksLikedRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            spacing = 16.dp,
+                            quickContent = {
                                 QuickPicksGrid(quickPicks, state, player.current?.videoId)
-                            }
-                            Column(Modifier.weight(1f)) {
-                                LikedSideList(liked, state, player.current?.videoId)
-                            }
-                        }
+                            },
+                            likedContent = {
+                                LikedSideList(
+                                    liked,
+                                    state,
+                                    player.current?.videoId,
+                                    listHeight = null,
+                                )
+                            },
+                        )
                     } else {
                         Column(Modifier.fillMaxWidth()) {
                             QuickPicksGrid(quickPicks, state, player.current?.videoId)
@@ -203,11 +211,11 @@ fun HomePanel(state: AppState) {
                 val railState = rememberLazyListState()
                 RailHeader("Jump back in", railState)
                 LazyRow(state = railState) {
-                    items(activity.take(14), key = { it.videoId }) { t ->
+                    itemsIndexed(activity.take(14), key = { i, t -> "${t.videoId}@$i" }) { i, t ->
                         TrackRailCard(
                             track = t,
                             playing = t.videoId == player.current?.videoId,
-                            onClick = { state.playSongs(activity, activity.indexOf(t)) },
+                            onClick = { state.playSongs(activity, i) },
                         )
                     }
                 }
@@ -221,11 +229,11 @@ fun HomePanel(state: AppState) {
                     TextButton(onClick = { state.playSongs(discover, 0) }) { Text("Play all") }
                 }
                 LazyRow(state = railState) {
-                    items(discover, key = { it.videoId }) { t ->
+                    itemsIndexed(discover, key = { i, t -> "${t.videoId}@$i" }) { i, t ->
                         TrackRailCard(
                             track = t,
                             playing = t.videoId == player.current?.videoId,
-                            onClick = { state.playSongs(discover, discover.indexOf(t)) },
+                            onClick = { state.playSongs(discover, i) },
                         )
                     }
                 }
@@ -241,45 +249,123 @@ fun HomePanel(state: AppState) {
 }
 
 
+// Side-by-side row where the liked list is cut to the quick-picks height.
+// Measures quick picks first, then forces the liked column to that exact
+// height so its inner list scrolls/clips. Avoids IntrinsicSize, which is
+// unsupported for SubcomposeLayout children like LazyColumn/BoxWithConstraints.
+/**
+ * Side-by-side quick-picks + liked-songs row matched in height.
+ * @param modifier outer layout modifier.
+ * @param spacing horizontal gap between the two columns.
+ * @param quickWeight relative width of the quick-picks column.
+ * @param likedWeight relative width of the liked column.
+ * @param quickContent quick-picks grid content; measured first and drives the row height.
+ * @param likedContent liked-songs content; constrained to the quick-picks height.
+ */
+@Composable
+private fun QuickPicksLikedRow(
+    modifier: Modifier = Modifier,
+    spacing: Dp = 16.dp,
+    quickWeight: Float = 1.55f,
+    likedWeight: Float = 1f,
+    quickContent: @Composable () -> Unit,
+    likedContent: @Composable () -> Unit,
+) {
+    Layout(
+        content = {
+            // Wrap in Column/Box so each side is a single measurable.
+            // QuickPicksGrid emits 3 siblings (header, spacer, grid) which
+            // must stay vertical -> Column. Liked is a single Column -> Box.
+            Column { quickContent() }
+            Box { likedContent() }
+        },
+        modifier = modifier,
+    ) { measurables, constraints ->
+        check(measurables.size == 2) { "Expected 2 children, got ${measurables.size}" }
+        val spacingPx = spacing.toPx().roundToInt()
+        val totalWidth = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            measurables[0].measure(constraints).width +
+                spacingPx +
+                measurables[1].measure(constraints).width
+        }
+        val totalWeight = quickWeight + likedWeight
+        val quickWidth = ((totalWidth - spacingPx) * (quickWeight / totalWeight)).toInt()
+            .coerceAtLeast(0)
+        val likedWidth = (totalWidth - spacingPx - quickWidth).coerceAtLeast(0)
+        // Quick picks first: unbounded height, fixed width. No intrinsics.
+        val quickPlaceable = measurables[0].measure(
+            Constraints.fixedWidth(quickWidth).copy(
+                minHeight = 0,
+                maxHeight = Constraints.Infinity,
+            ),
+        )
+        val rowHeight = quickPlaceable.height
+        // Liked second: forced to the exact quick-picks height so the inner
+        // LazyColumn (weight 1f) fills the remainder and clips.
+        val likedPlaceable = measurables[1].measure(
+            Constraints.fixedWidth(likedWidth).copy(
+                minHeight = rowHeight,
+                maxHeight = rowHeight,
+            ),
+        )
+        layout(totalWidth, rowHeight) {
+            quickPlaceable.placeRelative(0, 0)
+            likedPlaceable.placeRelative(quickWidth + spacingPx, 0)
+        }
+    }
+}
+
 // Liked songs list: normal rows under a header with Play all.
 /**
  * Liked-songs side list with a "Play all" header and rate/enqueue row actions.
  * @param liked liked tracks to display.
  * @param state app state used for playback and rating actions.
  * @param playingId videoId of the currently playing track, or null.
- * @param listHeight fixed height of the scrolling list.
+ * @param listHeight fixed height of the scrolling list, or null to fill the
+ * available height (wide side-by-side mode, cut where the quick-pick tiles end).
+ * @param modifier outer layout modifier.
  */
 @Composable
 private fun LikedSideList(
     liked: List<Track>,
     state: AppState,
     playingId: String?,
-    listHeight: androidx.compose.ui.unit.Dp = 600.dp,
+    listHeight: Dp? = 600.dp,
+    modifier: Modifier = Modifier,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            "Liked songs",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            onClick = { state.playSongs(liked, 0) },
-            enabled = liked.isNotEmpty(),
-        ) {
-            Text("Play all")
-        }
-    }
-    Spacer(Modifier.height(8.dp))
-    LazyColumn(Modifier.fillMaxWidth().height(listHeight)) {
-        itemsIndexed(liked, key = { _, t -> t.videoId }) { i, t ->
-            TrackRow(
-                track = t,
-                playing = t.videoId == playingId,
-                onPlay = { state.playSongs(liked, i) },
-                onEnqueue = { state.player.enqueueNext(t) },
-                rating = t.rating,
-                onRate = ({ state.rateTrack(t.videoId, it) }),
+    Column(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Liked songs",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
             )
+            TextButton(
+                onClick = { state.playSongs(liked, 0) },
+                enabled = liked.isNotEmpty(),
+            ) {
+                Text("Play all")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        val listModifier = if (listHeight != null) {
+            Modifier.fillMaxWidth().height(listHeight)
+        } else {
+            Modifier.fillMaxWidth().weight(1f)
+        }
+        LazyColumn(listModifier) {
+            itemsIndexed(liked, key = { i, t -> "${t.videoId}@$i" }) { i, t ->
+                TrackRow(
+                    track = t,
+                    playing = t.videoId == playingId,
+                    onPlay = { state.playSongs(liked, i) },
+                    onPlaylists = { state.openPlaylistDialog(t) },
+                    rating = t.rating,
+                    onRate = ({ state.rateTrack(t.videoId, it) }),
+                )
+            }
         }
     }
 }
@@ -387,7 +473,7 @@ private fun ShelfSection(shelf: Shelf, state: AppState, playingId: String?) {
                 TrackRow(
                     track = t, playing = t.videoId == playingId,
                     onPlay = { state.playSongs(songs, i) },
-                    onEnqueue = { state.player.enqueueNext(t) },
+                    onPlaylists = { state.openPlaylistDialog(t) },
                     rating = t.rating,
                 )
             }

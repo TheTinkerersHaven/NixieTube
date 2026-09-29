@@ -70,7 +70,7 @@ dependencies {
 // Trimmed runtime via the JDK's own jlink (no extra plugins): jdeps
 // computes the exact java.* modules from the runtime classpath, then
 // jlink links only those into build/jlink-runtime. Both tasks rebuild
-// jars — close the app first (mmap), then:
+// jars, close the app first (mmap), then:
 //   ./gradlew :desktop:jlinkRuntime
 //   build/jlink-runtime/bin/java -jar desktop/build/libs/nixietube.jar
 // or ./gradlew :desktop:runTrimmed
@@ -115,7 +115,7 @@ abstract class JlinkRuntimeTask : DefaultTask() {
             ?: throw GradleException("jdeps produced no module list:\n$jdepsText")
         // jdeps can't see dynamic needs: Unsafe/AWT hooks
         // (jdk.unsupported) and the TLS elliptic-curve provider, which
-        // loads via ServiceLoader (jdk.crypto.ec — without it every
+        // loads via ServiceLoader (jdk.crypto.ec, without it every
         // HTTPS handshake fails). Both always exist; including them
         // only costs bytes.
         mods += "jdk.unsupported"

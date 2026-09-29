@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material3.CircularProgressIndicator
@@ -330,6 +331,11 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
                                         else MaterialTheme.colorScheme.onSurface,
                                 )
                             }
+                            if (state.gdata != null) {
+                                IconButton(onClick = { state.openPlaylistDialog(track) }) {
+                                    Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to playlist")
+                                }
+                            }
                         }
                     }
                 }
@@ -372,7 +378,7 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
                         LazyColumn(Modifier.fillMaxSize()) {
                             itemsIndexed(
                                 player.queue,
-                                key = { _, t -> t.videoId + "@" + player.queue.indexOf(t) },
+                                key = { i, t -> "${t.videoId}@$i" },
                             ) { i, t ->
                                 TrackRow(
                                     track = t,
@@ -413,6 +419,12 @@ fun NowPlaying(state: AppState, onClose: () -> Unit) {
  */
 @Composable
 fun SongInfoView(state: AppState, track: Track, onClose: () -> Unit) {
+    // Live engine duration wins: catalog metadata is often missing it while
+    // the seek bar already knows the real length.
+    val player by state.player.state.collectAsState()
+    val durationMs = player.durationMs.takeIf { it > 0 }
+        ?: (track.durationSec * 1000L).takeIf { track.durationSec > 0 }
+        ?: 0L
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
         @Composable
         fun Row(label: String, value: String, onClick: (() -> Unit)? = null) {
@@ -428,7 +440,7 @@ fun SongInfoView(state: AppState, track: Track, onClose: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    value.ifBlank { "—" },
+                    value.ifBlank { "Unknown" },
                     style = MaterialTheme.typography.bodyLarge,
                     color = if (onClick != null) {
                         MaterialTheme.colorScheme.primary
@@ -485,20 +497,10 @@ fun SongInfoView(state: AppState, track: Track, onClose: () -> Unit) {
         Row("Year", track.album?.year.orEmpty())
         Row(
             "Duration",
-            if (track.durationSec > 0) fmtDur(track.durationSec) else "",
-        )
-        Row(
-            "Rating",
-            when (track.rating) {
-                RatingStatus.LIKE -> "Liked"
-                RatingStatus.DISLIKE -> "Disliked"
-                RatingStatus.INDIFFERENT -> "Indifferent"
-                RatingStatus.UNKNOWN -> ""
-            },
+            if (durationMs > 0) fmtTime(durationMs) else "",
         )
         if (track.views.isNotBlank()) Row("Views", track.views)
         Row("Likes", fmtCount(track.likeCount))
-        Row("Dislikes", fmtCount(track.dislikeCount))
     }
 }
 

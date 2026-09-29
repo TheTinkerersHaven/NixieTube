@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 class SysHandles(
     val mpris: MprisService,
     val discord: DiscordPresence,
+    val lastfm: LastFm,
     val isLinux: Boolean,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
@@ -38,6 +39,10 @@ class SysHandles(
     private val _mprisError = MutableStateFlow<String?>(null)
     /** Last MPRIS startup error, or null when healthy. */
     val mprisError: StateFlow<String?> = _mprisError.asStateFlow()
+
+    private val _lastfmStatus = MutableStateFlow("disabled")
+    /** Latest Last.fm state mirrored from the client. */
+    val lastfmStatus: StateFlow<String> = _lastfmStatus.asStateFlow()
 
     /**
      * Publishes an MPRIS error for the UI to display.
@@ -60,6 +65,15 @@ class SysHandles(
                 while (true) {
                     kotlinx.coroutines.delay(2000)
                     _discordStatus.value = it.status
+                }
+            }
+        }
+        lastfm.refreshStatus()
+        scope.launch {
+            lastfm.let {
+                while (true) {
+                    kotlinx.coroutines.delay(2000)
+                    _lastfmStatus.value = it.status
                 }
             }
         }
@@ -87,7 +101,7 @@ class SysHandles(
                 _mprisActive.value = true
             } else {
                 _mprisActive.value = false
-                setMprisError((mpris.lastError ?: "failed to start") + " — is another copy running?")
+                setMprisError((mpris.lastError ?: "failed to start") + ", is another copy running?")
             }
         } else {
             mpris.stop()
@@ -112,5 +126,32 @@ class SysHandles(
         SysConfig.discordStatusText = statusText
         discord.invalidate()
         _discordStatus.value = discord.status
+    }
+
+    /**
+     * Persists Last.fm credentials and toggle, refreshing the mirrored status.
+     *
+     * Changing key/secret signs out the stored session since it belongs to
+     * the previous application.
+     *
+     * @param apiKey Last.fm API key.
+     * @param secret Last.fm shared secret.
+     * @param enabled Whether scrobbling should run.
+     */
+    fun saveLastFm(apiKey: String, secret: String, enabled: Boolean) {
+        if (apiKey.trim() != SysConfig.lastfmApiKey || secret.trim() != SysConfig.lastfmSecret) {
+            lastfm.logout()
+        }
+        SysConfig.lastfmApiKey = apiKey.trim()
+        SysConfig.lastfmSecret = secret.trim()
+        SysConfig.lastfmEnabled = enabled
+        lastfm.refreshStatus()
+        _lastfmStatus.value = lastfm.status
+    }
+
+    /** Signs out of Last.fm, keeping key/secret for the next login. */
+    fun logoutLastFm() {
+        lastfm.logout()
+        _lastfmStatus.value = lastfm.status
     }
 }

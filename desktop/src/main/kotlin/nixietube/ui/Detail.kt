@@ -92,7 +92,7 @@ fun DetailScreen(state: AppState, item: ShelfItem.Browse) {
                 // Clear the floating back button (48dp at an 8dp offset):
                 // without this inset it clips the cover's top-left corner
                 // and the sort bar hugs the window top. Library needs no
-                // inset — its back button is in-flow chrome above the panel.
+                // inset, its back button is in-flow chrome above the panel.
                 detail.album?.let { album ->
                     AlbumPanel(
                         modifier = Modifier.padding(top = 64.dp),
@@ -242,7 +242,7 @@ fun ArtistDetailView(
                         ) {
                             Icon(Icons.Rounded.Shuffle, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Casuale")
+                            Text("Shuffle")
                         }
                         OutlinedButton(
                             onClick = { state.startArtistRadio(artist) },
@@ -268,7 +268,7 @@ fun ArtistDetailView(
                                     }
                                 },
                             ) {
-                                Text(if (subscribed == true) "Iscritto" else "Iscriviti")
+                                Text(if (subscribed == true) "Subscribed" else "Subscribe")
                             }
                         }
                     }
@@ -281,7 +281,7 @@ fun ArtistDetailView(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "Brani più ascoltati",
+                        "Top songs",
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f),
                     )
@@ -291,8 +291,8 @@ fun ArtistDetailView(
                                 state.go(
                                     Screen.Detail(
                                         ShelfItem.Browse(
-                                            title = "Tutti i brani",
-                                            subtitle = "Ordinati per ascolti",
+                                            title = "All songs",
+                                            subtitle = "Sorted by plays",
                                             browseId = playlistId,
                                             thumbnails = emptyList(),
                                             browseParams = artist.songsPlaylistParams,
@@ -306,13 +306,13 @@ fun ArtistDetailView(
                     }
                 }
             }
-            itemsIndexed(artist.topSongs, key = { _, t -> t.videoId }) { i, t ->
+            itemsIndexed(artist.topSongs, key = { i, t -> "${t.videoId}@$i" }) { i, t ->
                 TrackRow(
                     track = t,
                     index = i + 1,
                     playing = t.videoId == playingId,
                     onPlay = { state.playArtistTopSong(artist, i) },
-                    onEnqueue = { state.player.enqueueNext(t) },
+                    onPlaylists = { state.openPlaylistDialog(t) },
                     showLike = canRate,
                     onLike = { state.rateTrack(t.videoId, RatingStatus.LIKE) },
                     rating = t.rating,

@@ -3,6 +3,7 @@ package nixietube.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,14 +11,18 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
@@ -29,6 +34,10 @@ import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +45,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +63,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import nixietube.innertube.RatingStatus
 import nixietube.innertube.ShelfItem
@@ -179,7 +190,7 @@ fun SeekSlider(
  * @param index optional leading track number.
  * @param playing whether this track is currently playing (highlights title/index).
  * @param onPlay invoked when the row is clicked.
- * @param onEnqueue optional "play next" action; hidden when null.
+ * @param onPlaylists optional "add to playlist" action; hidden when null.
  * @param showLike whether to show a standalone like button when [onRate] is absent.
  * @param onLike optional simple like callback used when [onRate] is absent.
  * @param rating current rating used to tint the like/dislike state.
@@ -191,7 +202,7 @@ fun TrackRow(
     index: Int? = null,
     playing: Boolean = false,
     onPlay: () -> Unit,
-    onEnqueue: (() -> Unit)? = null,
+    onPlaylists: (() -> Unit)? = null,
     showLike: Boolean = false,
     onLike: (() -> Unit)? = null,
     rating: RatingStatus = RatingStatus.UNKNOWN,
@@ -285,9 +296,9 @@ fun TrackRow(
                 if (track.durationSec > 0) {
                     Text(fmtDur(track.durationSec), style = MaterialTheme.typography.bodySmall)
                 }
-                if (onEnqueue != null) {
-                    IconButton(onClick = onEnqueue) {
-                        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, "Play next")
+                if (onPlaylists != null) {
+                    IconButton(onClick = onPlaylists) {
+                        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to playlist")
                     }
                 }
             }
@@ -398,7 +409,7 @@ fun TrackRailGrid(
 ) {
     if (tracks.isEmpty()) return
     LazyRow(state = listState) {
-        items(tracks, key = { it.videoId }) { t ->
+        itemsIndexed(tracks, key = { i, t -> "${t.videoId}@$i" }) { _, t ->
             TrackRailCard(
                 track = t,
                 playing = t.videoId == playingId,
@@ -486,7 +497,7 @@ fun ArtistBrowseRail(
     val railState = rememberLazyListState()
     RailHeader(title, railState, Modifier.padding(horizontal = 12.dp))
     LazyRow(state = railState, contentPadding = PaddingValues(horizontal = 16.dp)) {
-        items(items, key = { it.browseId }) { item ->
+        itemsIndexed(items, key = { i, item -> "${item.browseId}@$i" }) { _, item ->
             if (circular) {
                 SimilarArtistCard(item) { state.go(Screen.Detail(item)) }
             } else {
@@ -548,6 +559,153 @@ fun SimilarArtistCard(item: ShelfItem.Browse, onClick: () -> Unit) {
                 item.subtitle,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Centered add-to-playlist dialog for [track]: play-next shortcut plus one
+ * toggle row per account playlist showing current membership.
+ *
+ * @param state shared app state backing playlists, membership and toggles.
+ * @param track track to add, remove, or enqueue.
+ */
+@Composable
+fun PlaylistPickerDialog(state: AppState, track: Track) {
+    val playlists by state.playlists.collectAsState()
+    val membership by state.playlistMembership.collectAsState()
+    val loading by state.playlistDialogLoading.collectAsState()
+    val error by state.playlistDialogError.collectAsState()
+    val mine = playlists.filter { it.id != "__liked" }
+    Dialog(onDismissRequest = { state.closePlaylistDialog() }) {
+        Card(Modifier.widthIn(min = 320.dp, max = 480.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                PlaylistPickerHeader(
+                    track = track,
+                    onPlayNext = {
+                        state.player.enqueueNext(track)
+                        state.closePlaylistDialog()
+                    },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainerHigh)
+                if (state.gdata == null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Sign in to manage playlists.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (loading && mine.isNotEmpty()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(32.dp))
+                    }
+                } else if (mine.isEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "No playlists yet. Create some on YouTube Music.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                        itemsIndexed(mine, key = { _, pl -> pl.id }) { _, pl ->
+                            PlaylistPickerRow(
+                                title = pl.title,
+                                itemCount = pl.itemCount,
+                                member = membership[pl.id] == true,
+                                onToggle = { state.toggleTrackPlaylist(pl.id, track) },
+                            )
+                        }
+                    }
+                }
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Dialog header: title, track credit line, and the play-next shortcut row.
+ *
+ * @param track track the dialog acts on.
+ * @param onPlayNext invoked to enqueue the track after the current one.
+ */
+@Composable
+private fun PlaylistPickerHeader(
+    track: Track,
+    onPlayNext: () -> Unit,
+) {
+    Text(
+        "Add to playlist",
+        style = MaterialTheme.typography.titleLarge,
+    )
+    Spacer(Modifier.height(4.dp))
+    Text(
+        listOf(track.title, track.artistNames)
+            .filter { it.isNotBlank() }
+            .joinToString(" • "),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable(onClick = onPlayNext)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, "Play next")
+        Spacer(Modifier.width(12.dp))
+        Text("Play next", style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+/**
+ * One playlist row in the picker dialog: checkbox plus title and song count.
+ *
+ * @param title playlist title.
+ * @param itemCount cached track count shown under the title.
+ * @param member whether the track is currently in the playlist.
+ * @param onToggle invoked to add or remove the track.
+ */
+@Composable
+private fun PlaylistPickerRow(
+    title: String,
+    itemCount: Int,
+    member: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = member,
+            onCheckedChange = { onToggle() },
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                "$itemCount songs",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

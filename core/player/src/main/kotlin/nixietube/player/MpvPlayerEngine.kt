@@ -32,7 +32,7 @@ import kotlin.concurrent.thread
 //
 // Why a subprocess instead of an in-JVM library: decoding/native memory
 // lives outside the JVM (smaller app RSS), and control uses only JDK APIs
-// (ProcessBuilder + Unix-domain sockets + JSON) — no JNA/JNI, which keeps
+// (ProcessBuilder + Unix-domain sockets + JSON), no JNA/JNI, which keeps
 // this backend viable for jlink-trimmed runtimes and, later, GraalVM.
 // Implements the same PlayerEngine contract, so queue, session, retry,
 // MPRIS and Discord logic in PlayerController is untouched.
@@ -105,7 +105,7 @@ class MpvPlayerEngine(
     }
 
     /** Stops the current file; the resulting end-file "stop" event is ignored,
-     * as mpv's `stop` never fires "finished" — same semantics as a hard skip.
+     * as mpv's `stop` never fires "finished", same semantics as a hard skip.
      */
     override fun stop() {
         if (!isAlive()) {
@@ -318,7 +318,7 @@ class MpvPlayerEngine(
             put("command", buildJsonArray {
                 parts.forEach {
                     when (it) {
-                        // NB: numbers must stay numeric — JsonPrimitive(str)
+                        // NB: numbers must stay numeric, JsonPrimitive(str)
                         // would send them as strings and mpv rejects the
                         // command (this silently killed property observers).
                         is String -> add(JsonPrimitive(it))
@@ -408,7 +408,7 @@ class MpvPlayerEngine(
                     "pause" -> data?.booleanOrNull?.let { paused = it }
                     // Fallback finish signal: with --keep-open=yes (mpv
                     // forces it under --idle, and user mpv.conf can too)
-                    // no end-file event is ever sent — the player just
+                    // no end-file event is ever sent, the player just
                     // sits paused at EOF with eof-reached=true. Treat
                     // that as a natural finish. Guarded by `loaded` so
                     // it fires once; the end-file path below clears the

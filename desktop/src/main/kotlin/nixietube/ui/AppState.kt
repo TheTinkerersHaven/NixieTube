@@ -161,7 +161,7 @@ class AppState(
     private var loginValid = true
     // Watchtime beacon wrapper with failure logging (successes are
     // silent; only exceptions, total failures, and expired-cookie
-    // warnings are logged — see callers). Log lives at /tmp/nixietube-watchtime.log.
+    // warnings are logged, see callers). Log lives at /tmp/nixietube-watchtime.log.
     /** Sends one watchtime beacon for [videoId], logging failures to the watchtime log file. */
     private suspend fun sendWatchtime(
         videoId: String,
@@ -182,7 +182,7 @@ class AppState(
             if (!loginValid) {
                 try {
                     java.io.File("/tmp/nixietube-watchtime.log")
-                        .appendText("${java.time.Instant.now()} WARNING LOGIN_INFO expired (logged_in=0) — " +
+                        .appendText("${java.time.Instant.now()} WARNING LOGIN_INFO expired (logged_in=0): " +
                             "stats/* beacons will not record history. Re-authenticate in Settings → Integrations.\n")
                 } catch (_: Exception) { }
             }
@@ -803,7 +803,7 @@ class AppState(
                     }
                 }
                 // Playback reporting to YouTube's stats/watchtime beacons
-                // (opt-in via SysConfig.reportPlayback) — the pipeline
+                // (opt-in via SysConfig.reportPlayback), the pipeline
                 // official clients use to record listening history.
                 if (SysConfig.reportPlayback) {
                     val prevVid = lastReportedVideoId
@@ -1414,7 +1414,7 @@ class AppState(
         scope.launch {
             if (cookie.contains('…') || cookie.contains("...")) {
                 _loginDetail.value = "The pasted cookie looks TRUNCATED (it contains '…'). " +
-                    "In DevTools, click 'view source' next to Request Headers and copy the full Cookie line — " +
+                    "In DevTools, click 'view source' next to Request Headers and copy the full Cookie line, " +
                     "the pretty view cuts long values off."
                 onDone(false)
                 return@launch
@@ -1424,9 +1424,9 @@ class AppState(
                 val names = Regex("""([A-Za-z0-9_.$-]+)=""").findAll(cookie)
                     .map { it.groupValues[1] }.distinct().take(12).toList()
                 _loginDetail.value = if (names.isEmpty()) {
-                    "The pasted text contains no cookies at all — copy the whole 'Cookie' header value."
+                    "The pasted text contains no cookies at all. Copy the whole 'Cookie' header value."
                 } else {
-                    "Found cookies: ${names.joinToString(", ")} — none is __Secure-3PAPISID/SAPISID. " +
+                    "Found cookies: ${names.joinToString(", ")}. None is __Secure-3PAPISID/SAPISID. " +
                         "Copy the Cookie header of a music.youtube.com request while logged in."
                 }
                 onDone(false)
@@ -1469,7 +1469,7 @@ class AppState(
             } else {
                 tube.auth = AuthSession.Anonymous
                 _loginDetail.value =
-                    "Cookie has SAPISID but YouTube rejected it — the browser session may be logged out or " +
+                    "Cookie has SAPISID but YouTube rejected it. The browser session may be logged out or " +
                         "expired. Log in on music.youtube.com and copy a fresh Cookie header."
                 onDone(false)
             }
@@ -1713,6 +1713,143 @@ class AppState(
         _openPlaylist.value = null
     }
 
+    private val _playlistDialogTrack = MutableStateFlow<Track?>(null)
+    /** Track shown in the add-to-playlist dialog, or null when closed. */
+    val playlistDialogTrack: StateFlow<Track?> = _playlistDialogTrack.asStateFlow()
+
+    private val _playlistMembership = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    /** Playlist ids containing the dialog track, by playlist id. */
+    val playlistMembership: StateFlow<Map<String, Boolean>> = _playlistMembership.asStateFlow()
+
+    private val _playlistItemIds = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    private val _playlistDialogLoading = MutableStateFlow(false)
+    /** True while playlist membership is being resolved for the dialog. */
+    val playlistDialogLoading: StateFlow<Boolean> = _playlistDialogLoading.asStateFlow()
+
+    private val _playlistDialogError = MutableStateFlow<String?>(null)
+    /** Last playlist add/remove failure shown in the dialog, if any. */
+    val playlistDialogError: StateFlow<String?> = _playlistDialogError.asStateFlow()
+
+    /**
+     * Opens the add-to-playlist dialog for [track] and resolves which of
+     * the account playlists already contain it.
+     *
+     * @param track track to add or remove.
+     */
+    fun openPlaylistDialog(track: Track) {
+        _playlistDialogTrack.value = track
+        _playlistMembership.value = emptyMap()
+        _playlistItemIds.value = emptyMap()
+        _playlistDialogError.value = null
+        val api = gdata ?: run {
+            _playlistDialogLoading.value = false
+            return
+        }
+        _playlistDialogLoading.value = true
+        scope.launch {
+            val ids = _playlists.value.map { it.id }.filter { it != "__liked" }
+            val found = coroutineScope {
+                ids.map { id ->
+                    async {
+                        id to runCatching { api.playlistItemId(id, track.videoId) }.getOrNull()
+                    }
+                }.awaitAll()
+            }.toMap()
+            if (_playlistDialogTrack.value?.videoId != track.videoId) return@launch
+            _playlistItemIds.value = found.mapNotNull { (id, itemId) ->
+                itemId?.let { id to it }
+            }.toMap()
+            _playlistMembership.value = found.mapValues { it.value != null }
+            _playlistDialogLoading.value = false
+        }
+    }
+
+    /** Closes the add-to-playlist dialog. */
+    fun closePlaylistDialog() {
+        _playlistDialogTrack.value = null
+    }
+
+    /**
+     * Adds [track] to the playlist, or removes it when already a member.
+     * Membership, item ids, the open playlist view and item counts update
+     * optimistically and roll back on failure.
+     *
+     * @param playlistId Data API playlist id.
+     * @param track track to add or remove.
+     */
+    fun toggleTrackPlaylist(playlistId: String, track: Track) {
+        val api = gdata ?: return
+        val member = _playlistMembership.value[playlistId] == true
+        _playlistDialogError.value = null
+        scope.launch {
+            val ok = if (member) {
+                removeFromPlaylist(api, playlistId, track)
+            } else {
+                runCatching { api.addToPlaylist(playlistId, track.videoId) }.getOrDefault(false)
+            }
+            if (_playlistDialogTrack.value?.videoId != track.videoId) return@launch
+            if (!ok) {
+                _playlistDialogError.value =
+                    if (member) {
+                        "Could not remove from the playlist. Try again."
+                    } else {
+                        "Could not add to the playlist. Try again."
+                    }
+                return@launch
+            }
+            if (member) {
+                applyTrackRemoved(playlistId, track)
+            } else {
+                applyTrackAdded(api, playlistId, track)
+            }
+        }
+    }
+
+    /** Removes [track] from the playlist, resolving the item id when uncached. */
+    private suspend fun removeFromPlaylist(
+        api: GDataApi,
+        playlistId: String,
+        track: Track,
+    ): Boolean {
+        val itemId = _playlistItemIds.value[playlistId]
+            ?: runCatching { api.playlistItemId(playlistId, track.videoId) }.getOrNull()
+        return itemId != null && runCatching { api.removePlaylistItem(itemId) }.getOrDefault(false)
+    }
+
+    /** Applies a removal to membership, item ids, counts and the open view. */
+    private fun applyTrackRemoved(playlistId: String, track: Track) {
+        _playlistMembership.value = _playlistMembership.value + (playlistId to false)
+        _playlistItemIds.value = _playlistItemIds.value - playlistId
+        _openPlaylist.value = _openPlaylist.value?.let { (open, tracks) ->
+            if (open.id == playlistId) {
+                open to tracks.filterNot { it.videoId == track.videoId }
+            } else {
+                open to tracks
+            }
+        }
+        _playlists.value = _playlists.value.map { pl ->
+            if (pl.id == playlistId) pl.copy(itemCount = (pl.itemCount - 1).coerceAtLeast(0)) else pl
+        }
+    }
+
+    /** Applies an addition to membership, item ids, counts and the open view. */
+    private suspend fun applyTrackAdded(api: GDataApi, playlistId: String, track: Track) {
+        val itemId = runCatching { api.playlistItemId(playlistId, track.videoId) }.getOrNull()
+        _playlistMembership.value = _playlistMembership.value + (playlistId to true)
+        if (itemId != null) _playlistItemIds.value = _playlistItemIds.value + (playlistId to itemId)
+        _openPlaylist.value = _openPlaylist.value?.let { (open, tracks) ->
+            if (open.id == playlistId && tracks.none { it.videoId == track.videoId }) {
+                open to tracks + track
+            } else {
+                open to tracks
+            }
+        }
+        _playlists.value = _playlists.value.map { pl ->
+            if (pl.id == playlistId) pl.copy(itemCount = pl.itemCount + 1) else pl
+        }
+    }
+
     /** Applies [rating] for [videoId] to the detail and open-playlist views. */
     private fun applyRatingToViews(videoId: String, rating: RatingStatus) {
         fun updateTrack(track: Track): Track =
@@ -1803,13 +1940,14 @@ class AppState(
     }
 
     /**
-     * Completes the Google device login, resolving the channel and loading the library on success.
+     * Completes the Google browser login (Desktop-type clients), resolving the channel
+     * and loading the library on success.
      *
-     * @param onUserCode invoked with the device code and verification URL to show the user.
+     * @param onBrowse invoked with the consent URL to open in a browser.
      * @param onDone invoked with true on success, false otherwise.
      */
-    fun googleLogin(
-        onUserCode: (code: String, url: String) -> Unit,
+    fun googleBrowserLogin(
+        onBrowse: (url: String) -> Unit,
         onDone: (Boolean) -> Unit,
     ) {
         val o = oauth ?: run { onDone(false); return }
@@ -1822,7 +1960,7 @@ class AppState(
                 return@launch
             }
             val minted = try {
-                o.loginDevice(id, secret, onUserCode) { !loginActive.get() }
+                o.loginBrowser(id, secret, onBrowse) { !loginActive.get() }
             } catch (_: Exception) {
                 false
             }
@@ -1849,7 +1987,7 @@ class AppState(
         }
     }
 
-    /** Cancels an in-flight Google device login. */
+    /** Cancels an in-flight Google browser login. */
     fun cancelGoogleLogin() {
         loginActive.set(false)
         currentLoginJob?.cancel()
@@ -1858,7 +1996,7 @@ class AppState(
     private var currentLoginJob: kotlinx.coroutines.Job? = null
     private val loginActive = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** Arms the device-login flow so [googleLogin] accepts the minted session. */
+    /** Arms the login flow so [googleBrowserLogin] accepts the minted session. */
     fun beginGoogleLogin() {
         loginActive.set(true)
     }

@@ -15,7 +15,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
-import java.net.URL
+import java.net.URI
 import javax.imageio.ImageIO
 
 // Temporary isolated repro: 480x360 bitmap in a 200dp box with Crop on RED.
@@ -25,7 +25,7 @@ import javax.imageio.ImageIO
  * Used to verify artwork scaling/cropping behavior outside the main app window.
  */
 fun main() = application {
-    val bytes = URL("https://i.ytimg.com/vi/khnokW3Mw24/hqdefault.jpg").readBytes()
+    val bytes = URI("https://i.ytimg.com/vi/khnokW3Mw24/hqdefault.jpg").toURL().readBytes()
     val img = ImageIO.read(bytes.inputStream())
     println("REPRO BITMAP: ${img.width}x${img.height} type=${img.type}")
     val bmp = img.toComposeImageBitmap()

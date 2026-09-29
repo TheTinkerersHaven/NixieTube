@@ -32,6 +32,9 @@ private const val TICKER_INTERVAL_MS = 500L
 /** Below this position, previous restarts the track instead of going back. */
 private const val PREVIOUS_RESTART_THRESHOLD_MS = 3000L
 
+/** How many played positions shuffle previous() can walk back. */
+private const val SHUFFLE_HISTORY_SIZE = 200
+
 /** How long a seek target is held before the engine position wins. */
 private const val SEEK_SETTLE_TIMEOUT_NS = 6_000_000_000L
 
@@ -160,6 +163,17 @@ class PlayerController(
     /** Time the pending seek was issued, for the 6s settle timeout. */
     @Volatile
     private var pendingSeekAtNanos: Long = 0L
+    // Recently played queue positions for shuffle previous(). Bounded;
+    // cleared whenever playback starts somewhere explicit.
+    private val shuffleHistory = ArrayDeque<Int>()
+    // Prefetched next-track stream so transitions skip the resolve delay.
+    // Filled in the background while the current track plays; consumed by
+    // startCurrent() when the videoId still matches the expected next index.
+    @Volatile
+    private var prefetchedVideoId: String? = null
+    @Volatile
+    private var prefetchedStream: StreamResolver.ResolvedStream? = null
+    private var prefetchJob: Job? = null
 
     init {
         engine.setVolume(80)
@@ -213,6 +227,7 @@ class PlayerController(
      */
     fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
+        shuffleHistory.clear()
         _state.update { it.copy(queue = tracks, index = startIndex.coerceIn(tracks.indices)) }
         startCurrent()
     }
@@ -229,6 +244,7 @@ class PlayerController(
             q.add(at, track)
             it.copy(queue = q)
         }
+        refreshPrefetch()
     }
 
     /**
@@ -238,6 +254,7 @@ class PlayerController(
      */
     fun enqueueLast(track: Track) {
         _state.update { it.copy(queue = it.queue + track) }
+        refreshPrefetch()
     }
 
     /**
@@ -248,6 +265,7 @@ class PlayerController(
     fun playAt(index: Int) {
         val q = _state.value.queue
         if (index in q.indices) {
+            shuffleHistory.clear()
             _state.update { it.copy(index = index) }
             startCurrent()
         }
@@ -291,6 +309,7 @@ class PlayerController(
         ticker?.cancel()
         ticker = null
         engine.stop()
+        clearPrefetch()
         loadedVideoId = null
         pendingSeekTargetMs = null
         pendingSeekAtNanos = 0L
@@ -385,6 +404,18 @@ class PlayerController(
             startCurrent()
             return
         }
+        if (s.shuffle && s.queue.size > 1) {
+            // Shuffled advance: random next track, never the current one.
+            // Repeat ONE is handled above; ALL/OFF both keep shuffling
+            // (there is no queue end in shuffle mode).
+            shuffleHistory.addLast(s.index)
+            while (shuffleHistory.size > SHUFFLE_HISTORY_SIZE) shuffleHistory.removeFirst()
+            var nextIndex = s.index
+            while (nextIndex == s.index) nextIndex = s.queue.indices.random()
+            _state.update { it.copy(index = nextIndex) }
+            startCurrent()
+            return
+        }
         val nextIndex = s.index + 1
         if (nextIndex in s.queue.indices) {
             _state.update { it.copy(index = nextIndex) }
@@ -403,7 +434,23 @@ class PlayerController(
     /** Goes to the previous track, or restarts when past 3s or at the queue head. */
     fun previous() {
         val s = _state.value
-        if (s.positionMs > PREVIOUS_RESTART_THRESHOLD_MS || s.index <= 0) {
+        if (s.positionMs > PREVIOUS_RESTART_THRESHOLD_MS) {
+            seekTo(0)
+            return
+        }
+        if (s.shuffle) {
+            // Shuffled backtrack follows the play history; empty history
+            // restarts the track like the queue head does below.
+            val prev = shuffleHistory.removeLastOrNull()?.takeIf { it in s.queue.indices }
+            if (prev != null) {
+                _state.update { it.copy(index = prev) }
+                startCurrent()
+            } else {
+                seekTo(0)
+            }
+            return
+        }
+        if (s.index <= 0) {
             seekTo(0)
         } else {
             _state.update { it.copy(index = s.index - 1) }
@@ -439,15 +486,23 @@ class PlayerController(
         _state.update { it.copy(volume = v.coerceIn(0, 100)) }
     }
 
-    /** Flips the shuffle flag. */
-    fun toggleShuffle() = _state.update { it.copy(shuffle = !it.shuffle) }
+    /** Flips the shuffle flag, forgetting backtrack history. */
+    fun toggleShuffle() {
+        _state.update { it.copy(shuffle = !it.shuffle) }
+        shuffleHistory.clear()
+        refreshPrefetch()
+    }
 
     /**
      * Sets the shuffle flag to [v].
      *
      * @param v New shuffle value.
      */
-    fun setShuffle(v: Boolean) = _state.update { it.copy(shuffle = v) }
+    fun setShuffle(v: Boolean) {
+        _state.update { it.copy(shuffle = v) }
+        shuffleHistory.clear()
+        refreshPrefetch()
+    }
 
     // Fills missing release metadata in place (from LRCLIB or InnerTube) so
     // downstream consumers (Discord, MPRIS) pick it up reactively.
@@ -597,12 +652,15 @@ class PlayerController(
     }
 
     /** Cycles repeat mode OFF -> ALL -> ONE -> OFF. */
-    fun cycleRepeat() = _state.update {
-        it.copy(repeat = when (it.repeat) {
-            RepeatMode.OFF -> RepeatMode.ALL
-            RepeatMode.ALL -> RepeatMode.ONE
-            RepeatMode.ONE -> RepeatMode.OFF
-        })
+    fun cycleRepeat() {
+        _state.update {
+            it.copy(repeat = when (it.repeat) {
+                RepeatMode.OFF -> RepeatMode.ALL
+                RepeatMode.ALL -> RepeatMode.ONE
+                RepeatMode.ONE -> RepeatMode.OFF
+            })
+        }
+        refreshPrefetch()
     }
 
     /**
@@ -610,7 +668,10 @@ class PlayerController(
      *
      * @param mode New repeat mode.
      */
-    fun setRepeat(mode: RepeatMode) = _state.update { it.copy(repeat = mode) }
+    fun setRepeat(mode: RepeatMode) {
+        _state.update { it.copy(repeat = mode) }
+        refreshPrefetch()
+    }
 
     /** Flips the autoplay flag for radio continuation. */
     fun toggleAutoplay() = _state.update { it.copy(autoplay = !it.autoplay) }
@@ -624,6 +685,17 @@ class PlayerController(
         val token = ++playToken
         streamRetries = 0
         loadedVideoId = null
+        // Consume the prefetched stream when it matches; otherwise drop it.
+        // Prefetch only ever skips the resolve step — mpv still opens/buffers
+        // the URL, so a stale (expired) URL falls back to a fresh resolve below.
+        val reused = if (track.videoId == prefetchedVideoId) prefetchedStream else null
+        if (reused != null) {
+            PlayerDebug.log("prefetch hit videoId=${track.videoId}")
+        }
+        prefetchJob?.cancel()
+        prefetchJob = null
+        prefetchedVideoId = null
+        prefetchedStream = null
         // A previous track's ticker must not publish its old engine position
         // while the next stream is resolving.
         ticker?.cancel()
@@ -644,16 +716,33 @@ class PlayerController(
         }
         saveSession()
         scope.launch {
-            val stream = StreamResolver.resolve(track.videoId)
+            var stream = reused
+            val usedPrefetch = stream != null
+            if (stream == null) {
+                stream = StreamResolver.resolve(track.videoId)
+            }
             if (token != playToken) return@launch
             if (stream == null) {
                 PlayerDebug.log("resolve FAILED videoId=${track.videoId} title=${track.title}")
                 _state.update { it.copy(loading = false, error = "No playable stream (region/age restriction?)") }
                 return@launch
             }
-            PlayerDebug.log("resolve ok videoId=${track.videoId} bitrate=${stream.bitrate} codec=${stream.codec}")
-            val ok = engine.play(stream.url)
-            PlayerDebug.log("engine.play -> $ok videoId=${track.videoId}")
+            if (!usedPrefetch) {
+                PlayerDebug.log("resolve ok videoId=${track.videoId} bitrate=${stream.bitrate} codec=${stream.codec}")
+            }
+            var ok = engine.play(stream.url)
+            PlayerDebug.log("engine.play -> $ok videoId=${track.videoId} prefetched=$usedPrefetch")
+            // Stale prefetched URLs (expired) fail at the engine; retry once fresh.
+            if (!ok && usedPrefetch) {
+                PlayerDebug.log("prefetch play failed, fresh resolve videoId=${track.videoId}")
+                val fresh = StreamResolver.resolve(track.videoId)
+                if (token != playToken) return@launch
+                if (fresh != null) {
+                    stream = fresh
+                    ok = engine.play(fresh.url)
+                    PlayerDebug.log("engine.play retry -> $ok videoId=${track.videoId}")
+                }
+            }
             if (token != playToken) return@launch
             if (!ok) {
                 _state.update { it.copy(loading = false, error = "Playback failed to start") }
@@ -663,6 +752,87 @@ class PlayerController(
             _state.update { it.copy(loading = false, playing = true) }
             updateTrackStats(track.videoId, stream.likes, stream.dislikes)
             startTicker()
+            // Prefetch the next track while this one plays for gapless-ish handoff.
+            if (token == playToken) {
+                val cur = _state.value
+                if (cur.queue.isNotEmpty() && cur.index in cur.queue.indices) {
+                    prefetchNextFor(cur.index, cur.queue.toList())
+                }
+            }
+        }
+    }
+
+    /** Drops any prefetched next-track stream and cancels its resolve job. */
+    private fun clearPrefetch() {
+        prefetchJob?.cancel()
+        prefetchJob = null
+        prefetchedVideoId = null
+        prefetchedStream = null
+    }
+
+    /** Re-resolves the expected next track for the current queue position. */
+    private fun refreshPrefetch() {
+        val s = _state.value
+        if (s.current == null || s.stopped) {
+            clearPrefetch()
+            return
+        }
+        if (s.queue.isEmpty() || s.index !in s.queue.indices) {
+            clearPrefetch()
+            return
+        }
+        prefetchNextFor(s.index, s.queue.toList())
+    }
+
+    /**
+     * Resolves the deterministic next track in the background.
+     *
+     * Skipped for shuffle (next is random) and repeat ONE (next is current).
+     * The result is only kept when the queue/index still point at the same
+     * next videoId, so queue edits safely invalidate it.
+     *
+     * @param currentIndex queue index currently playing.
+     * @param queueSnapshot queue at prefetch start; validated again on completion.
+     */
+    private fun prefetchNextFor(currentIndex: Int, queueSnapshot: List<Track>) {
+        prefetchJob?.cancel()
+        prefetchJob = null
+        val s = _state.value
+        if (s.shuffle || s.repeat == RepeatMode.ONE) {
+            prefetchedVideoId = null
+            prefetchedStream = null
+            return
+        }
+        val nextIndex = when {
+            currentIndex + 1 in queueSnapshot.indices -> currentIndex + 1
+            s.repeat == RepeatMode.ALL && queueSnapshot.isNotEmpty() -> 0
+            else -> -1
+        }
+        if (nextIndex < 0) {
+            prefetchedVideoId = null
+            prefetchedStream = null
+            return
+        }
+        val nextTrack = queueSnapshot.getOrNull(nextIndex) ?: return
+        if (nextTrack.videoId == prefetchedVideoId && prefetchedStream != null) return
+        prefetchedVideoId = null
+        prefetchedStream = null
+        prefetchJob = scope.launch {
+            val stream = StreamResolver.resolve(nextTrack.videoId)
+            if (!isActive) return@launch
+            val cur = _state.value
+            val expectedNext = when {
+                currentIndex + 1 in cur.queue.indices -> currentIndex + 1
+                cur.repeat == RepeatMode.ALL && cur.queue.isNotEmpty() -> 0
+                else -> -1
+            }
+            if (cur.index == currentIndex && expectedNext == nextIndex &&
+                cur.queue.getOrNull(nextIndex)?.videoId == nextTrack.videoId && stream != null
+            ) {
+                prefetchedVideoId = nextTrack.videoId
+                prefetchedStream = stream
+                PlayerDebug.log("prefetch ok videoId=${nextTrack.videoId} bitrate=${stream.bitrate}")
+            }
         }
     }
 

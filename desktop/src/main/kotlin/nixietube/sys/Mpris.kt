@@ -745,14 +745,14 @@ interface MprisPlayerIface : DBusInterface {
     @DBusBoundProperty(access = Access.WRITE, name = "LoopStatus")
     fun setLoopStatus(value: String)
 
-    /** Volume as a 0.0–1.0 fraction. */
+    /** Volume as a 0.0 to 1.0 fraction. */
     @DBusBoundProperty(access = Access.READ, name = "Volume")
     fun getVolume(): Double
 
     /**
      * Sets the volume.
      *
-     * @param value Volume as a 0.0–1.0 fraction.
+     * @param value Volume as a 0.0 to 1.0 fraction.
      */
     @DBusBoundProperty(access = Access.WRITE, name = "Volume")
     fun setVolume(value: Double)
@@ -962,12 +962,12 @@ class MprisObject(
         )
     }
 
-    /** @return Volume as a 0.0–1.0 fraction. */
+    /** @return Volume as a 0.0 to 1.0 fraction. */
     override fun getVolume(): Double = s.volume / 100.0
     /**
      * Sets the player volume.
      *
-     * @param value Volume as a 0.0–1.0 fraction.
+     * @param value Volume as a 0.0 to 1.0 fraction.
      */
     override fun setVolume(value: Double) {
         controller.setVolume((value * 100).toInt())

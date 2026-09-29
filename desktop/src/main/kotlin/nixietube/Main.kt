@@ -16,6 +16,8 @@ import nixietube.player.PlayerController
 import nixietube.player.PlayerEngine
 import nixietube.sys.DiscordPresence
 import nixietube.sys.GoogleOAuth
+import nixietube.sys.LastFm
+import nixietube.sys.watch
 import nixietube.sys.MprisService
 import nixietube.sys.SysConfig
 import nixietube.sys.SysHandles
@@ -29,7 +31,7 @@ private val isLinux = System.getProperty("os.name").lowercase().contains("linux"
 /**
  * User-facing build tag, bumped on every user-facing fix to identify the running build.
  */
-const val BUILD_TAG = "dev-72"
+const val BUILD_TAG = "dev-83"
 
 // Shells resolve the player entry (icon, actions) through the DesktopEntry
 // name; without an installed .desktop file some panels degrade it.
@@ -107,7 +109,8 @@ fun main() {
             ?.maxByOrNull { it.width }
             ?.url
     }
-    val sys = SysHandles(mpris, discord, isLinux)
+    val lastFm = LastFm()
+    val sys = SysHandles(mpris, discord, lastFm, isLinux)
     val oauth = GoogleOAuth(tube)
     // Restore the previous session (queue paused at its position) before
     // the UI shows, so relaunching never resets to 0:00.
@@ -118,7 +121,7 @@ fun main() {
         installDesktopEntry()
         sysScope.launch {
             // The bus name can be briefly unavailable at startup (stale
-            // owner, session race) — retry instead of failing silently.
+            // owner, session race), retry instead of failing silently.
             var ok = false
             repeat(6) { attempt ->
                 // The user may turn MPRIS off while the startup retry loop is
@@ -136,7 +139,7 @@ fun main() {
             }
             @Suppress("KotlinConstantConditions") // false positive: `ok` can be set to true inside the repeat lambda
             if (!ok) {
-                sys.setMprisError((mpris.lastError ?: "failed to start") + " — toggle MPRIS off/on in Settings to retry")
+                sys.setMprisError((mpris.lastError ?: "failed to start") + ", toggle MPRIS off/on in Settings to retry")
                 sys.refreshMprisState()
             }
         }
@@ -144,6 +147,7 @@ fun main() {
     sysScope.launch {
         player.state.collect { discord.update(it) }
     }
+    lastFm.watch(player.state)
     Runtime.getRuntime().addShutdownHook(Thread {
         player.saveSession()
         mpris.stop()
