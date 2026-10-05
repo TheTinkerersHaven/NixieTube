@@ -1,0 +1,524 @@
+// Domain models ported from Kotlin `core/innertube/.../Models.kt`.
+//
+// Pure data, no Flutter imports — reusable under any frontend.
+
+/// Image thumbnail with its dimensions; zero width/height means unknown.
+class Thumbnail {
+  const Thumbnail(this.url, {this.width = 0, this.height = 0});
+
+  final String url;
+  final int width;
+  final int height;
+
+  static final RegExp _squareSizeRe = RegExp(r'=w(\d+)-h(\d+)(?:\D|$)');
+  static final RegExp _whSizeRe = RegExp(r'=w(\d+)-h(\d+)');
+
+  /// True when the thumbnail is square, using explicit dimensions or the
+  /// Google `=w{W}-h{H}` URL sizing suffix as fallback.
+  bool get isSquare {
+    if (width > 0 && height > 0) return width == height;
+    final m = _squareSizeRe.firstMatch(url);
+    if (m == null) return false;
+    final w = int.tryParse(m.group(1)!);
+    final h = int.tryParse(m.group(2)!);
+    return w != null && h != null && w > 0 && w == h;
+  }
+
+  /// Returns a copy requesting a larger rendition from Google image
+  /// servers. Never downscales or distorts.
+  Thumbnail upscaledTo(int targetWidth) {
+    if (targetWidth <= 0 || (width > 0 && width >= targetWidth)) return this;
+    if (width > 0 && height > 0 && _whSizeRe.hasMatch(url)) {
+      final newH = (targetWidth * height ~/ width).clamp(1, 1 << 31);
+      return Thumbnail(
+        url.replaceFirst(_whSizeRe, '=w$targetWidth-h$newH'),
+        width: width,
+        height: height,
+      );
+    }
+    if (!_whSizeRe.hasMatch(url)) {
+      return Thumbnail('$url=w$targetWidth', width: width, height: height);
+    }
+    return this;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is Thumbnail &&
+      other.url == url &&
+      other.width == width &&
+      other.height == height;
+
+  @override
+  int get hashCode => Object.hash(url, width, height);
+
+  Map<String, dynamic> toJson() => {
+    'url': url,
+    'width': width,
+    'height': height,
+  };
+
+  factory Thumbnail.fromJson(Map<String, dynamic> json) => Thumbnail(
+    json['url'] as String? ?? '',
+    width: (json['width'] as num?)?.toInt() ?? 0,
+    height: (json['height'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// Like state of a track as reported by YouTube.
+enum RatingStatus {
+  like,
+  dislike,
+  indifferent,
+  unknown;
+
+  /// Maps a raw InnerTube/Data API status string to a [RatingStatus].
+  static RatingStatus fromValue(String? value) {
+    switch (value?.trim().toUpperCase()) {
+      case 'LIKE':
+        return RatingStatus.like;
+      case 'DISLIKE':
+        return RatingStatus.dislike;
+      case 'INDIFFERENT':
+      case 'NONE':
+      case 'REMOVED':
+        return RatingStatus.indifferent;
+      default:
+        return RatingStatus.unknown;
+    }
+  }
+}
+
+/// Kind of music release used to classify browse results and album headers.
+enum ReleaseKind {
+  album('Album'),
+  ep('EP'),
+  single('Single'),
+  compilation('Compilation'),
+  mixed('Mixed');
+
+  const ReleaseKind(this.label);
+  final String label;
+}
+
+/// A playable music track from YouTube Music.
+class Track {
+  const Track({
+    required this.videoId,
+    required this.title,
+    this.artists = const [],
+    this.album,
+    this.durationSec = 0,
+    this.thumbnails = const [],
+    this.playlistId,
+    this.radioPlaylistId,
+    this.artistId,
+    this.views = '',
+    this.rating = RatingStatus.unknown,
+    this.likeCount = -1,
+    this.dislikeCount = -1,
+  });
+
+  final String videoId;
+  final String title;
+  final List<ArtistRef> artists;
+  final AlbumRef? album;
+  final int durationSec;
+  final List<Thumbnail> thumbnails;
+  final String? playlistId;
+  final String? radioPlaylistId;
+  final String? artistId;
+  final String views;
+  final RatingStatus rating;
+
+  /// Public like count, or -1 when unknown.
+  final int likeCount;
+
+  /// Public dislike count, or -1 when unknown.
+  final int dislikeCount;
+
+  String artistNames() => artists.map((a) => a.name).join(', ');
+
+  String? get bestArtwork {
+    if (thumbnails.isEmpty) return null;
+    var best = thumbnails.first;
+    for (final t in thumbnails.skip(1)) {
+      if (t.width > best.width) best = t;
+    }
+    return best.url;
+  }
+
+  /// Song display art: prefer a true 1:1 cover over a larger 16:9 video
+  /// frame. Falls back to the largest available.
+  String? get displayArtwork {
+    String? best;
+    var bestW = -1;
+    for (final t in thumbnails) {
+      if (t.isSquare && t.width > bestW) {
+        bestW = t.width;
+        best = t.url;
+      }
+    }
+    return best ?? bestArtwork;
+  }
+
+  Track copyWith({
+    String? videoId,
+    String? title,
+    List<ArtistRef>? artists,
+    AlbumRef? album,
+    int? durationSec,
+    List<Thumbnail>? thumbnails,
+    String? Function()? playlistId,
+    String? Function()? radioPlaylistId,
+    String? Function()? artistId,
+    String? views,
+    RatingStatus? rating,
+    int? likeCount,
+    int? dislikeCount,
+  }) {
+    return Track(
+      videoId: videoId ?? this.videoId,
+      title: title ?? this.title,
+      artists: artists ?? this.artists,
+      album: album ?? this.album,
+      durationSec: durationSec ?? this.durationSec,
+      thumbnails: thumbnails ?? this.thumbnails,
+      playlistId: playlistId != null ? playlistId() : this.playlistId,
+      radioPlaylistId: radioPlaylistId != null
+          ? radioPlaylistId()
+          : this.radioPlaylistId,
+      artistId: artistId != null ? artistId() : this.artistId,
+      views: views ?? this.views,
+      rating: rating ?? this.rating,
+      likeCount: likeCount ?? this.likeCount,
+      dislikeCount: dislikeCount ?? this.dislikeCount,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is Track &&
+      other.videoId == videoId &&
+      other.title == title &&
+      _listEq(other.artists, artists) &&
+      other.album == album &&
+      other.durationSec == durationSec &&
+      _listEq(other.thumbnails, thumbnails) &&
+      other.playlistId == playlistId &&
+      other.radioPlaylistId == radioPlaylistId &&
+      other.artistId == artistId &&
+      other.views == views &&
+      other.rating == rating &&
+      other.likeCount == likeCount &&
+      other.dislikeCount == dislikeCount;
+
+  @override
+  int get hashCode => Object.hash(
+    videoId,
+    title,
+    Object.hashAll(artists),
+    album,
+    durationSec,
+    Object.hashAll(thumbnails),
+    playlistId,
+    radioPlaylistId,
+    artistId,
+    views,
+    rating,
+    likeCount,
+    dislikeCount,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'videoId': videoId,
+    'title': title,
+    'artists': artists.map((a) => a.toJson()).toList(),
+    if (album != null) 'album': album!.toJson(),
+    'durationSec': durationSec,
+    'thumbnails': thumbnails.map((t) => t.toJson()).toList(),
+    if (playlistId != null) 'playlistId': playlistId,
+    if (radioPlaylistId != null) 'radioPlaylistId': radioPlaylistId,
+    if (artistId != null) 'artistId': artistId,
+    if (views.isNotEmpty) 'views': views,
+    'rating': rating.name,
+    'likeCount': likeCount,
+    'dislikeCount': dislikeCount,
+  };
+
+  factory Track.fromJson(Map<String, dynamic> json) => Track(
+    videoId: json['videoId'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    artists: ((json['artists'] as List?) ?? [])
+        .whereType<Map>()
+        .map(
+          (e) => ArtistRef.fromJson(e.map((k, v) => MapEntry(k.toString(), v))),
+        )
+        .toList(),
+    album: json['album'] is Map
+        ? AlbumRef.fromJson(
+            (json['album'] as Map).map((k, v) => MapEntry(k.toString(), v)),
+          )
+        : null,
+    durationSec: (json['durationSec'] as num?)?.toInt() ?? 0,
+    thumbnails: ((json['thumbnails'] as List?) ?? [])
+        .whereType<Map>()
+        .map(
+          (e) => Thumbnail.fromJson(e.map((k, v) => MapEntry(k.toString(), v))),
+        )
+        .toList(),
+    playlistId: json['playlistId'] as String?,
+    radioPlaylistId: json['radioPlaylistId'] as String?,
+    artistId: json['artistId'] as String?,
+    views: json['views'] as String? ?? '',
+    rating: _ratingFromName(json['rating'] as String?),
+    likeCount: (json['likeCount'] as num?)?.toInt() ?? -1,
+    dislikeCount: (json['dislikeCount'] as num?)?.toInt() ?? -1,
+  );
+}
+
+RatingStatus _ratingFromName(String? name) {
+  if (name == null) return RatingStatus.unknown;
+  for (final rating in RatingStatus.values) {
+    if (rating.name == name) return rating;
+  }
+  return RatingStatus.unknown;
+}
+
+bool _listEq<T>(List<T> a, List<T> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Reference to an artist channel.
+class ArtistRef {
+  const ArtistRef(this.name, {this.browseId});
+
+  final String name;
+
+  /// Channel browse id (UC…), or null when unlinked.
+  final String? browseId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ArtistRef && other.name == name && other.browseId == browseId;
+
+  @override
+  int get hashCode => Object.hash(name, browseId);
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    if (browseId != null) 'browseId': browseId,
+  };
+
+  factory ArtistRef.fromJson(Map<String, dynamic> json) => ArtistRef(
+    json['name'] as String? ?? '',
+    browseId: json['browseId'] as String?,
+  );
+}
+
+/// Reference to an album/release page.
+class AlbumRef {
+  const AlbumRef(this.name, {this.browseId, this.kind, this.year = ''});
+
+  final String name;
+  final String? browseId;
+  final ReleaseKind? kind;
+  final String year;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AlbumRef &&
+      other.name == name &&
+      other.browseId == browseId &&
+      other.kind == kind &&
+      other.year == year;
+
+  @override
+  int get hashCode => Object.hash(name, browseId, kind, year);
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    if (browseId != null) 'browseId': browseId,
+    if (kind != null) 'kind': kind!.name,
+    if (year.isNotEmpty) 'year': year,
+  };
+
+  factory AlbumRef.fromJson(Map<String, dynamic> json) => AlbumRef(
+    json['name'] as String? ?? '',
+    browseId: json['browseId'] as String?,
+    kind: _releaseKindFromName(json['kind'] as String?),
+    year: json['year'] as String? ?? '',
+  );
+}
+
+ReleaseKind? _releaseKindFromName(String? name) {
+  if (name == null) return null;
+  for (final kind in ReleaseKind.values) {
+    if (kind.name == name) return kind;
+  }
+  return null;
+}
+
+/// A home-screen shelf entry: either a playable song or a browsable item.
+sealed class ShelfItem {
+  const ShelfItem();
+
+  const factory ShelfItem.song(Track track) = SongItem;
+
+  factory ShelfItem.browse({
+    required String title,
+    required String subtitle,
+    required String browseId,
+    required List<Thumbnail> thumbnails,
+    ReleaseKind? kind,
+    String? browseParams,
+  }) = BrowseItem;
+}
+
+/// Playable song entry.
+class SongItem extends ShelfItem {
+  const SongItem(this.track);
+  final Track track;
+
+  @override
+  bool operator ==(Object other) => other is SongItem && other.track == track;
+
+  @override
+  int get hashCode => track.hashCode;
+}
+
+/// Browsable entry (album, playlist, artist).
+class BrowseItem extends ShelfItem {
+  const BrowseItem({
+    required this.title,
+    required this.subtitle,
+    required this.browseId,
+    required this.thumbnails,
+    this.kind,
+    this.browseParams,
+  });
+
+  final String title;
+  final String subtitle;
+  final String browseId;
+  final List<Thumbnail> thumbnails;
+  final ReleaseKind? kind;
+  final String? browseParams;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BrowseItem &&
+      other.title == title &&
+      other.subtitle == subtitle &&
+      other.browseId == browseId &&
+      _listEq(other.thumbnails, thumbnails) &&
+      other.kind == kind &&
+      other.browseParams == browseParams;
+
+  @override
+  int get hashCode => Object.hash(
+    title,
+    subtitle,
+    browseId,
+    Object.hashAll(thumbnails),
+    kind,
+    browseParams,
+  );
+}
+
+/// A home-screen shelf (carousel or list) with its items.
+class Shelf {
+  const Shelf(this.title, this.items);
+  final String title;
+  final List<ShelfItem> items;
+}
+
+/// Full album/release page.
+class AlbumDetail {
+  const AlbumDetail({
+    required this.title,
+    required this.subtitle,
+    required this.description,
+    required this.thumbnails,
+    required this.tracks,
+    this.kind,
+    this.year = '',
+    this.artist,
+  });
+
+  final String title;
+  final String subtitle;
+  final String description;
+  final List<Thumbnail> thumbnails;
+  final List<Track> tracks;
+  final ReleaseKind? kind;
+  final String year;
+  final ArtistRef? artist;
+}
+
+/// Full artist page.
+class ArtistDetail {
+  const ArtistDetail({
+    required this.name,
+    required this.description,
+    required this.thumbnails,
+    required this.topSongs,
+    required this.albums,
+    this.singlesAndEps = const [],
+    this.relatedPlaylists = const [],
+    this.similarArtists = const [],
+    this.songsPlaylistId,
+    this.songsPlaylistParams,
+    this.subscribers = '',
+  });
+
+  final String name;
+  final String description;
+  final List<Thumbnail> thumbnails;
+  final List<Track> topSongs;
+  final List<BrowseItem> albums;
+  final List<BrowseItem> singlesAndEps;
+  final List<BrowseItem> relatedPlaylists;
+  final List<BrowseItem> similarArtists;
+  final String? songsPlaylistId;
+  final String? songsPlaylistParams;
+  final String subscribers;
+}
+
+/// Full playlist page.
+class PlaylistDetail {
+  const PlaylistDetail({
+    required this.title,
+    required this.subtitle,
+    required this.thumbnails,
+    required this.tracks,
+    this.author,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<Thumbnail> thumbnails;
+  final List<Track> tracks;
+  final ArtistRef? author;
+}
+
+/// One synced lyric line.
+class LyricLine {
+  const LyricLine({required this.timeMs, required this.text});
+  final int timeMs;
+  final String text;
+}
+
+/// Search section filter.
+enum SearchFilter {
+  songs('Songs'),
+  releases('Albums/EP/Singles'),
+  artists('Artists');
+
+  const SearchFilter(this.label);
+  final String label;
+}

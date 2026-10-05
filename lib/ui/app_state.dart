@@ -1,0 +1,2521 @@
+// Central UI state holder wiring navigation, content, library, ratings
+// and playback reporting. Ported from Kotlin `AppState`.
+//
+// Kotlin StateFlow/collectAsState becomes ChangeNotifier + Provider.
+// Async jobs are fenced with generation counters (Kotlin cancels Jobs).
+
+import 'dart:async';
+import 'dart:io' show File, FileMode;
+import 'dart:math' show Random;
+
+import 'package:material_ui/material_ui.dart'
+    show
+        BuildContext,
+        ChangeNotifier,
+        Color,
+        ScaffoldMessenger,
+        SnackBar,
+        Text,
+        ValueNotifier,
+        debugPrint;
+
+import '../core/artwork/artwork_store.dart';
+import '../core/innertube/gdata_api.dart';
+import '../core/innertube/auth_session.dart';
+import '../core/innertube/inner_tube.dart';
+import '../core/innertube/lyrics.dart';
+import '../core/innertube/metadata.dart'
+    show canonical, hasGenericReleaseArtist;
+import '../core/models/models.dart';
+import '../core/player/player_controller.dart';
+import '../core/player/player_state.dart';
+import '../sys/browser_cookies.dart';
+import '../sys/google_oauth.dart';
+import '../sys/paths.dart';
+import '../sys/sys_config.dart';
+
+/// Navigation destinations for the single-window app.
+enum Screen { home, search, library, settings, detail }
+
+/// History entry for back navigation.
+class HistoryEntry {
+  HistoryEntry(this.screen, this.detail);
+  final Screen screen;
+  final BrowseItem? detail;
+}
+
+/// Loaded state of the home feed.
+class HomeUiState {
+  HomeUiState({this.loading = true, this.shelves = const [], this.error});
+  bool loading;
+  List<Shelf> shelves;
+  String? error;
+}
+
+/// Loaded state of the search results.
+class SearchUiState {
+  SearchUiState({
+    this.query = '',
+    this.loading = false,
+    this.sections = const {},
+    this.error,
+  });
+  String query;
+  bool loading;
+  Map<String, List<ShelfItem>> sections;
+  String? error;
+}
+
+/// Loaded state of the current detail page.
+class DetailUiState {
+  DetailUiState({
+    this.loading = true,
+    this.album,
+    this.artist,
+    this.playlist,
+    this.error,
+  });
+  bool loading;
+  AlbumDetail? album;
+  ArtistDetail? artist;
+  PlaylistDetail? playlist;
+  String? error;
+}
+
+/// Open playlist with its tracks, or null when browsing the library root.
+class OpenPlaylist {
+  OpenPlaylist(this.playlist, this.tracks);
+  GPlaylist playlist;
+  List<Track> tracks;
+}
+
+/// Normalizes a name for navigation matching.
+String navigationName(String value) => canonical(value);
+
+/// Content signature for change detection: length plus per-item identity
+/// and rating. Ratings arrive through the player stream, so they must
+/// participate or like buttons would go stale.
+int queueSignature(List<Track> queue) {
+  var h = queue.length * 31 + 7;
+  for (final t in queue) {
+    h = 0x1fffffff & (h * 33 + t.videoId.hashCode);
+    h = 0x1fffffff & (h * 33 + t.rating.index);
+  }
+  return h;
+}
+
+/// True when [next] differs from [prev] only in playback progress
+/// (position ticks). Everything else — track, transport, queue content,
+/// settings — requires a full rebuild. `durationMs` participates because
+/// its 0→actual latch reveals the duration label; `seekEpoch` because
+/// sliders re-anchor on it.
+bool isProgressOnlyUpdate(PlayerState prev, PlayerState next) {
+  return prev.current?.videoId == next.current?.videoId &&
+      prev.current?.rating == next.current?.rating &&
+      prev.playing == next.playing &&
+      prev.loading == next.loading &&
+      prev.stopped == next.stopped &&
+      prev.durationMs == next.durationMs &&
+      prev.seekEpoch == next.seekEpoch &&
+      prev.volume == next.volume &&
+      prev.index == next.index &&
+      prev.shuffle == next.shuffle &&
+      prev.repeat == next.repeat &&
+      prev.autoplay == next.autoplay &&
+      prev.error == next.error &&
+      queueSignature(prev.queue) == queueSignature(next.queue);
+}
+
+/// True when [next] differs from [prev] only in volume: everything a
+/// progress tick covers, plus the volume equality flipped. Volume drags
+/// (throttled to ~8/s) must bump [AppState.volumeTick], not rebuild the
+/// whole app through [AppState.notifyListeners].
+bool isVolumeOnlyUpdate(PlayerState prev, PlayerState next) {
+  return prev.volume != next.volume &&
+      prev.current?.videoId == next.current?.videoId &&
+      prev.current?.rating == next.current?.rating &&
+      prev.playing == next.playing &&
+      prev.loading == next.loading &&
+      prev.stopped == next.stopped &&
+      prev.durationMs == next.durationMs &&
+      prev.seekEpoch == next.seekEpoch &&
+      prev.index == next.index &&
+      prev.shuffle == next.shuffle &&
+      prev.repeat == next.repeat &&
+      prev.autoplay == next.autoplay &&
+      prev.error == next.error &&
+      queueSignature(prev.queue) == queueSignature(next.queue);
+}
+
+bool sameNavigationName(String left, String right) {
+  if (left.toLowerCase() == right.toLowerCase()) return true;
+  final a = navigationName(left);
+  return a.isNotEmpty && a == navigationName(right);
+}
+
+/// Re-check cookie expiry this often so an expired LOGIN_INFO is
+/// detected without spamming browse requests.
+const _loginCheckIntervalMs = 300000;
+
+/// Watchtime heartbeat cadence while playing.
+const _reportHeartbeatMs = 10000;
+
+/// Watchtime failure log (successes stay silent).
+const _watchtimeLogPath = '/tmp/nixietube-watchtime.log';
+
+/// Central UI state holder (ChangeNotifier).
+class AppState extends ChangeNotifier {
+  AppState({
+    required InnerTube tube,
+    required PlayerController player,
+    required ArtworkStore art,
+    required GoogleOAuth oauth,
+    required SysConfig config,
+    required Future<void> Function(String url) openUrl,
+  }) {
+    _tube = tube;
+    _player = player;
+    _art = art;
+    _oauth = oauth;
+    _config = config;
+    _openUrl = openUrl;
+    _tube.authProvider = () => _oauth.validSession();
+    _playerSub = _player.states.listen(_onPlayerState);
+  }
+
+  late final InnerTube _tube;
+  late final PlayerController _player;
+  late final ArtworkStore _art;
+  late final GoogleOAuth _oauth;
+  late final SysConfig _config;
+  late final Future<void> Function(String url) _openUrl;
+
+  /// Opens [url] in the system's external browser (see the `openUrl`
+  /// wiring in `main.dart`).
+  Future<void> openUrl(String url) => _openUrl(url);
+  StreamSubscription<PlayerState>? _playerSub;
+
+  InnerTube get tube => _tube;
+  PlayerController get player => _player;
+  ArtworkStore get art => _art;
+  GoogleOAuth get oauth => _oauth;
+  SysConfig get config => _config;
+
+  /// Latest player snapshot for selective UI reads.
+  PlayerState get playerState => _player.state;
+
+  GDataApi? get gdata =>
+      _account == null ? null : GDataApi(tokenProvider: _oauth.accessToken);
+
+  @override
+  void dispose() {
+    _playerSub?.cancel();
+    progressTick.dispose();
+    volumeTick.dispose();
+    super.dispose();
+  }
+
+  // ---------- Navigation ----------
+
+  Screen _screen = Screen.home;
+  Screen get screen => _screen;
+
+  BrowseItem? _detailItem;
+  BrowseItem? get detailItem => _detailItem;
+
+  final List<HistoryEntry> _history = [];
+  bool _canGoBack = false;
+  bool get canGoBack => _canGoBack;
+
+  void _pushHistory() {
+    _history.add(HistoryEntry(_screen, _detailItem));
+    if (_history.length > 100) _history.removeAt(0);
+    _canGoBack = true;
+  }
+
+  void go(Screen screen, {BrowseItem? detail}) {
+    _pushHistory();
+    _screen = screen;
+    _detailItem = detail;
+    if (screen == Screen.detail && detail != null) {
+      _loadDetail(detail);
+    }
+    notifyListeners();
+  }
+
+  void goBack() {
+    if (_history.isEmpty) return;
+    final entry = _history.removeLast();
+    _canGoBack = _history.isNotEmpty;
+    _screen = entry.screen;
+    _detailItem = entry.detail;
+    if (entry.screen == Screen.detail && entry.detail != null) {
+      _loadDetail(entry.detail!);
+    }
+    notifyListeners();
+  }
+
+  /// Opens an artist page, resolving unlinked credits first.
+  Future<void> openArtist(ArtistRef artist, [Track? track]) async {
+    final id = artist.browseId;
+    if (id != null && id.startsWith('UC')) {
+      go(
+        Screen.detail,
+        detail: BrowseItem(
+          title: artist.name,
+          subtitle: 'Artist',
+          browseId: id,
+          thumbnails: track?.thumbnails ?? const [],
+        ),
+      );
+      return;
+    }
+    if (track != null) {
+      try {
+        final enriched = await _tube.enrichTrack(track);
+        final linked = enriched.artists
+            .where((a) => a.browseId != null && a.browseId!.startsWith('UC'))
+            .toList();
+        if (linked.isNotEmpty) {
+          final match = linked.firstWhere(
+            (a) => sameNavigationName(a.name, artist.name),
+            orElse: () => linked.first,
+          );
+          go(
+            Screen.detail,
+            detail: BrowseItem(
+              title: match.name,
+              subtitle: 'Artist',
+              browseId: match.browseId!,
+              thumbnails: enriched.thumbnails,
+            ),
+          );
+          return;
+        }
+        if (enriched.artistId != null && enriched.artistId!.startsWith('UC')) {
+          go(
+            Screen.detail,
+            detail: BrowseItem(
+              title: enriched.artistNames(),
+              subtitle: 'Artist',
+              browseId: enriched.artistId!,
+              thumbnails: enriched.thumbnails,
+            ),
+          );
+          return;
+        }
+      } catch (_) {}
+    }
+    searchAndGo(artist.name);
+  }
+
+  /// Opens an album page, resolving unlinked refs first.
+  Future<void> openAlbum(Track track, AlbumRef album) async {
+    final id = album.browseId;
+    if (id != null && id.startsWith('MPRE')) {
+      go(
+        Screen.detail,
+        detail: BrowseItem(
+          title: album.name,
+          subtitle: 'Album',
+          browseId: id,
+          thumbnails: track.thumbnails,
+        ),
+      );
+      return;
+    }
+    try {
+      final enriched = await _tube.enrichTrack(track);
+      final ref = enriched.album;
+      if (ref != null &&
+          ref.browseId != null &&
+          ref.browseId!.startsWith('MPRE')) {
+        go(
+          Screen.detail,
+          detail: BrowseItem(
+            title: ref.name,
+            subtitle: 'Album',
+            browseId: ref.browseId!,
+            thumbnails: enriched.thumbnails,
+          ),
+        );
+        return;
+      }
+    } catch (_) {}
+    searchAndGo('${track.artistNames()} ${album.name}');
+  }
+
+  // ---------- Home / search / detail ----------
+
+  HomeUiState home = HomeUiState();
+  SearchUiState search = SearchUiState();
+  DetailUiState detail = DetailUiState();
+  int _searchGen = 0;
+  int _detailGen = 0;
+  int _homeGen = 0;
+
+  /// Reloads the home shelves feed from InnerTube.
+  ///
+  /// Generation-fenced with an overall timeout: concurrent reloads
+  /// can't clobber each other, and even a hung transport lands in
+  /// the error state (with Retry) instead of a forever spinner.
+  Future<void> loadHome() async {
+    final gen = ++_homeGen;
+    home.loading = true;
+    home.error = null;
+    notifyListeners();
+    try {
+      final shelves = await _tube.home().timeout(const Duration(seconds: 60));
+      if (gen != _homeGen) return;
+      home.shelves = _stampShelves(shelves);
+      unawaited(_healShelfArtists(gen));
+    } catch (e) {
+      if (gen != _homeGen) return;
+      home.error = e is TimeoutException
+          ? 'Home timed out — check connection.'
+          : e.toString();
+    } finally {
+      if (gen == _homeGen) {
+        home.loading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Heals distributor-placeholder credits ("Release") on home shelf
+  /// rows in the background. Notifies only when a credit changed and
+  /// this load is still current.
+  Future<void> _healShelfArtists(int gen) async {
+    final songTracks = [
+      for (final shelf in home.shelves)
+        for (final item in shelf.items)
+          if (item is SongItem) item.track,
+    ];
+    if (songTracks.every((t) => !hasGenericReleaseArtist(t))) return;
+    final before = songTracks
+        .map((t) => '${t.videoId}=${t.artistNames()}')
+        .join('\n');
+    final fixed = await fixReleaseCredits(songTracks);
+    if (gen != _homeGen) return;
+    final byId = {for (final t in fixed) t.videoId: t};
+    home.shelves = [
+      for (final shelf in home.shelves)
+        Shelf(shelf.title, [
+          for (final item in shelf.items)
+            item is SongItem
+                ? SongItem(byId[item.track.videoId] ?? item.track)
+                : item,
+        ]),
+    ];
+    final after = home.shelves
+        .expand((s) => s.items)
+        .whereType<SongItem>()
+        .map((i) => '${i.track.videoId}=${i.track.artistNames()}')
+        .join('\n');
+    if (after != before) notifyListeners();
+  }
+
+  File get _searchHistoryFile => File('${configDir().path}/search-history.txt');
+
+  List<String> searchHistory = [];
+  bool searchFieldFocused = false;
+
+  void _loadSearchHistory() {
+    try {
+      final f = _searchHistoryFile;
+      if (!f.existsSync()) {
+        searchHistory = [];
+        return;
+      }
+      searchHistory = f
+          .readAsLinesSync()
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty)
+          .toSet()
+          .take(12)
+          .toList();
+    } catch (_) {
+      searchHistory = [];
+    }
+  }
+
+  void _recordSearchHistory(String query) {
+    searchHistory = [
+      query,
+      ...searchHistory.where((q) => q.toLowerCase() != query.toLowerCase()),
+    ].take(12).toList();
+    try {
+      _searchHistoryFile.writeAsStringSync('${searchHistory.join('\n')}\n');
+    } catch (_) {}
+  }
+
+  /// Clears the in-memory and persisted search history.
+  void clearSearchHistory() {
+    searchHistory = [];
+    try {
+      final f = _searchHistoryFile;
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  /// Runs a search and enriches song rows, cancelling older queries.
+  Future<void> searchFor(String query) async {
+    final normalized = query.trim();
+    if (normalized.isEmpty) return;
+    _recordSearchHistory(normalized);
+    final gen = ++_searchGen;
+    search = SearchUiState(query: normalized, loading: true);
+    notifyListeners();
+    try {
+      final sections = await _tube.search(normalized);
+      if (gen != _searchGen) return;
+      search = SearchUiState(
+        query: normalized,
+        loading: false,
+        sections: _stampSearchSections(sections),
+      );
+      notifyListeners();
+      final songs =
+          sections['Songs']
+              ?.whereType<SongItem>()
+              .map((e) => e.track)
+              .toList() ??
+          [];
+      if (songs.isNotEmpty) {
+        final enriched = await _tube.enrichTracks(songs);
+        if (gen != _searchGen) return;
+        final byId = {for (final t in enriched) t.videoId: t};
+        final stamped = <String, List<ShelfItem>>{};
+        search.sections.forEach((key, items) {
+          stamped[key] = items.map((item) {
+            if (item is SongItem) {
+              final fresh = byId[item.track.videoId];
+              return fresh == null ? item : SongItem(fresh);
+            }
+            return item;
+          }).toList();
+        });
+        search = SearchUiState(
+          query: normalized,
+          loading: false,
+          sections: _stampSearchSections(stamped),
+        );
+        for (final t in enriched) {
+          if (t.rating != RatingStatus.unknown &&
+              _trustNetworkRating(t.videoId, t.rating)) {
+            _ratingCache[t.videoId] = t.rating;
+          }
+        }
+      }
+    } catch (e) {
+      if (gen != _searchGen) return;
+      search = SearchUiState(
+        query: normalized,
+        loading: false,
+        error: e.toString(),
+      );
+    }
+    notifyListeners();
+  }
+
+  /// Runs [searchFor] and navigates to the Search screen.
+  void searchAndGo(String query) {
+    unawaited(searchFor(query));
+    go(Screen.search);
+  }
+
+  /// YTM-style mood shortcuts, each running a plain search.
+  static const moods = [
+    'Relax',
+    'Energia pura',
+    'Festa',
+    'Romantico',
+    'Concentrazione',
+    'Allenamento',
+    'Viaggio',
+    'Dormire',
+    'Rock',
+    'Jazz',
+  ];
+
+  /// Plays [songs] starting at [index]. A lone track plays as its own
+  /// radio station instead of a one-song queue (see [playSingle]).
+  void playSongs(List<Track> songs, int index) {
+    if (songs.length == 1) {
+      unawaited(playSingle(songs.first));
+      return;
+    }
+    _player.playTracks(songs, index);
+  }
+
+  /// Plays [track] immediately, then appends its radio mix behind it.
+  ///
+  /// Used for single taps (search results, single-track releases):
+  /// playback starts at once from the track alone, and the watch-next
+  /// mix lands via [PlayerController.appendRadio] without restarting
+  /// the track. Stale fetches (user moved on meanwhile) are dropped.
+  Future<void> playSingle(Track track) async {
+    _player.playTracks([track], 0);
+    List<Track> upcoming;
+    try {
+      final radio =
+          (track.radioPlaylistId != null && track.radioPlaylistId!.isNotEmpty)
+          ? track.radioPlaylistId!
+          : 'RDAMVM${track.videoId}';
+      upcoming = await _tube.upNext(track.videoId, playlistId: radio);
+    } catch (_) {
+      return;
+    }
+    if (_player.state.current?.videoId != track.videoId) return;
+    upcoming = upcoming.where((t) => t.videoId != track.videoId).toList();
+    _player.appendRadio(upcoming);
+  }
+
+  /// Plays [songs] in shuffled order.
+  void playShuffled(List<Track> songs) {
+    if (songs.isEmpty) return;
+    final shuffled = List<Track>.of(songs)..shuffle(Random());
+    _player.playTracks(shuffled, 0);
+  }
+
+  /// Plays an artist's full top-songs playlist from the tapped song onward.
+  Future<void> playArtistTopSong(ArtistDetail artist, int index) async {
+    final preview = artist.topSongs;
+    if (index < 0 || index >= preview.length) return;
+    final tapped = preview[index];
+    List<Track>? full;
+    try {
+      final pid = artist.songsPlaylistId;
+      if (pid != null) {
+        full = (await _tube.playlist(
+          pid,
+          params: artist.songsPlaylistParams,
+        ))?.tracks.takeIfNotEmpty();
+      }
+    } catch (_) {}
+    if (full != null) {
+      var pos = full.indexWhere((t) => t.videoId == tapped.videoId);
+      if (pos < 0) pos = 0;
+      playSongs(full, pos);
+    } else {
+      playSongs(preview, index);
+    }
+  }
+
+  /// Plays an artist's full top-songs playlist, optionally shuffled.
+  Future<void> playArtistSongs(ArtistDetail artist, bool shuffled) async {
+    List<Track> tracks = artist.topSongs;
+    try {
+      final pid = artist.songsPlaylistId;
+      if (pid != null) {
+        final full = (await _tube.playlist(
+          pid,
+          params: artist.songsPlaylistParams,
+        ))?.tracks.takeIfNotEmpty();
+        if (full != null) tracks = full;
+      }
+    } catch (_) {}
+    if (tracks.isEmpty) return;
+    if (shuffled) {
+      playShuffled(tracks);
+    } else {
+      playSongs(tracks, 0);
+    }
+  }
+
+  /// Starts a song radio station from [track] plus its watch-next mix.
+  ///
+  /// When [track] is already playing, the mix takes over Up next
+  /// (everything behind the current position is replaced) while the
+  /// song keeps playing from its live position instead of restarting.
+  /// A different seed starts a fresh station from its first beat.
+  ///
+  /// Returns how many station tracks were queued (excluding the seed)
+  /// and whether the mix loaded at all, so callers can tell a loaded
+  /// station from a failed fetch instead of leaving a silent no-op.
+  Future<({int queued, bool loaded})> startRadio(Track track) async {
+    if (_player.state.current?.videoId == track.videoId) {
+      List<Track> upcoming;
+      try {
+        final radio =
+            (track.radioPlaylistId != null && track.radioPlaylistId!.isNotEmpty)
+            ? track.radioPlaylistId!
+            : 'RDAMVM${track.videoId}';
+        upcoming = await _tube.upNext(track.videoId, playlistId: radio);
+      } catch (_) {
+        return (queued: 0, loaded: false);
+      }
+      if (_player.state.current?.videoId != track.videoId) {
+        return (queued: 0, loaded: false);
+      }
+      upcoming = upcoming.where((t) => t.videoId != track.videoId).toList();
+      final fresh = _player.replaceUpcoming(upcoming);
+      return (queued: fresh, loaded: true);
+    }
+    final radio =
+        (track.radioPlaylistId != null && track.radioPlaylistId!.isNotEmpty)
+        ? track.radioPlaylistId!
+        : 'RDAMVM${track.videoId}';
+    List<Track> upcoming;
+    var loaded = true;
+    try {
+      upcoming = await _tube.upNext(track.videoId, playlistId: radio);
+    } catch (_) {
+      upcoming = [];
+      loaded = false;
+    }
+    upcoming = upcoming.where((t) => t.videoId != track.videoId).toList();
+    final seen = {track.videoId};
+    upcoming = upcoming.where((t) => seen.add(t.videoId)).toList();
+    _player.playTracks([track, ...upcoming], 0);
+    return (queued: upcoming.length, loaded: loaded);
+  }
+
+  /// Starts an artist radio station from their first top song.
+  /// Returns how many station tracks were queued (see [startRadio]).
+  Future<({int queued, bool loaded})> startArtistRadio(
+    ArtistDetail artist,
+  ) async {
+    if (artist.topSongs.isEmpty) return (queued: 0, loaded: false);
+    return startRadio(artist.topSongs.first);
+  }
+
+  void _loadDetail(BrowseItem item) {
+    final gen = ++_detailGen;
+    detail = DetailUiState(loading: true);
+    notifyListeners();
+    () async {
+      try {
+        if (item.browseId.startsWith('UC')) {
+          final artist = await _tube.artist(item.browseId);
+          if (gen != _detailGen) return;
+          detail = DetailUiState(loading: false, artist: artist);
+        } else if (item.browseId.startsWith('MPRE')) {
+          final album = await _tube.album(item.browseId);
+          if (gen != _detailGen) return;
+          detail = DetailUiState(loading: false, album: album);
+          if (album != null) _stampDetailRatings(gen, album.tracks);
+        } else {
+          final playlist = await _tube.playlist(
+            item.browseId,
+            params: item.browseParams,
+          );
+          if (gen != _detailGen) return;
+          detail = DetailUiState(loading: false, playlist: playlist);
+          if (playlist != null) {
+            _stampDetailRatings(gen, playlist.tracks);
+          }
+        }
+      } catch (e) {
+        if (gen != _detailGen) return;
+        detail = DetailUiState(loading: false, error: e.toString());
+      }
+      notifyListeners();
+    }();
+  }
+
+  // ---------- Account / library ----------
+
+  String? _account;
+  String? get account => _account;
+
+  String? _accountAvatar;
+  String? get accountAvatar => _accountAvatar;
+
+  /// Full InnerTube access needs cookie + derived hash; Bearer-only
+  /// sessions are limited.
+  bool get authFull {
+    final s = _tube.auth;
+    return (s.cookie != null && s.cookie!.isNotEmpty) &&
+        (s.sapisidHash != null && s.sapisidHash!.isNotEmpty);
+  }
+
+  /// Whether a cookie session is saved at all.
+  bool get hasCookieSession => (_tube.auth.cookie ?? '').isNotEmpty;
+
+  /// True when the saved cookie session still reads the library.
+  /// Re-checked at most every [_loginCheckIntervalMs]; starts
+  /// optimistic so the UI doesn't flash "expired" before the
+  /// first check lands.
+  bool get loginValid => _loginValid;
+
+  GDataApi? get _api {
+    // The Data API client is available once an account name is
+    // known or a Google sign-in token is stored. Gating only on
+    // the account name would break OAuth-first sign-in (the name
+    // is fetched after the token is minted) and skip Data API
+    // loads for a token stored in a previous session. The Data
+    // API needs the OAuth token, not the browser cookie.
+    if (_account == null && !oauthSignedIn) return null;
+    return GDataApi(tokenProvider: _oauth.accessToken);
+  }
+
+  /// True when Data API calls can be attempted (signed in).
+  bool get gdataAvailable => _account != null;
+
+  /// True when the Google (OAuth) sign-in has a stored
+  /// token — required for the YouTube Data API (playlists,
+  /// liked songs, recent activity, followed artists), which
+  /// a browser cookie cannot serve.
+  bool get oauthSignedIn => _oauth.hasStoredToken;
+
+  List<GPlaylist> _playlists = [];
+  List<GPlaylist> get playlists => _playlists;
+
+  List<Track> _liked = [];
+  List<Track> get liked => _liked;
+
+  List<BrowseItem> _artists = [];
+  List<BrowseItem> get artists => _artists;
+
+  OpenPlaylist? _openPlaylist;
+  OpenPlaylist? get openedPlaylist => _openPlaylist;
+
+  bool _libraryLoading = false;
+  bool get libraryLoading => _libraryLoading;
+
+  List<Track> _activity = [];
+  List<Track> get activity => _activity;
+
+  List<Track> _discover = [];
+  List<Track> get discover => _discover;
+
+  List<BrowseItem> _recentArtists = [];
+  List<BrowseItem> get recentArtists => _recentArtists;
+
+  final Map<String, String> _artistAvatarCache = {};
+  final Map<String, bool> _artistPageCache = {};
+  String? _ownChannelId;
+  bool _ownChannelIdLoaded = false;
+  final Map<String, RatingStatus> _ratingCache = {};
+  Set<String> _likedIds = {};
+
+  String? _loginDetail;
+  String? get loginDetail => _loginDetail;
+
+  bool _loginBusy = false;
+  bool get loginBusy => _loginBusy;
+
+  bool _googleLoginJob = false;
+  int _discoverGen = 0;
+  int _avatarGen = 0;
+
+  /// Loads fresh song suggestions from recent/liked seeds via mix stations.
+  /// Falls back to InnerTube home shelves when Data API history is missing.
+  Future<void> loadDiscover() async {
+    final gen = ++_discoverGen;
+    List<Track> distinct(List<Track> tracks) {
+      final seen = <String>{};
+      return tracks.where((t) => seen.add(t.videoId)).toList();
+    }
+
+    var seeds = [
+      ...distinct(_activity).take(3),
+      ...(_liked.toList()..shuffle(Random())).take(2),
+    ];
+    seeds = distinct(seeds).take(5).toList();
+    if (seeds.isEmpty) {
+      try {
+        final homeSeeds = <Track>[];
+        final shelves = home.shelves.isNotEmpty
+            ? home.shelves
+            : await _tube.home();
+        for (final shelf in shelves) {
+          if (homeSeeds.length >= 5) break;
+          for (final item in shelf.items) {
+            if (item is SongItem) {
+              homeSeeds.add(item.track);
+              if (homeSeeds.length >= 5) break;
+            }
+          }
+        }
+        seeds = distinct(homeSeeds).take(5).toList();
+      } catch (_) {
+        seeds = [];
+      }
+    }
+    if (seeds.isEmpty) return;
+    final known = {
+      ...seeds.map((t) => t.videoId),
+      ..._activity.map((t) => t.videoId),
+      ..._liked.map((t) => t.videoId),
+    };
+    final mixed = <Track>[];
+    final results = await Future.wait(
+      seeds.map((seed) async {
+        final radioId =
+            (seed.radioPlaylistId != null &&
+                seed.radioPlaylistId!.trim().isNotEmpty)
+            ? seed.radioPlaylistId!
+            : 'RDAMVM${seed.videoId}';
+        try {
+          return await _tube.upNext(seed.videoId, playlistId: radioId);
+        } catch (_) {
+          return <Track>[];
+        }
+      }),
+    );
+    for (final list in results) {
+      mixed.addAll(list);
+    }
+    if (gen != _discoverGen) return;
+    final seen = <String>{};
+    _discover = _stampKnownRatings(
+      mixed
+          .where(
+            (t) =>
+                t.videoId.isNotEmpty &&
+                !known.contains(t.videoId) &&
+                seen.add(t.videoId),
+          )
+          .take(20)
+          .toList(),
+    );
+    if (_discover.isEmpty) return;
+    notifyListeners();
+  }
+
+  /// Rebuilds the recent-artists list from activity credits.
+  void _refreshRecentArtists() {
+    final seen = <String, BrowseItem>{};
+    for (final t in _activity) {
+      for (final artist in t.artists) {
+        final id = artist.browseId;
+        final name = artist.name.trim();
+        if (id == null || !id.startsWith('UC') || name.isEmpty) continue;
+        seen.putIfAbsent(
+          id,
+          () => BrowseItem(
+            title: name,
+            subtitle: 'Artist',
+            browseId: id,
+            thumbnails: t.thumbnails,
+          ),
+        );
+      }
+    }
+    _recentArtists = seen.values.take(20).toList();
+    unawaited(_enrichRecentArtistArtwork());
+  }
+
+  /// Resolves real channel avatars for recent artists in batches of 50.
+  Future<void> _enrichRecentArtistArtwork() async {
+    final api = _api;
+    if (api == null) return;
+    final ids = _recentArtists
+        .map((e) => e.browseId)
+        .toSet()
+        .where((id) => !_artistAvatarCache.containsKey(id))
+        .toList();
+    if (ids.isEmpty) return;
+    try {
+      for (var i = 0; i < ids.length; i += 50) {
+        final end = (i + 50 < ids.length) ? i + 50 : ids.length;
+        final fetched = await api.channelAvatars(ids.sublist(i, end));
+        for (final id in ids.sublist(i, end)) {
+          _artistAvatarCache[id] = fetched[id] ?? '';
+        }
+        _recentArtists = _recentArtists.map((e) {
+          final art = _artistAvatarCache[e.browseId];
+          if (art == null || art.isEmpty) return e;
+          return BrowseItem(
+            title: e.title,
+            subtitle: e.subtitle,
+            browseId: e.browseId,
+            thumbnails: [Thumbnail(art)],
+            kind: e.kind,
+            browseParams: e.browseParams,
+          );
+        }).toList();
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  /// Loads playlists, activity, subscriptions and liked songs concurrently.
+  Future<void> loadLibrary() async {
+    final api = _api;
+    if (api == null) return;
+    _libraryLoading = true;
+    notifyListeners();
+    try {
+      final results = await Future.wait([
+        api.playlists().catchError((_) => <GPlaylist>[]),
+        api.recentActivity().catchError((_) => <Track>[]),
+        api.subscriptions().catchError((_) => <ShelfItem>[]),
+        api.likedVideos(max: 150).catchError((_) => <Track>[]),
+      ]);
+      _playlists = results[0] as List<GPlaylist>;
+      // Fire-and-forget like Kotlin: covers pop in per chunk without
+      // parking the library behind the slowest artwork fetch.
+      unawaited(_enrichPlaylistArtwork());
+      _activity = _stampKnownRatings(results[1] as List<Track>);
+      _refreshRecentArtists();
+      _artists = (results[2] as List<ShelfItem>)
+          .whereType<BrowseItem>()
+          .toList();
+      _liked = results[3] as List<Track>;
+      _updateLikedPlaylistEntry();
+    } finally {
+      _libraryLoading = false;
+      notifyListeners();
+    }
+    unawaited(enrichActivityArtists());
+    unawaited(enrichLikedArtists());
+    unawaited(loadDiscover());
+    // Full liked list for library completeness, in the background.
+    () async {
+      try {
+        final full = await api.likedVideos();
+        if (full.length > _liked.length) {
+          _liked = full;
+          _updateLikedPlaylistEntry();
+          notifyListeners();
+          // The longer tail can carry fresh placeholder credits.
+          unawaited(enrichLikedArtists());
+        }
+      } catch (_) {}
+    }();
+  }
+
+  /// Fills missing playlist artwork in background chunks of 4 (Kotlin
+  /// parity): largest InnerTube header art first, then the first tracks'
+  /// artwork as a fallback. Track covers also backfill [GPlaylist.arts]
+  /// whenever empty so cards and the header collage have something to show
+  /// even when the header art resolved but no collage sources exist yet.
+  /// Each resolved chunk refreshes the visible lists immediately instead
+  /// of parking behind the slowest fetch.
+  Future<void> _enrichPlaylistArtwork() async {
+    final targets = _playlists.where((p) => p.id != '__liked').toList();
+    if (targets.isEmpty) return;
+    for (var i = 0; i < targets.length; i += 4) {
+      final end = (i + 4 < targets.length) ? i + 4 : targets.length;
+      final resolved = await Future.wait(
+        targets.sublist(i, end).map((pl) async {
+          String? art = pl.art;
+          List<String> arts = pl.arts;
+          // Always try InnerTube header art first — it may be larger/fresher
+          // than the GData thumbnail, which for some playlists is a track
+          // cover auto-generated by YouTube.
+          try {
+            final thumbs = await _tube.playlistArtwork(pl.id);
+            if (thumbs.isNotEmpty) {
+              art = thumbs.reduce((a, b) => a.width >= b.width ? a : b).url;
+            }
+          } catch (_) {}
+          if (arts.isEmpty && art == null && pl.itemCount > 0) {
+            try {
+              final tracks = await _api!.playlistTracks(pl.id, max: 4);
+              final covers = tracks
+                  .map((t) => t.displayArtwork)
+                  .whereType<String>()
+                  .where((u) => u.isNotEmpty)
+                  .toList();
+              if (covers.isNotEmpty) {
+                art = covers.first;
+                arts = covers;
+              }
+            } catch (_) {}
+          }
+          if (art == null || art.isEmpty) return pl;
+          return GPlaylist(
+            id: pl.id,
+            title: pl.title,
+            itemCount: pl.itemCount,
+            art: art,
+            arts: arts,
+            owner: pl.owner,
+            ownerId: pl.ownerId,
+          );
+        }),
+      );
+      final byId = {for (final p in resolved) p.id: p};
+      var changed = false;
+      _playlists = _playlists.map((p) {
+        final r = byId[p.id];
+        if (r != null && (r.art != p.art || r.arts.length != p.arts.length)) {
+          changed = true;
+          return r;
+        }
+        return p;
+      }).toList();
+      final opened = _openPlaylist;
+      if (opened != null) {
+        final r = byId[opened.playlist.id];
+        if (r != null &&
+            (r.art != opened.playlist.art ||
+                r.arts.length != opened.playlist.arts.length)) {
+          _openPlaylist = OpenPlaylist(r, opened.tracks);
+          changed = true;
+        }
+      }
+      if (changed) notifyListeners();
+    }
+  }
+
+  /// Prepends the synthetic YTM-style "Liked songs" entry.
+  void _updateLikedPlaylistEntry() {
+    if (_liked.isNotEmpty) {
+      final collage = _liked
+          .take(4)
+          .map((t) => t.displayArtwork)
+          .whereType<String>()
+          .toList();
+      _playlists = [
+        GPlaylist(
+          id: '__liked',
+          title: 'Liked songs',
+          itemCount: _liked.length,
+          art: collage.isEmpty ? null : collage.first,
+          arts: collage,
+        ),
+        ..._playlists.where((p) => p.id != '__liked'),
+      ];
+    }
+  }
+
+  /// Resolves real artist credits for label-upload activity tracks.
+  Future<void> enrichActivityArtists() async {
+    final current = List<Track>.of(_activity);
+    if (current.isEmpty) return;
+    try {
+      final fixed = await Future.wait(
+        current.map((t) async {
+          try {
+            return await _tube.enrichTrack(t);
+          } catch (_) {
+            return t;
+          }
+        }),
+      );
+      final before = _activity.map((t) => t.videoId).join(',');
+      final after = current.map((t) => t.videoId).join(',');
+      if (before == after) {
+        _activity = _stampKnownRatings(fixed);
+        _refreshRecentArtists();
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  /// Resolves distributor-placeholder credits ("Release") in [tracks]
+  /// via InnerTube's watch-next panel, which names the real artist
+  /// when the Data API tags don't. Only placeholder tracks are
+  /// fetched; everything else passes through untouched.
+  Future<List<Track>> fixReleaseCredits(List<Track> tracks) async {
+    final targets = tracks.where(hasGenericReleaseArtist).toList();
+    if (targets.isEmpty) return tracks;
+    try {
+      final fixed = await _tube.enrichTracks(targets);
+      final byId = {for (final t in fixed) t.videoId: t};
+      return _stampKnownRatings(
+        tracks.map((t) => byId[t.videoId] ?? t).toList(),
+      );
+    } catch (_) {
+      return tracks;
+    }
+  }
+
+  /// Heals placeholder credits across the liked list in the
+  /// background, refreshing the synthetic entry and the open liked
+  /// view. Notifies only when a credit actually changed.
+  Future<void> enrichLikedArtists() async {
+    if (_liked.every((t) => !hasGenericReleaseArtist(t))) {
+      return;
+    }
+    final beforeIds = _liked.map((t) => t.videoId).join(',');
+    final beforeArtists = _liked.map((t) => t.artistNames()).join('\n');
+    final fixed = await fixReleaseCredits(List.of(_liked));
+    if (_liked.map((t) => t.videoId).join(',') != beforeIds) return;
+    _liked = fixed;
+    if (_liked.map((t) => t.artistNames()).join('\n') == beforeArtists) {
+      return;
+    }
+    _updateLikedPlaylistEntry();
+    final opened = _openPlaylist;
+    if (opened != null && opened.playlist.id == '__liked') {
+      _openPlaylist = OpenPlaylist(
+        opened.playlist,
+        _stampLikedIds(List.of(_liked)),
+      );
+    }
+    notifyListeners();
+  }
+
+  /// Opens the library playlist with [id].
+  void openPlaylistById(String id) {
+    for (final pl in _playlists) {
+      if (pl.id == id) {
+        unawaited(openPlaylist(pl));
+        go(Screen.library);
+        return;
+      }
+    }
+  }
+
+  /// Opens [pl], entering its screen immediately while tracks load.
+  Future<void> openPlaylist(GPlaylist pl) async {
+    if (pl.id == '__liked') {
+      _openPlaylist = OpenPlaylist(pl, _stampLikedIds(List.of(_liked)));
+      unawaited(
+        _requestTrackRatings(_openPlaylist!.tracks, (statuses) {
+          final opened = _openPlaylist;
+          if (opened != null && opened.playlist.id == pl.id) {
+            _openPlaylist = OpenPlaylist(
+              opened.playlist,
+              opened.tracks
+                  .map(
+                    (t) => statuses[t.videoId] == null
+                        ? t
+                        : t.copyWith(rating: statuses[t.videoId]!),
+                  )
+                  .toList(),
+            );
+            notifyListeners();
+          }
+        }),
+      );
+      notifyListeners();
+      return;
+    }
+    final api = _api;
+    if (api == null) return;
+    final current = _playlists.where((p) => p.id == pl.id).firstOrNull ?? pl;
+    _openPlaylist = OpenPlaylist(current, []);
+    _libraryLoading = true;
+    notifyListeners();
+    try {
+      var tracks = await api.playlistTracks(pl.id);
+      // Empty credits and distributor placeholders alike resolve
+      // through InnerTube's watch-next panel.
+      final sparse = tracks
+          .where((t) => t.artists.isEmpty || hasGenericReleaseArtist(t))
+          .toList();
+      if (sparse.isNotEmpty) {
+        try {
+          final enriched = await _tube.enrichTracks(sparse);
+          final byId = {for (final t in enriched) t.videoId: t};
+          tracks = _stampKnownRatings(
+            tracks.map((t) => byId[t.videoId] ?? t).toList(),
+          );
+        } catch (_) {}
+      }
+      tracks = _stampLikedIds(tracks);
+      _openPlaylist = OpenPlaylist(current, tracks);
+      unawaited(
+        _requestTrackRatings(tracks, (statuses) {
+          final opened = _openPlaylist;
+          if (opened != null && opened.playlist.id == pl.id) {
+            _openPlaylist = OpenPlaylist(
+              opened.playlist,
+              opened.tracks
+                  .map(
+                    (t) => statuses[t.videoId] == null
+                        ? t
+                        : t.copyWith(rating: statuses[t.videoId]!),
+                  )
+                  .toList(),
+            );
+            notifyListeners();
+          }
+        }),
+      );
+    } finally {
+      _libraryLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Closes the open playlist, returning to the library root.
+  void closePlaylist() {
+    _openPlaylist = null;
+    notifyListeners();
+  }
+
+  // ---------- Playlist dialog ----------
+
+  Track? _playlistDialogTrack;
+  Track? get playlistDialogTrack => _playlistDialogTrack;
+
+  Map<String, bool> _playlistMembership = {};
+  Map<String, bool> get playlistMembership => _playlistMembership;
+
+  final Map<String, String> _playlistItemIds = {};
+
+  bool _playlistDialogLoading = false;
+  bool get playlistDialogLoading => _playlistDialogLoading;
+
+  String? _playlistDialogError;
+  String? get playlistDialogError => _playlistDialogError;
+
+  /// Opens the add-to-playlist dialog for [track].
+  Future<void> openPlaylistDialog(Track track) async {
+    _playlistDialogTrack = track;
+    _playlistMembership = {};
+    _playlistItemIds.clear();
+    _playlistDialogError = null;
+    _playlistDialogLoading = true;
+    notifyListeners();
+    final api = _api;
+    if (api == null) {
+      _playlistDialogLoading = false;
+      notifyListeners();
+      return;
+    }
+    try {
+      final mine = _playlists.where((p) => p.id != '__liked').toList();
+      final results = await Future.wait(
+        mine.map((pl) async {
+          try {
+            final itemId = await api.playlistItemId(pl.id, track.videoId);
+            return MapEntry(pl.id, itemId);
+          } catch (_) {
+            return MapEntry(pl.id, null);
+          }
+        }),
+      );
+      if (_playlistDialogTrack?.videoId != track.videoId) return;
+      for (final e in results) {
+        _playlistMembership[e.key] = e.value != null;
+        if (e.value != null) _playlistItemIds[e.key] = e.value!;
+      }
+    } finally {
+      if (_playlistDialogTrack?.videoId == track.videoId) {
+        _playlistDialogLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Closes the playlist dialog.
+  void closePlaylistDialog() {
+    _playlistDialogTrack = null;
+    _playlistMembership = {};
+    _playlistItemIds.clear();
+    _playlistDialogError = null;
+    notifyListeners();
+  }
+
+  /// Adds/removes the dialog track to/from [playlistId], optimistically.
+  Future<void> toggleTrackPlaylist(String playlistId, Track track) async {
+    final api = _api;
+    if (api == null) return;
+    final member = _playlistMembership[playlistId] == true;
+    try {
+      if (member) {
+        var itemId = _playlistItemIds[playlistId];
+        itemId ??= await api.playlistItemId(playlistId, track.videoId);
+        if (itemId == null) return;
+        if (!await api.removePlaylistItem(itemId)) {
+          _playlistDialogError = 'Could not remove from playlist.';
+          notifyListeners();
+          return;
+        }
+        _playlistMembership[playlistId] = false;
+        _playlistItemIds.remove(playlistId);
+      } else {
+        if (!await api.addToPlaylist(playlistId, track.videoId)) {
+          _playlistDialogError = 'Could not add to playlist.';
+          notifyListeners();
+          return;
+        }
+        _playlistMembership[playlistId] = true;
+      }
+      _playlists = _playlists.map((pl) {
+        if (pl.id != playlistId) return pl;
+        return GPlaylist(
+          id: pl.id,
+          title: pl.title,
+          itemCount: (pl.itemCount + (member ? -1 : 1)).clamp(0, 1 << 31),
+          art: pl.art,
+          arts: pl.arts,
+          owner: pl.owner,
+          ownerId: pl.ownerId,
+        );
+      }).toList();
+      if (_openPlaylist != null && _openPlaylist!.playlist.id == playlistId) {
+        unawaited(openPlaylist(_openPlaylist!.playlist));
+      }
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  // ---------- Ratings ----------
+
+  bool get ratingsAvailable => _account != null || !_tube.auth.isAnonymous;
+
+  /// Rates the currently playing track. Returns whether either backend
+  /// accepted the change.
+  Future<bool> rateCurrent(RatingStatus rating) {
+    final id = _player.state.current?.videoId;
+    if (id == null) return Future.value(false);
+    return rateTrack(id, rating);
+  }
+
+  /// Rates a track with a SnackBar when both backends refuse, so a dead
+  /// like button is diagnosable instead of silently stuck.
+  Future<void> rateTrackFeedback(
+    BuildContext context,
+    String videoId,
+    RatingStatus rating,
+  ) async {
+    final ok = await rateTrack(videoId, rating);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't save rating — check connection and sign-in."),
+        ),
+      );
+    }
+  }
+
+  /// Rates the current track with failure feedback (see
+  /// [rateTrackFeedback]).
+  Future<void> rateCurrentFeedback(
+    BuildContext context,
+    RatingStatus rating,
+  ) async {
+    final id = _player.state.current?.videoId;
+    if (id == null) return;
+    await rateTrackFeedback(context, id, rating);
+  }
+
+  /// Rates a track via InnerTube with a Data API fallback, updating
+  /// player, views and liked songs. Dislikes only go through InnerTube
+  /// since the Data API can only add/remove likes. Returns true when
+  /// either backend accepted the change.
+  Future<bool> rateTrack(String videoId, RatingStatus rating) async {
+    if (rating == RatingStatus.unknown) return false;
+    final api = _api;
+    var innerOk = false;
+    try {
+      innerOk = await _tube.rate(videoId, rating);
+    } catch (_) {}
+    debugPrint('[rate] $videoId -> $rating innerTube=$innerOk');
+    var fallbackOk = false;
+    if (!innerOk && rating != RatingStatus.dislike && api != null) {
+      try {
+        fallbackOk = await api.rate(videoId, rating == RatingStatus.like);
+      } catch (_) {}
+      debugPrint('[rate] $videoId -> $rating gdata=$fallbackOk');
+    }
+    if (!innerOk && !fallbackOk) {
+      debugPrint('[rate] $videoId FAILED on both paths');
+      return false;
+    }
+    _player.updateTrackRating(videoId, rating);
+    _ratingCache[videoId] = rating;
+    applyRatingToViews(videoId, rating);
+    // Home rows keep their own track copies: restamp them from the cache
+    // so the tapped like repaints everywhere, not just detail views.
+    _activity = _stampKnownRatings(_activity);
+    _discover = _stampKnownRatings(_discover);
+    home.shelves = _stampShelves(home.shelves);
+    if (rating == RatingStatus.like) {
+      final track = _player.state.current?.videoId == videoId
+          ? _player.state.current
+          : _player.state.queue.where((t) => t.videoId == videoId).firstOrNull;
+      if (track != null && !_liked.any((t) => t.videoId == videoId)) {
+        _liked = [..._liked, track];
+        _updateLikedPlaylistEntry();
+      }
+    } else {
+      _liked = _liked.where((t) => t.videoId != videoId).toList();
+      _updateLikedPlaylistEntry();
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Pushes a new rating into the visible detail and open-playlist track
+  /// lists so like buttons update where the user tapped them. Mirrors
+  /// Kotlin `applyRatingToViews`.
+  void applyRatingToViews(String videoId, RatingStatus rating) {
+    Track update(Track t) =>
+        t.videoId == videoId ? t.copyWith(rating: rating) : t;
+    final stamped = _detailWithRatings(detail, update);
+    if (stamped != null) detail = stamped;
+    final opened = _openPlaylist;
+    if (opened != null) {
+      _openPlaylist = OpenPlaylist(
+        opened.playlist,
+        opened.tracks.map(update).toList(),
+      );
+    }
+    notifyListeners();
+  }
+
+  /// Returns [d] with [update] applied to its album/playlist tracks, or
+  /// null when it shows neither (artist page).
+  DetailUiState? _detailWithRatings(
+    DetailUiState d,
+    Track Function(Track) update,
+  ) {
+    if (d.album != null) {
+      final album = d.album!;
+      return DetailUiState(
+        loading: d.loading,
+        album: AlbumDetail(
+          title: album.title,
+          subtitle: album.subtitle,
+          description: album.description,
+          thumbnails: album.thumbnails,
+          tracks: album.tracks.map(update).toList(),
+          kind: album.kind,
+          year: album.year,
+          artist: album.artist,
+        ),
+        artist: d.artist,
+        error: d.error,
+      );
+    }
+    if (d.playlist != null) {
+      final pl = d.playlist!;
+      return DetailUiState(
+        loading: d.loading,
+        artist: d.artist,
+        playlist: PlaylistDetail(
+          title: pl.title,
+          subtitle: pl.subtitle,
+          thumbnails: pl.thumbnails,
+          tracks: pl.tracks.map(update).toList(),
+          author: pl.author,
+        ),
+        error: d.error,
+      );
+    }
+    return null;
+  }
+
+  /// Fetches like-state for detail album/playlist tracks and stamps it
+  /// into the visible page (guarded by the detail generation). Kotlin
+  /// requests detail-track ratings the same way; without this pass liked
+  /// songs never highlight on detail pages.
+  void _stampDetailRatings(int gen, List<Track> tracks) {
+    if (tracks.isEmpty) return;
+    unawaited(
+      _requestTrackRatings(tracks, (statuses) {
+        debugPrint(
+          '[rating] detail stamp: ${tracks.length} tracks -> ${statuses.length} known',
+        );
+        if (statuses.isEmpty || gen != _detailGen) return;
+        final stamped = _detailWithRatings(
+          detail,
+          (t) => statuses[t.videoId] == null
+              ? t
+              : t.copyWith(rating: statuses[t.videoId]!),
+        );
+        if (stamped == null) return;
+        detail = stamped;
+        notifyListeners();
+      }),
+    );
+  }
+
+  /// Batch-resolves ratings for [tracks], using the cache first.
+  Future<void> _requestTrackRatings(
+    List<Track> tracks,
+    void Function(Map<String, RatingStatus>) onComplete,
+  ) async {
+    if (!ratingsAvailable) return;
+    final pending = tracks
+        .map((t) => t.videoId)
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final cached = <String, RatingStatus>{};
+    final missing = <String>[];
+    for (final id in pending) {
+      final known = _ratingCache[id] ?? _likedRating(id);
+      if (known != null) {
+        cached[id] = known;
+      } else {
+        missing.add(id);
+      }
+    }
+    if (missing.isNotEmpty) {
+      try {
+        final fetched = await _tube.ratings(missing);
+        // Drop logged-out INDIFFERENTs contradicting local LIKE knowledge
+        // (also covers likes tapped mid-fetch).
+        final trusted = {
+          for (final e in fetched.entries)
+            if (_trustNetworkRating(e.key, e.value)) e.key: e.value,
+        };
+        _ratingCache.addAll(trusted);
+        cached.addAll(trusted);
+      } catch (_) {}
+    }
+    onComplete(cached);
+  }
+
+  RatingStatus? _likedRating(String videoId) =>
+      (_likedIds.contains(videoId) || _liked.any((t) => t.videoId == videoId))
+      ? RatingStatus.like
+      : null;
+
+  /// Whether a network-fetched rating may be applied. Logged-out InnerTube
+  /// reads confidently report INDIFFERENT for liked songs; those must
+  /// never clobber locally known LIKE state (cache, liked ids/list).
+  /// Explicit LIKE/DISLIKE always applies (it requires a real session).
+  bool _trustNetworkRating(String videoId, RatingStatus fetched) {
+    if (fetched == RatingStatus.like || fetched == RatingStatus.dislike) {
+      return true;
+    }
+    if (fetched != RatingStatus.indifferent) return false;
+    final local = _ratingCache[videoId] ?? _likedRating(videoId);
+    return local != RatingStatus.like;
+  }
+
+  /// Applies locally known like-state (rating cache, then liked ids/list)
+  /// onto [t]. Explicit cache entries always win, so unlikes/relikes
+  /// repaint correctly even when the track object predates them.
+  Track _stampKnownRating(Track t) {
+    final known = _ratingCache[t.videoId] ?? _likedRating(t.videoId);
+    if (known == null || known == t.rating) return t;
+    return t.copyWith(rating: known);
+  }
+
+  /// Maps [_stampKnownRating] over a track list.
+  List<Track> _stampKnownRatings(List<Track> tracks) =>
+      tracks.map(_stampKnownRating).toList();
+
+  /// Maps [_stampKnownRating] over the song items of every home shelf.
+  List<Shelf> _stampShelves(List<Shelf> shelves) => [
+    for (final s in shelves)
+      Shelf(s.title, [
+        for (final item in s.items)
+          item is SongItem ? SongItem(_stampKnownRating(item.track)) : item,
+      ]),
+  ];
+
+  List<Track> _stampLikedIds(List<Track> tracks) => _stampKnownRatings(tracks);
+
+  Map<String, List<ShelfItem>> _stampSearchSections(
+    Map<String, List<ShelfItem>> sections,
+  ) {
+    return sections.map(
+      (key, items) => MapEntry(
+        key,
+        items
+            .map(
+              (item) => item is SongItem
+                  ? SongItem(_stampKnownRating(item.track))
+                  : item,
+            )
+            .toList(),
+      ),
+    );
+  }
+
+  /// Refreshes the account liked-ids set and restamps visible surfaces.
+  Future<void> refreshLikedIds() async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      final ids = await api.likedVideoIds();
+      _likedIds = ids;
+      search = SearchUiState(
+        query: search.query,
+        sections: _stampSearchSections(search.sections),
+      );
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Re-resolves the current track's rating when the account changes.
+  Future<void> refreshCurrentRating() async {
+    final current = _player.state.current;
+    if (current == null || !ratingsAvailable) return;
+    try {
+      final rating = await _tube.rating(current.videoId);
+      if (rating != RatingStatus.unknown &&
+          _trustNetworkRating(current.videoId, rating)) {
+        _player.updateTrackRating(current.videoId, rating);
+        _ratingCache[current.videoId] = rating;
+      }
+    } catch (_) {}
+  }
+
+  // ---------- Lyrics / enrichment ----------
+
+  List<LyricLine> _lyrics = [];
+  List<LyricLine> get lyrics => _lyrics;
+
+  /// Cover palette bands for the Now Playing backdrop (Kotlin
+  /// `rememberCoverPalette`); empty until the artwork loads.
+  List<Color> _coverPalette = [];
+  List<Color> get coverPalette => _coverPalette;
+  final Map<String, List<Color>> _paletteCache = {};
+
+  String? _lastLyricKey;
+  String? _lastRatingVideoId;
+
+  void _onPlayerState(PlayerState s) {
+    if (_config.reportPlayback) {
+      // Fire-and-forget: beacons never touch UI state (see
+      // _reportPlaybackProgress), so reporting can't jank playback.
+      unawaited(_reportPlaybackProgress(s));
+    }
+    final track = s.current;
+    final key = track?.videoId;
+    final prev = _lastNotified;
+    _lastNotified = s;
+    if (track != null && key != null && key != _lastLyricKey) {
+      _lastLyricKey = key;
+      _lyrics = [];
+      notifyListeners();
+      unawaited(_resolveCurrentMetadata(track));
+      unawaited(_refreshPalette(track.displayArtwork));
+      return;
+    }
+    if (track == null || key == null) {
+      notifyListeners();
+      return;
+    }
+    // Pure progress ticks (position polling) bump a lightweight notifier
+    // that only sliders and time labels listen to, instead of rebuilding
+    // the whole tree twice a second.
+    if (prev != null && isProgressOnlyUpdate(prev, s)) {
+      progressTick.value++;
+      return;
+    }
+    // Volume-only changes (slider drags) get their own tick for the
+    // same reason: the volume slider listens to it, nobody else pays.
+    if (prev != null && isVolumeOnlyUpdate(prev, s)) {
+      volumeTick.value++;
+      return;
+    }
+    notifyListeners();
+  }
+
+  /// Bumped on player updates that carry only playback progress. Sliders
+  /// and time labels listen to this; everything else uses notifications.
+  final ValueNotifier<int> progressTick = ValueNotifier(0);
+
+  /// Bumped on player updates that carry only a volume change. The
+  /// volume slider listens to this; volume drags no longer rebuild the
+  /// whole app on every throttled step.
+  final ValueNotifier<int> volumeTick = ValueNotifier(0);
+
+  /// Last snapshot seen on the player stream, for progress detection.
+  PlayerState? _lastNotified;
+
+  Future<void> _refreshPalette(String? url) async {
+    if (url == null || url.isEmpty) {
+      _coverPalette = [];
+      notifyListeners();
+      return;
+    }
+    final cached = _paletteCache[url];
+    if (cached != null) {
+      _coverPalette = cached;
+      notifyListeners();
+      return;
+    }
+    try {
+      final image = await _art.image(url);
+      if (image == null) return;
+      final bands = coverBands(image);
+      if (bands == null) return;
+      final colors = bands
+          .map((b) => Color.fromRGBO(b.$1, b.$2, b.$3, 1))
+          .toList();
+      _paletteCache[url] = colors;
+      final hold = _paletteHoldUntil;
+      if (hold != null && DateTime.now().isBefore(hold)) {
+        // Transition running: hold the result instead of rebuilding
+        // (and starting the wash animation) mid-slide.
+        _pendingPalette = colors;
+        return;
+      }
+      _coverPalette = colors;
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Returns the cached palette for [url], or null if not yet computed.
+  /// Call [ensurePalette] first to trigger computation.
+  List<Color>? paletteFor(String? url) => _paletteCache[url];
+
+  /// Computes and caches the cover palette for [url] if not already
+  /// present. Used by album/playlist views that need a backdrop wash
+  /// independent of the Now Playing cover.
+  Future<List<Color>?> ensurePalette(String? url) async {
+    if (url == null || url.isEmpty) {
+      notifyListeners();
+      return null;
+    }
+    final cached = _paletteCache[url];
+    if (cached != null) return cached;
+    try {
+      final image = await _art.image(url);
+      if (image == null) {
+        notifyListeners();
+        return null;
+      }
+      final bands = coverBands(image);
+      if (bands == null) {
+        notifyListeners();
+        return null;
+      }
+      final colors = bands
+          .map((b) => Color.fromRGBO(b.$1, b.$2, b.$3, 1))
+          .toList();
+      _paletteCache[url] = colors;
+      notifyListeners();
+      return colors;
+    } catch (_) {
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<void> _resolveCurrentMetadata(Track track) async {
+    final key = track.videoId;
+    // Paint locally known like-state first: queue copies from search,
+    // radio or shelves often carry unknown ratings for liked songs, and
+    // the network read below may fail while the answer is known locally.
+    final known = _ratingCache[key] ?? _likedRating(key);
+    if (known != null &&
+        _player.state.current?.videoId == key &&
+        _player.state.current!.rating == RatingStatus.unknown) {
+      _player.updateTrackRating(key, known);
+    }
+    Track enriched = track;
+    try {
+      enriched = await _tube.enrichTrack(track);
+    } catch (_) {}
+    if (_player.state.current?.videoId != key) return;
+    _player.updateTrackMetadata(
+      key,
+      artists: enriched.artists,
+      album: enriched.album,
+      thumbnails: enriched.thumbnails,
+      title: enriched.title,
+    );
+    final current = _player.state.current;
+    if (current == null || current.videoId != key) return;
+    try {
+      final res = await fetchLyricsAndAlbum(
+        current.artistNames(),
+        current.title,
+        current.album?.name ?? '',
+        current.durationSec,
+      );
+      if (_player.state.current?.videoId != key) return;
+      _lyrics = res.lines;
+      if (res.album != null && res.album!.isNotEmpty) {
+        _player.updateTrackAlbum(key, res.album!);
+      }
+      notifyListeners();
+    } catch (_) {}
+    if (_lastRatingVideoId != key) {
+      _lastRatingVideoId = key;
+      if (ratingsAvailable) {
+        try {
+          final rating = await _tube.rating(key);
+          debugPrint('[rating] current $key -> $rating');
+          if (rating != RatingStatus.unknown &&
+              _trustNetworkRating(key, rating) &&
+              _player.state.current?.videoId == key) {
+            _player.updateTrackRating(key, rating);
+            _ratingCache[key] = rating;
+          }
+        } catch (_) {}
+      }
+      // Public like count for the info panel (InnerTube stream responses
+      // carry none; the Data API statistics part does).
+      final api = _api;
+      if (api != null && _player.state.current?.videoId == key) {
+        try {
+          final likes = await api.videoLikeCount(key);
+          if (likes != null &&
+              likes >= 0 &&
+              _player.state.current?.videoId == key) {
+            _player.updateTrackStats(key, likes, -1);
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  // ---------- Auth ----------
+
+  File get _authFile => File('${configDir().path}/auth.properties');
+
+  /// Restores the persisted cookie session, if any.
+  Future<void> loadAuth() async {
+    _loadSearchHistory();
+    try {
+      final f = _authFile;
+      if (!f.existsSync()) return;
+      final props = readProperties(f);
+      final cookie = props['cookie'] ?? '';
+      if (cookie.isEmpty) return;
+      final session = AuthSession.fromCookie(cookie);
+      if (session == null) return;
+      final savedToken = props['sessionToken'];
+      _tube.auth = AuthSession(
+        cookie: session.cookie,
+        sapisidHash: session.sapisidHash,
+        sessionToken: (savedToken != null && savedToken.isNotEmpty)
+            ? savedToken
+            : null,
+      );
+      unawaited(_refreshAccountAfterAuth());
+    } catch (_) {}
+  }
+
+  Future<void> _refreshAccountAfterAuth() async {
+    try {
+      final name = await _tube.accountName();
+      _account = name ?? 'YouTube Music account';
+    } catch (_) {
+      _account = 'YouTube Music account';
+    }
+    notifyListeners();
+    try {
+      final token = await _tube.fetchSessionToken();
+      if (token != null) {
+        final s = _tube.auth;
+        _tube.auth = AuthSession(
+          cookie: s.cookie,
+          sapisidHash: s.sapisidHash,
+          accessToken: s.accessToken,
+          sessionToken: token,
+        );
+        _saveAuth();
+      }
+    } catch (_) {}
+    unawaited(_refreshAvatar());
+    // Personal rows + discover need no interaction: refresh like a login
+    // (loadLibrary is a no-op without an OAuth bearer).
+    unawaited(loadLibrary());
+    // Surface an expired saved session in the UI right away
+    // instead of waiting for the first playback heartbeat.
+    unawaited(_refreshLoginValidity());
+  }
+
+  void _saveAuth() {
+    final s = _tube.auth;
+    if (s.cookie == null) return;
+    writeProperties(_authFile, {
+      'cookie': s.cookie!,
+      if (s.sapisidHash != null) 'sapisidHash': s.sapisidHash!,
+      if (s.sessionToken != null) 'sessionToken': s.sessionToken!,
+    });
+  }
+
+  Future<void> _refreshAvatar() async {
+    final gen = ++_avatarGen;
+    try {
+      final avatar = await _api?.channelAvatar();
+      if (gen != _avatarGen) return;
+      _accountAvatar = avatar;
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Signs in with a pasted browser cookie. Returns true on success.
+  Future<bool> login(String cookie) async {
+    final problem = validateCookie(cookie);
+    if (problem != null) {
+      _loginDetail = problem;
+      notifyListeners();
+      return false;
+    }
+    _loginBusy = true;
+    _loginDetail = null;
+    notifyListeners();
+    try {
+      final session = AuthSession.fromCookie(cookie);
+      if (session == null) {
+        _loginDetail = 'Could not derive a session from that cookie.';
+        return false;
+      }
+      final previous = _tube.auth;
+      _tube.auth = session;
+      final ok = await _tube.verifyLogin();
+      if (!ok) {
+        _tube.auth = previous;
+        _loginDetail = 'YouTube rejected that cookie. Copy a fresh Cookie header while logged in.';
+        return false;
+      }
+      // Fresh cookie verified: mark the session valid so the UI
+      // reflects it immediately and skips a redundant re-check.
+      _loginValid = true;
+      _loginCheckedAt = DateTime.now().millisecondsSinceEpoch;
+      _account = await _tube.accountName() ?? 'YouTube Music account';
+      try {
+        final token = await _tube.fetchSessionToken();
+        if (token != null) {
+          _tube.auth = AuthSession(
+            cookie: session.cookie,
+            sapisidHash: session.sapisidHash,
+            sessionToken: token,
+          );
+        }
+      } catch (_) {}
+      _saveAuth();
+      unawaited(_refreshAvatar());
+      unawaited(loadLibrary());
+      unawaited(refreshCurrentRating());
+      return true;
+    } finally {
+      _loginBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Chromium-family profiles on this device, for the
+  /// one-click cookie import (see [loginFromBrowser]).
+  List<BrowserProfile> get browserProfiles =>
+      BrowserCookies.detectProfiles();
+
+  /// Signs in by importing the YouTube cookie straight from a
+  /// browser's own store (headless browser + DevTools protocol,
+  /// the same idea as `yt-dlp --cookies-from-browser`), instead
+  /// of the user copying a Cookie header out of DevTools.
+  ///
+  /// [profile] pins one browser/profile; without it the first
+  /// detected profile is used. Returns true on success; every
+  /// failure degrades to a [loginDetail] hint so the user can
+  /// fall back to pasting the cookie manually.
+  Future<bool> loginFromBrowser({BrowserProfile? profile}) async {
+    final detected = BrowserCookies.detectProfiles();
+    final source = profile ?? (detected.isEmpty ? null : detected.first);
+    if (source == null) {
+      _loginDetail = 'No Chromium-family browser profile found on '
+          'this device.';
+      notifyListeners();
+      return false;
+    }
+    _loginBusy = true;
+    _loginDetail = null;
+    notifyListeners();
+    try {
+      final header = await BrowserCookies.importYouTubeCookie(source);
+      if (header == null || header.isEmpty) {
+        _loginDetail = 'No signed-in YouTube session found in ${source.label}.\n'
+            'Log into music.youtube.com in that browser first.';
+        return false;
+      }
+      return await login(header);
+    } finally {
+      _loginBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Signs out everywhere: tubes, token stores, account display.
+  void logout() {
+    _tube.auth = const AuthSession.anonymous();
+    _tube.authProvider = null;
+    _oauth.logout();
+    _account = null;
+    _accountAvatar = null;
+    _liked = [];
+    _likedIds = {};
+    _ratingCache.clear();
+    _playlists = [];
+    _activity = [];
+    _discover = [];
+    _recentArtists = [];
+    _openPlaylist = null;
+    // No session left: reset the validity verdict so the UI
+    // doesn't keep showing "expired" for a signed-out state.
+    _loginValid = true;
+    _loginCheckedAt = 0;
+    try {
+      if (_authFile.existsSync()) _authFile.deleteSync();
+    } catch (_) {}
+    final current = _player.state.current;
+    if (current != null) {
+      _player.updateTrackRating(current.videoId, RatingStatus.unknown);
+    }
+    notifyListeners();
+  }
+
+  /// Completes the Google browser login, resolving the channel and loading
+  /// the library on success.
+  Future<bool> googleBrowserLogin() async {
+    if (_googleLoginJob) return false;
+    _googleLoginJob = true;
+    _loginBusy = true;
+    _loginDetail = null;
+    notifyListeners();
+    try {
+      final creds = _oauth.savedClient();
+      if (creds == null) {
+        _loginDetail = 'Set the OAuth client ID/secret first.';
+        return false;
+      }
+      final minted = await _oauth.loginBrowser(
+        creds.$1,
+        creds.$2,
+        (url) => _openUrl(url),
+        cancelled: () => !_googleLoginJob,
+      );
+      if (!minted || !_googleLoginJob) return false;
+      String? name;
+      try {
+        name = await _api?.channelName();
+      } catch (_) {}
+      if (name == null) return false;
+      _account = name;
+      _tube.authProvider = () => _oauth.validSession();
+      unawaited(_refreshAvatar());
+      unawaited(refreshCurrentRating());
+      unawaited(loadLibrary());
+      unawaited(refreshLikedIds());
+      return true;
+    } finally {
+      _googleLoginJob = false;
+      _loginBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Aborts a pending Google browser login.
+  void cancelGoogleLogin() {
+    _googleLoginJob = false;
+    _loginBusy = false;
+    notifyListeners();
+  }
+
+  /// True while a Google login attempt is in flight.
+  bool get googleLoginActive => _googleLoginJob;
+
+  /// Re-emits state after external config edits (e.g. settings toggles).
+  void refreshConfig() => notifyListeners();
+
+  /// Full-screen Now Playing overlay visibility.
+  bool _nowOpen = false;
+  bool get nowOpen => _nowOpen;
+
+  /// Duration of the overlay slide/fade (mirrored by
+  /// `_NowPlayingOverlay`). Palette results landing inside this window
+  /// are held until it ends so isolate completions don't rebuild
+  /// mid-transition.
+  static const nowPlayingTransition = Duration(milliseconds: 250);
+
+  /// End of the current transition hold, if any.
+  DateTime? _paletteHoldUntil;
+
+  /// Palette computed mid-transition, applied when the hold releases.
+  List<Color>? _pendingPalette;
+
+  /// Whether the overlay slide completed. The heavy tab contents stay
+  /// out until then so the transition's first frames stay cheap.
+  bool _nowReady = false;
+  bool get nowReady => _nowReady;
+
+  void openNow() {
+    _nowOpen = true;
+    _nowReady = false;
+    _holdPaletteForTransition();
+    notifyListeners();
+  }
+
+  void closeNow() {
+    _nowOpen = false;
+    _nowReady = false;
+    _lyricsFull = false;
+    _holdPaletteForTransition();
+    notifyListeners();
+  }
+
+  /// Full-screen lyrics mode inside Now Playing: big auto-scrolling
+  /// lyrics with the mini player bar at the bottom. Reset on close so
+  /// reopening always lands on the standard two-column view.
+  bool _lyricsFull = false;
+  bool get lyricsFull => _lyricsFull;
+
+  void expandLyrics() {
+    if (_lyricsFull) return;
+    _lyricsFull = true;
+    notifyListeners();
+  }
+
+  void collapseLyrics() {
+    if (!_lyricsFull) return;
+    _lyricsFull = false;
+    notifyListeners();
+  }
+
+  void _holdPaletteForTransition() {
+    final until = DateTime.now().add(nowPlayingTransition);
+    _paletteHoldUntil = until;
+    Timer(nowPlayingTransition + const Duration(milliseconds: 50), () {
+      if (_paletteHoldUntil == until) _releasePaletteHold();
+    });
+  }
+
+  void _releasePaletteHold() {
+    _paletteHoldUntil = null;
+    var changed = false;
+    if (_pendingPalette != null) {
+      _coverPalette = _pendingPalette!;
+      _pendingPalette = null;
+      changed = true;
+    }
+    if (!_nowReady) {
+      _nowReady = true;
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
+  // ---------- History reporting ----------
+
+  String? _lastReportedVideoId;
+  bool _previousPlaying = false;
+  bool _previousStopped = false;
+  int _lastProgressMs = 0;
+  int _lastReportedPositionMs = 0;
+  String? _lastWatchCpn;
+  double _lastWatchSegmentStartSec = 0.0;
+  double _lastWatchDurationSec = 0.0;
+  String? _lastWatchPlaylistId;
+
+  int _loginCheckedAt = 0;
+  bool _loginValid = true;
+
+  /// Client playback nonce for watchtime beacons: 16 URL-safe chars,
+  /// stable for one track playback (YouTube ties a watch to its cpn).
+  String _newWatchCpn() {
+    const chars =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    final r = Random();
+    return String.fromCharCodes(
+      List.generate(16, (_) => chars.codeUnitAt(r.nextInt(chars.length))),
+    );
+  }
+
+  /// Re-checks the saved cookie session's validity when the cached
+  /// verdict is stale (at most every [_loginCheckIntervalMs]).
+  /// stats/* beacons return 204 (blind ack) regardless of auth, so
+  /// without this check an expired LOGIN_INFO would go unnoticed:
+  /// beacons "succeed" while YouTube records nothing. Logs a warning
+  /// and notifies listeners when the verdict flips. No-op when no
+  /// cookie session is saved.
+  Future<void> _refreshLoginValidity() async {
+    if ((_tube.auth.cookie ?? '').isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _loginCheckedAt <= _loginCheckIntervalMs) return;
+    _loginCheckedAt = now;
+    final ok = await _tube.verifyLogin();
+    if (!ok) {
+      try {
+        File(_watchtimeLogPath).writeAsStringSync(
+          '${DateTime.now().toUtc().toIso8601String()} WARNING LOGIN_INFO expired (logged_in=0): '
+          'stats/* beacons will not record history. Re-authenticate in Settings → Integrations.\n',
+          mode: FileMode.append,
+        );
+      } catch (_) {}
+    }
+    if (ok != _loginValid) {
+      _loginValid = ok;
+      notifyListeners();
+    }
+  }
+
+  /// Sends one watchtime beacon for [videoId], logging failures to the
+  /// watchtime log file (successes stay silent).
+  Future<void> sendWatchtime(
+    String videoId,
+    String cpn,
+    double startSec,
+    double currentSec,
+    String state,
+    double durationSec, [
+    String? playlistId,
+  ]) async {
+    // Re-check the cookie session's validity (cached for 5
+    // min) so an expired LOGIN_INFO surfaces in the UI.
+    await _refreshLoginValidity();
+
+    bool ok = false;
+    try {
+      ok = await _tube.reportWatchtime(
+        videoId,
+        cpn,
+        startSec,
+        currentSec,
+        state,
+        durationSec,
+        playlistId,
+      );
+    } catch (e) {
+      try {
+        File(_watchtimeLogPath).writeAsStringSync(
+          '${DateTime.now().toUtc().toIso8601String()} EXCEPTION $state $videoId ${e.runtimeType}\n',
+          mode: FileMode.append,
+        );
+      } catch (_) {}
+      return;
+    }
+    if (!ok) {
+      try {
+        final cookieSession = _tube.auth;
+        AuthSession? oauthSession;
+        try {
+          oauthSession = await _tube.authProvider?.call();
+        } catch (_) {
+          oauthSession = null;
+        }
+        final cookiePresent = (cookieSession.cookie ?? '').isNotEmpty;
+        final bearerPresent = (oauthSession?.accessToken ?? '').isNotEmpty;
+        final tokenPresent = (cookieSession.sessionToken ?? '').isNotEmpty;
+        final tag = bearerPresent && !cookiePresent
+            ? 'BEARER_ONLY'
+            : !bearerPresent && cookiePresent
+            ? 'COOKIE_ONLY'
+            : cookiePresent && bearerPresent
+            ? 'BOTH'
+            : 'ANONYMOUS';
+        final tokenTag = tokenPresent ? 'TOKEN_YES' : 'TOKEN_NO';
+        File(_watchtimeLogPath).writeAsStringSync(
+          '${DateTime.now().toUtc().toIso8601String()} FAILED $state $videoId '
+          'cmt=$currentSec auth=$tag $tokenTag\n',
+          mode: FileMode.append,
+        );
+      } catch (_) {}
+    }
+  }
+
+  /// Mirrors the player-state reporting block: track switches emit
+  /// paused (previous) + playing (new) beacons, play/pause/stop
+  /// transitions emit their own, and steady playback heartbeats every
+  /// [_reportHeartbeatMs]. Never touches UI state.
+  Future<void> _reportPlaybackProgress(PlayerState s) async {
+    final prevVid = _lastReportedVideoId;
+    final prevPlay = _previousPlaying;
+    final prevStop = _previousStopped;
+    final progMs = _lastProgressMs;
+    final prevPosMs = _lastReportedPositionMs;
+    final prevCpn = _lastWatchCpn;
+    final prevSegStartSec = _lastWatchSegmentStartSec;
+    final prevDurSec = _lastWatchDurationSec;
+    final prevPlaylistId = _lastWatchPlaylistId;
+    try {
+      final vid = s.current?.videoId;
+      final posSec = s.positionMs / 1000.0;
+      final durSec = s.durationMs / 1000.0;
+      final playlistId = s.current?.playlistId;
+      if (vid != null && vid != prevVid) {
+        if (prevVid != null && prevCpn != null && !s.stopped) {
+          // Report where the previous track actually stopped, not the
+          // new track's ~0 position.
+          await sendWatchtime(
+            prevVid,
+            prevCpn,
+            prevSegStartSec,
+            prevPosMs / 1000.0,
+            'paused',
+            prevDurSec,
+            prevPlaylistId,
+          );
+        }
+        final cpn = _newWatchCpn();
+        _lastReportedVideoId = vid;
+        _lastWatchCpn = cpn;
+        _lastWatchSegmentStartSec = 0.0;
+        _lastWatchDurationSec = durSec;
+        _lastWatchPlaylistId = playlistId;
+        _lastReportedPositionMs = s.positionMs;
+        await sendWatchtime(
+          vid,
+          cpn,
+          0.0,
+          posSec,
+          'playing',
+          durSec,
+          playlistId,
+        );
+      } else if (vid != null && vid == prevVid && prevCpn != null) {
+        if (s.playing && !prevPlay) {
+          _lastWatchSegmentStartSec = prevPosMs / 1000.0;
+          _lastReportedPositionMs = s.positionMs;
+          await sendWatchtime(
+            vid,
+            prevCpn,
+            prevSegStartSec,
+            posSec,
+            'playing',
+            durSec,
+            playlistId,
+          );
+        } else if (!s.playing && prevPlay && !s.stopped) {
+          _lastReportedPositionMs = s.positionMs;
+          await sendWatchtime(
+            vid,
+            prevCpn,
+            prevSegStartSec,
+            posSec,
+            'paused',
+            durSec,
+            playlistId,
+          );
+          _lastWatchSegmentStartSec = posSec;
+        } else if (s.stopped && !prevStop) {
+          _lastReportedPositionMs = s.positionMs;
+          await sendWatchtime(
+            vid,
+            prevCpn,
+            prevSegStartSec,
+            posSec,
+            'paused',
+            durSec,
+            playlistId,
+          );
+          _lastWatchSegmentStartSec = posSec;
+        } else if (s.playing) {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          if (now - progMs >= _reportHeartbeatMs) {
+            _lastProgressMs = now;
+            _lastReportedPositionMs = s.positionMs;
+            await sendWatchtime(
+              vid,
+              prevCpn,
+              prevSegStartSec,
+              posSec,
+              'playing',
+              durSec,
+              playlistId,
+            );
+            _lastWatchSegmentStartSec = posSec;
+          } else {
+            _lastReportedPositionMs = s.positionMs;
+          }
+        } else {
+          _lastReportedPositionMs = s.positionMs;
+        }
+      }
+      _previousPlaying = s.playing;
+      _previousStopped = s.stopped;
+    } catch (_) {}
+  }
+
+  // ---------- Subscriptions ----------
+
+  final Set<String> _subscribed = {};
+  final Set<String> _subscribeBusy = {};
+
+  bool isSubscribed(String channelId) => _subscribed.contains(channelId);
+
+  /// Resolves and toggles the subscription state for [channelId].
+  Future<void> toggleSubscribe(String channelId) async {
+    final api = _api;
+    if (api == null || _subscribeBusy.contains(channelId)) return;
+    _subscribeBusy.add(channelId);
+    try {
+      if (_subscribed.contains(channelId)) {
+        final subId = await api.subscriptionId(channelId);
+        if (subId != null && await api.unsubscribe(subId)) {
+          _subscribed.remove(channelId);
+        }
+      } else {
+        final subId = await api.subscriptionId(channelId);
+        if (subId != null) {
+          _subscribed.add(channelId);
+        } else if (await api.subscribe(channelId)) {
+          _subscribed.add(channelId);
+        }
+      }
+    } finally {
+      _subscribeBusy.remove(channelId);
+      notifyListeners();
+    }
+  }
+
+  /// Resolves a channel avatar URL, caching misses as empty. Used for
+  /// creator rows where InnerTube only exposes wide banners.
+  ///
+  /// Prefers the Data API channel thumbnail (true square avatar) and falls
+  /// back to InnerTube artist imagery (square preferred, largest
+  /// otherwise), mirroring Kotlin `resolveAuthorAvatar`.
+  Future<String?> artistAvatar(String channelId) async {
+    if (channelId.isEmpty) return null;
+    final cached = _artistAvatarCache[channelId];
+    if (cached != null) return cached.isEmpty ? null : cached;
+    final api = _api;
+    String? url;
+    if (api != null) {
+      try {
+        url = (await api.channelAvatars([channelId]))[channelId];
+      } catch (_) {
+        url = null;
+      }
+    }
+    if (url == null || url.isEmpty) {
+      try {
+        final thumbs = (await _tube.artist(channelId))?.thumbnails ?? [];
+        final square = thumbs.where((t) => t.isSquare).toList();
+        final pool = square.isNotEmpty ? square : thumbs;
+        if (pool.isNotEmpty) {
+          url = pool.reduce((a, b) => a.width >= b.width ? a : b).url;
+        }
+      } catch (_) {}
+    }
+    _artistAvatarCache[channelId] = url ?? '';
+    return url;
+  }
+
+  /// Whether the InnerTube id is a real artist page (cached), mirroring
+  /// Kotlin `isArtistPage`: a full artist response must resolve.
+  Future<bool> isArtistPage(String browseId) async {
+    if (browseId.isEmpty || !browseId.startsWith('UC')) return false;
+    final cached = _artistPageCache[browseId];
+    if (cached != null) return cached;
+    var ok = false;
+    try {
+      ok = await _tube.artist(browseId) != null;
+    } catch (_) {
+      ok = false;
+    }
+    _artistPageCache[browseId] = ok;
+    return ok;
+  }
+
+  /// Whether an author row may link out: never yourself, otherwise only
+  /// verified artist pages (plain user channels stay inert text).
+  Future<bool> isAuthorClickable(String browseId) async {
+    if (browseId.isEmpty || !browseId.startsWith('UC')) return false;
+    if (!_ownChannelIdLoaded) {
+      _ownChannelIdLoaded = true;
+      try {
+        _ownChannelId = await _api?.ownChannelId();
+      } catch (_) {
+        _ownChannelId = null;
+      }
+    }
+    if (_ownChannelId != null &&
+        _ownChannelId!.isNotEmpty &&
+        browseId == _ownChannelId) {
+      return false;
+    }
+    return isArtistPage(browseId);
+  }
+
+  /// Primes the subscription state for [channelId].
+  Future<void> refreshSubscription(String channelId) async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      final subId = await api.subscriptionId(channelId);
+      if (subId != null) {
+        _subscribed.add(channelId);
+      } else {
+        _subscribed.remove(channelId);
+      }
+      notifyListeners();
+    } catch (_) {}
+  }
+}
+
+extension _TakeIfNotEmpty on List<Track> {
+  List<Track>? takeIfNotEmpty() => isEmpty ? null : this;
+}

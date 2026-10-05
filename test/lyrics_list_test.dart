@@ -1,0 +1,113 @@
+// Regression test for the lyric highlight animation: moving the
+// active line must update rows in place so the swell plays. Keying
+// only the active row remounts two rows per line change and the
+// animation never runs — caught here via element identity.
+
+import 'dart:io';
+
+import 'package:material_ui/material_ui.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+
+import 'package:nixietube/core/artwork/artwork_store.dart';
+import 'package:nixietube/core/innertube/inner_tube.dart';
+import 'package:nixietube/core/models/models.dart';
+import 'package:nixietube/core/player/player_controller.dart';
+import 'package:nixietube/core/player/player_engine.dart';
+import 'package:nixietube/sys/google_oauth.dart';
+import 'package:nixietube/sys/sys_config.dart';
+import 'package:nixietube/ui/app_state.dart';
+import 'package:nixietube/ui/widgets/lyrics_list.dart';
+
+class _IdleEngine implements PlayerEngine {
+  @override
+  Future<bool> play(String url) async => true;
+  @override
+  Future<void> pause() async {}
+  @override
+  Future<void> resume() async {}
+  @override
+  Future<void> stop() async {}
+  @override
+  Future<void> seekTo(int ms) async {}
+  @override
+  Future<void> setVolume(int volume) async {}
+  @override
+  int positionMs() => 0;
+  @override
+  int durationMs() => 0;
+  @override
+  bool isPlaying() => false;
+  @override
+  Future<void> release() async {}
+  @override
+  void addListener(PlayerEngineListener listener) {}
+}
+
+void main() {
+  testWidgets('active line changes update rows in place', (tester) async {
+    final dir = Directory.systemTemp.createTempSync('nt-lyrics-test');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = InnerTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: _IdleEngine(),
+      tube: tube,
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+      oauth: GoogleOAuth(storePath: '${dir.path}/oauth.properties'),
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+    const lines = [
+      LyricLine(timeMs: 0, text: 'first line'),
+      LyricLine(timeMs: 60000, text: 'second line'),
+      LyricLine(timeMs: 120000, text: 'third line'),
+    ];
+    final ctrl = ScrollController();
+    addTearDown(ctrl.dispose);
+    Widget buildAt(int positionMs) => ChangeNotifierProvider.value(
+          value: state,
+          child: MaterialApp(
+            home: Scaffold(
+              body: LyricsList(
+                ctrl: ctrl,
+                lyrics: lines,
+                positionMs: positionMs,
+                state: state,
+              ),
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(buildAt(0));
+    final second = tester.element(find.text('second line'));
+
+    // Advance past line two: its row must update in place (same
+    // Element), not remount, or the swell animation never plays.
+    await tester.pumpWidget(buildAt(61000));
+    final secondAfter = tester.element(find.text('second line'));
+    expect(identical(second, secondAfter), isTrue);
+
+    // The highlight itself moved to the second line (nearest
+    // AnimatedDefaultTextStyle ancestor carries the row style).
+    AnimatedDefaultTextStyle styleOf(String text) => tester.widget(
+          find.ancestor(
+            of: find.text(text),
+            matching: find.byType(AnimatedDefaultTextStyle),
+          ).first,
+        );
+    expect(
+      styleOf('second line').style.fontSize,
+      isNot(styleOf('third line').style.fontSize),
+    );
+    // Settle the follow-scroll animation before teardown.
+    await tester.pump(const Duration(seconds: 1));
+  });
+}
