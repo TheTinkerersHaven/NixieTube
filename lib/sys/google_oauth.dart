@@ -12,9 +12,10 @@ import 'dart:io' show ContentType, File, HttpRequest, HttpServer;
 import 'dart:math' show Random;
 
 import 'package:crypto/crypto.dart';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 
 import '../core/innertube/auth_session.dart';
+import 'http_client.dart';
 import 'paths.dart';
 import 'sys_config.dart';
 
@@ -62,16 +63,16 @@ String newOAuthState([Random? random]) {
 }
 
 class GoogleOAuth {
-  GoogleOAuth({SysConfig? config, http.Client? httpClient, String? storePath})
+  GoogleOAuth({SysConfig? config, Dio? dio, String? storePath})
     : _config = config ?? SysConfig(),
-      _client = httpClient ?? http.Client(),
+      _dio = dio ?? newHttpClient(),
       _storePath = storePath ?? '${configDir().path}/oauth.properties';
 
   final SysConfig _config;
-  final http.Client _client;
+  final Dio _dio;
   final String _storePath;
 
-  void close() => _client.close();
+  void close() => _dio.close();
 
   /// Returns the stored OAuth client id/secret pair, or null when either
   /// is blank.
@@ -185,10 +186,14 @@ class GoogleOAuth {
         if (codeVerifier != null && codeVerifier.trim().isNotEmpty)
           'code_verifier': codeVerifier,
       };
-      final res = await _client
-          .post(Uri.parse('https://oauth2.googleapis.com/token'), body: body)
+      final res = await _dio
+          .postUri<String>(
+            Uri.parse('https://oauth2.googleapis.com/token'),
+            data: body,
+            options: Options(contentType: Headers.formUrlEncodedContentType),
+          )
           .timeout(const Duration(seconds: 30));
-      return parseTokens(res.body);
+      return parseTokens(res.data ?? '');
     } catch (_) {
       return null;
     }
@@ -303,18 +308,19 @@ class GoogleOAuth {
     final secret = _config.googleClientSecret;
     if (secret.trim().isEmpty) return null;
     try {
-      final res = await _client
-          .post(
+      final res = await _dio
+          .postUri<String>(
             Uri.parse('https://oauth2.googleapis.com/token'),
-            body: {
+            data: {
               'refresh_token': tokens.refreshToken,
               'client_id': clientId,
               'client_secret': secret,
               'grant_type': 'refresh_token',
             },
+            options: Options(contentType: Headers.formUrlEncodedContentType),
           )
           .timeout(const Duration(seconds: 30));
-      final fresh = parseTokens(res.body);
+      final fresh = parseTokens(res.data ?? '');
       if (fresh == null) return null;
       final merged = fresh.refreshToken.trim().isEmpty
           ? OAuthTokens(

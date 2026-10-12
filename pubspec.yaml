@@ -10,12 +10,15 @@ dependencies:
   flutter:
     sdk: flutter
   # InnerTube / Data API HTTP client.
-  http: ^1.2.0
+  dio: ^5.0.0
   # SHA-1 for SAPISIDHASH derivation and artwork cache digests.
   crypto: ^3.0.0
   # Central AppState wiring (mirrors StateFlow collectAsState).
   provider: ^6.1.0
   image: ^4.10.1
+  # Motion controllers behind m3e_core's springs; the local
+  # downward FAB menu drives them directly.
+  motor: ^1.1.0
   url_launcher: ^6.3.2
   path_provider: ^2.1.6
   just_audio: ^0.10.6
@@ -28,7 +31,23 @@ dependencies:
   # version"). Unpin only when the discord package is regenerated.
   flutter_rust_bridge: 2.11.1
   material_ui: ^1.5.0
-
+  # Loading skeletons for the home feed (replaces the spinner while shelves
+  # resolve, so the layout is stable and content reveals in place).
+  skeletonizer: ^3.0.0
+  m3e_core: ^1.1.4
+  # System accent (Material You) color schemes: the desktop
+  # accent via XDG portal/GTK on Linux, wallpaper colors on
+  # Android. Only DynamicColorBuilder is used; seed schemes
+  # come from flutter itself.
+  dynamic_color: ^2.1.0
+  google_fonts: ^9.0.0
+  tray_manager: ^0.8.0
+  window_manager: ^0.5.2
+  # Embedded Google-login window (system WebKit). Vendored path fork —
+  # see packages/desktop_webview_window/VENDORED.md for the native
+  # NULL-deref crash fixes that upstream 0.3.0 lacks.
+  desktop_webview_window:
+    path: packages/desktop_webview_window
 dev_dependencies:
   flutter_test:
     sdk: flutter

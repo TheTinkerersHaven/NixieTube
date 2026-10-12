@@ -419,7 +419,7 @@ void main() {
       await c.flushSession();
       final engine2 = FakeEngine();
       final c2 = _controller(engine2, configDir: dir);
-      expect(c2.restoreSession(), isTrue);
+      expect(await c2.restoreSession(), isTrue);
       expect(c2.state.current?.videoId, 'v2');
       expect(c2.state.index, 1);
       expect(c2.state.positionMs, 30000);
@@ -427,10 +427,10 @@ void main() {
       expect(engine2.lastUrl, isNull);
     });
 
-    test('restore fails without a session', () {
+    test('restore fails without a session', () async {
       final engine = FakeEngine();
       final c = _controller(engine);
-      expect(c.restoreSession(), isFalse);
+      expect(await c.restoreSession(), isFalse);
     });
   });
 
@@ -444,6 +444,22 @@ void main() {
       expect(c.state.queue[1].rating, RatingStatus.like);
       c.updateTrackRating('v1', RatingStatus.dislike);
       expect(c.state.current?.rating, RatingStatus.dislike);
+    });
+
+    test('bulk ratings restamp in one pass', () async {
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      c.playTracks([_track('v1'), _track('v2')]);
+      await _settle();
+      final changed = c.updateTrackRatings({
+        'v2': RatingStatus.like,
+        'v9': RatingStatus.like,
+      });
+      expect(changed, 1);
+      expect(c.state.queue[1].rating, RatingStatus.like);
+      expect(c.state.current?.rating, isNot(RatingStatus.like));
+      expect(c.updateTrackRatings({'v2': RatingStatus.like}), 0);
+      expect(c.updateTrackRatings({}), 0);
     });
 
     test('stats never overwrite known counts with -1', () async {
@@ -688,6 +704,234 @@ void main() {
       expect(c.state.playing, isFalse);
       expect(c.state.loading, isFalse);
       expect(c.state.error, contains('Playback failed to start'));
+    });
+  });
+
+  group('queue edits', () {
+    Future<PlayerController> playingQueue(
+      FakeEngine engine,
+      List<String> ids,
+    ) async {
+      final c = _controller(engine);
+      c.playTracks(ids.map(_track).toList());
+      await _settle();
+      return c;
+    }
+
+    List<String> queueIds(PlayerController c) =>
+        c.state.queue.map((t) => t.videoId).toList();
+
+    test('moveQueue reorders and tracks the current song', () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1', 'v2', 'v3', 'v4']);
+      // Drag v1 (index 0, current) down past v2/v3 (adjusted target).
+      c.moveQueue(0, 2);
+      expect(queueIds(c), ['v2', 'v3', 'v1', 'v4']);
+      expect(c.state.index, 2);
+      expect(c.state.current?.videoId, 'v1');
+      // Drag the last song above the current one: the current index
+      // shifts down to keep pointing at v1.
+      c.moveQueue(3, 0);
+      expect(queueIds(c), ['v4', 'v2', 'v3', 'v1']);
+      expect(c.state.index, 3);
+      expect(c.state.current?.videoId, 'v1');
+    });
+
+    test('moveQueue ignores identity and out-of-range moves', () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1', 'v2']);
+      final before = queueIds(c);
+      c.moveQueue(0, 0);
+      c.moveQueue(5, 0);
+      c.moveQueue(0, 9);
+      expect(queueIds(c), before);
+      expect(c.state.index, 0);
+    });
+
+    test('removeAt drops later songs without interrupting', () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1', 'v2', 'v3']);
+      expect(c.removeAt(2), isTrue);
+      expect(queueIds(c), ['v1', 'v2']);
+      expect(c.state.index, 0);
+      expect(c.state.current?.videoId, 'v1');
+      expect(c.state.playing, isTrue);
+      expect(c.removeAt(7), isFalse);
+    });
+
+    test('removeAt before the current song shifts the index', () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1', 'v2', 'v3']);
+      c.playAt(2);
+      await _settle();
+      expect(c.removeAt(0), isTrue);
+      expect(queueIds(c), ['v2', 'v3']);
+      expect(c.state.index, 1);
+      expect(c.state.current?.videoId, 'v3');
+    });
+
+    test('removeAt on the current song advances to what lands there',
+        () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1', 'v2', 'v3']);
+      expect(c.removeAt(0), isTrue);
+      await _settle();
+      expect(queueIds(c), ['v2', 'v3']);
+      expect(c.state.index, 0);
+      expect(c.state.current?.videoId, 'v2');
+      expect(engine.lastUrl, 'https://x/v2');
+    });
+
+    test('removing the last song clears the queue and stops', () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1']);
+      expect(c.removeAt(0), isTrue);
+      expect(c.state.queue, isEmpty);
+      expect(c.state.index, -1);
+      expect(c.state.current, isNull);
+      expect(c.state.playing, isFalse);
+    });
+
+    test('fresh-start hold masks the old track ghost position', () async {
+      final engine = FakeEngine()..dur = 200000;
+      final c = await playingQueue(engine, ['v1', 'v2']);
+      c.next();
+      await _settle();
+      expect(c.state.current?.videoId, 'v2');
+      expect(c.state.positionMs, 0);
+      // The engine still reports the old track's position on the
+      // first polls: held at 0 instead of teleporting the slider.
+      engine.pos = 180000;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(c.state.positionMs, 0);
+      // The engine restarts at 0: the hold releases and progress flows.
+      engine.pos = 0;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      engine.pos = 2500;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(c.state.positionMs, 2500);
+    });
+
+    test('insertAt restores a removed song for undo', () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1', 'v2', 'v3']);
+      c.playAt(1);
+      await _settle();
+      final removed = c.state.queue[2];
+      expect(c.removeAt(2), isTrue);
+      expect(queueIds(c), ['v1', 'v2']);
+      c.insertAt(2, removed);
+      expect(queueIds(c), ['v1', 'v2', 'v3']);
+      expect(c.state.index, 1);
+      expect(c.state.current?.videoId, 'v2');
+    });
+
+    test('clearQueue keeps the current song playing', () async {
+      final engine = FakeEngine();
+      final c = await playingQueue(engine, ['v1', 'v2']);
+      c.playAt(1);
+      await _settle();
+      c.clearQueue();
+      expect(queueIds(c), ['v2']);
+      expect(c.state.index, 0);
+      expect(c.state.current?.videoId, 'v2');
+      expect(c.state.playing, isTrue);
+      expect(c.state.stopped, isFalse);
+    });
+  });
+
+  group('sleep timer', () {
+    Future<PlayerController> playing(FakeEngine engine, List<String> ids) async {
+      final c = _controller(engine);
+      c.playTracks(ids.map(_track).toList());
+      await _settle();
+      expect(c.state.playing, isTrue);
+      return c;
+    }
+
+    test('duration pauses and disarms, keeping the stream', () async {
+      final engine = FakeEngine();
+      final c = await playing(engine, ['v1']);
+      c.setSleepTimerDuration(const Duration(milliseconds: 40));
+      expect(c.state.sleepTimerMode, SleepTimerMode.duration);
+      expect(c.state.sleepTimerEndsAtMs, isNotNull);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(c.state.playing, isFalse);
+      expect(c.state.stopped, isFalse);
+      expect(engine.playing, isFalse);
+      expect(c.state.sleepTimerMode, SleepTimerMode.off);
+      expect(c.state.sleepTimerEndsAtMs, isNull);
+      // Stream kept loaded: resume continues instantly.
+      c.play();
+      expect(c.state.playing, isTrue);
+    });
+
+    test('cancel disarms the timer', () async {
+      final engine = FakeEngine();
+      final c = await playing(engine, ['v1']);
+      c.setSleepTimerDuration(const Duration(milliseconds: 40));
+      c.cancelSleepTimer();
+      expect(c.state.sleepTimerMode, SleepTimerMode.off);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(c.state.playing, isTrue);
+    });
+
+    test('end of track pauses instead of advancing', () async {
+      final engine = FakeEngine();
+      final c = await playing(engine, ['v1', 'v2']);
+      c.setSleepTimerEndOfTrack();
+      engine.finish();
+      await _settle();
+      expect(c.state.current?.videoId, 'v1');
+      expect(c.state.playing, isFalse);
+      expect(c.state.sleepTimerMode, SleepTimerMode.off);
+    });
+
+    test('end of queue pauses at the tail without radio', () async {
+      final engine = FakeEngine();
+      final c = await playing(engine, ['v1', 'v2']);
+      c.next();
+      await _settle();
+      expect(c.state.current?.videoId, 'v2');
+      c.setSleepTimerEndOfQueue();
+      engine.finish();
+      await _settle();
+      expect(c.state.current?.videoId, 'v2');
+      expect(c.state.playing, isFalse);
+      expect(c.state.sleepTimerMode, SleepTimerMode.off);
+      // Queue untouched: no loop, no radio continuation.
+      expect(c.state.queue.map((t) => t.videoId).toList(), ['v1', 'v2']);
+    });
+
+    test('end of queue mid-queue advances normally', () async {
+      final engine = FakeEngine();
+      final c = await playing(engine, ['v1', 'v2']);
+      c.setSleepTimerEndOfQueue();
+      engine.finish();
+      await _settle();
+      expect(c.state.current?.videoId, 'v2');
+      expect(c.state.playing, isTrue);
+      expect(c.state.sleepTimerMode, SleepTimerMode.endOfQueue);
+    });
+
+    test('setters ignore an empty player', () async {
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      c.setSleepTimerDuration(const Duration(minutes: 30));
+      c.setSleepTimerEndOfTrack();
+      c.setSleepTimerEndOfQueue();
+      expect(c.state.sleepTimerMode, SleepTimerMode.off);
+      expect(c.state.sleepTimerEndsAtMs, isNull);
+    });
+
+    test('stop clears an armed timer', () async {
+      final engine = FakeEngine();
+      final c = await playing(engine, ['v1']);
+      c.setSleepTimerDuration(const Duration(milliseconds: 40));
+      c.stop();
+      expect(c.state.sleepTimerMode, SleepTimerMode.off);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(c.state.stopped, isTrue);
     });
   });
 }

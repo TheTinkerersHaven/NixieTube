@@ -8,8 +8,9 @@
 
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 
+import '../../sys/http_client.dart';
 import 'json.dart';
 
 const _visionosUserAgent =
@@ -51,10 +52,9 @@ String? _codecOf(String mime) {
 
 /// Resolves direct audio stream URLs through the InnerTube player endpoint.
 class StreamResolver {
-  StreamResolver({http.Client? httpClient})
-    : _client = httpClient ?? http.Client();
+  StreamResolver({Dio? dio}) : _dio = dio ?? newHttpClient();
 
-  http.Client _client;
+  Dio _dio;
   String? _visitor;
 
   /// When the cached visitor id was fetched. Visitor-bound stream URLs can
@@ -66,7 +66,7 @@ class StreamResolver {
   /// Maximum age of a cached visitor id before it is re-fetched.
   static const visitorTtl = Duration(minutes: 30);
 
-  void close() => _client.close();
+  void close() => _dio.close();
 
   /// Drops all HTTP-side stream state the way an app restart would:
   /// pooled keepalive connections plus the cached visitor id. The next
@@ -76,9 +76,9 @@ class StreamResolver {
     _visitor = null;
     _visitorAt = null;
     try {
-      _client.close();
+      _dio.close();
     } catch (_) {}
-    _client = http.Client();
+    _dio = newHttpClient();
   }
 
   /// Forces the next resolve to mint URLs under a fresh visitor id.
@@ -99,13 +99,14 @@ class StreamResolver {
       return _visitor;
     }
     try {
-      final res = await _client
-          .get(
+      final res = await _dio
+          .getUri<String>(
             Uri.parse(_ytOrigin),
-            headers: {'User-Agent': _visionosUserAgent},
+            options: Options(headers: {'User-Agent': _visionosUserAgent}),
           )
           .timeout(const Duration(seconds: 30));
-      final m = RegExp(r'"VISITOR_DATA":"([^"]+)"').firstMatch(res.body);
+      final m = RegExp(r'"VISITOR_DATA":"([^"]+)"')
+          .firstMatch(res.data ?? '');
       final visitor = m?.group(1);
       if (visitor == null || visitor.isEmpty) return _visitor;
       _visitor = visitor;
@@ -135,21 +136,23 @@ class StreamResolver {
       'contentCheckOk': true,
       'racyCheckOk': true,
     };
-    final res = await _client
-        .post(
+    final res = await _dio
+        .postUri<String>(
           Uri.parse(_ytPlayer),
-          headers: {
-            'User-Agent': _visionosUserAgent,
-            'X-YouTube-Client-Name': _visionosClientName,
-            'X-YouTube-Client-Version': _visionosClientVersion,
-            'X-Goog-Visitor-Id': visitor,
-            'Origin': _ytOrigin,
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode(body),
+          data: jsonEncode(body),
+          options: Options(
+            headers: {
+              'User-Agent': _visionosUserAgent,
+              'X-YouTube-Client-Name': _visionosClientName,
+              'X-YouTube-Client-Version': _visionosClientVersion,
+              'X-Goog-Visitor-Id': visitor,
+              'Origin': _ytOrigin,
+              'Content-Type': 'application/json',
+            },
+          ),
         )
         .timeout(const Duration(seconds: 30));
-    return decodeJsonResponse(res.body);
+    return decodeJsonResponse(res.data ?? '');
   }
 
   /// Resolves the highest-bitrate direct audio URL for [videoId], or null

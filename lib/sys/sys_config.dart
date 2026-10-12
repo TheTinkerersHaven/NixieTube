@@ -3,7 +3,10 @@
 //
 // Keys: discord.appId, discord.enabled, discord.statusText, mpris.enabled,
 // google.clientId, google.clientSecret, lastfm.enabled, lastfm.apiKey,
-// lastfm.secret, lastfm.sessionKey, lastfm.username, reportPlayback.
+// lastfm.secret, lastfm.sessionKey, lastfm.username, reportPlayback,
+// a11y.highContrast, a11y.reducedMotion, lyrics.source, theme.source,
+// theme.seedColor, theme.primary, theme.secondary, theme.tertiary,
+// theme.surface.
 
 import 'dart:io' show File;
 
@@ -137,6 +140,12 @@ class SysConfig {
 
   void setBool(String key, bool value) => set(key, value ? 'true' : 'false');
 
+  /// Drops [key] entirely (used for nullable settings where an
+  /// absent key means "follow the default").
+  void remove(String key) {
+    if (_values.remove(key) != null) writeProperties(_file, _values);
+  }
+
   // Typed accessors mirroring Kotlin `SysConfig`.
   String get discordAppId => get('discord.appId');
   String get discordAppIdOrDefault =>
@@ -151,5 +160,64 @@ class SysConfig {
   String get lastfmSecret => get('lastfm.secret');
   String get lastfmSessionKey => get('lastfm.sessionKey');
   String get lastfmUsername => get('lastfm.username');
+
+  set lastfmEnabled(bool v) => setBool('lastfm.enabled', v);
+  set lastfmApiKey(String v) => set('lastfm.apiKey', v);
+  set lastfmSecret(String v) => set('lastfm.secret', v);
+  set lastfmSessionKey(String v) => set('lastfm.sessionKey', v);
+  set lastfmUsername(String v) => set('lastfm.username', v);
+
   bool get reportPlayback => getBool('reportPlayback');
+
+  // Lyrics provider key (`LyricsSource.name`, defaults to LRCLIB).
+  String get lyricsSource => get('lyrics.source', 'lrclib');
+  set lyricsSource(String v) => set('lyrics.source', v);
+
+  // Accessibility (a11y). Both default to off so the app keeps its
+  // full-fidelity look until the user opts in.
+  bool get highContrast => getBool('a11y.highContrast');
+  bool get reducedMotion => getBool('a11y.reducedMotion');
+
+  set highContrast(bool v) => setBool('a11y.highContrast', v);
+  set reducedMotion(bool v) => setBool('a11y.reducedMotion', v);
+
+  // Theme (appearance). `theme.source` is `system` (desktop accent
+  // via dynamic_color, when the platform reports one) or `custom`
+  // (seed color below). Anything else falls back to custom so the
+  // app keeps its YTM-red look out of the box.
+  String get themeSource => get('theme.source', 'custom');
+  set themeSource(String v) => set('theme.source', v);
+
+  /// Seed color for the custom source, as 32-bit ARGB.
+  int get themeSeedColor =>
+      int.tryParse(get('theme.seedColor', 'ffff0000'), radix: 16) ??
+      0xffff0000;
+  set themeSeedColor(int v) =>
+      set('theme.seedColor', (v & 0xffffffff).toRadixString(16).padLeft(8, '0'));
+
+  /// Manual role overrides, applied on top of either source.
+  /// Null (absent key) means "follow the scheme".
+  int? _themeOverride(String role) {
+    final raw = get('theme.$role', '');
+    if (raw.isEmpty) return null;
+    final v = int.tryParse(raw, radix: 16);
+    return v == null ? null : v & 0xffffffff;
+  }
+
+  void _setThemeOverride(String role, int? v) {
+    if (v == null) {
+      remove('theme.$role');
+    } else {
+      set('theme.$role', (v & 0xffffffff).toRadixString(16).padLeft(8, '0'));
+    }
+  }
+
+  int? get themePrimaryOverride => _themeOverride('primary');
+  set themePrimaryOverride(int? v) => _setThemeOverride('primary', v);
+  int? get themeSecondaryOverride => _themeOverride('secondary');
+  set themeSecondaryOverride(int? v) => _setThemeOverride('secondary', v);
+  int? get themeTertiaryOverride => _themeOverride('tertiary');
+  set themeTertiaryOverride(int? v) => _setThemeOverride('tertiary', v);
+  int? get themeSurfaceOverride => _themeOverride('surface');
+  set themeSurfaceOverride(int? v) => _setThemeOverride('surface', v);
 }

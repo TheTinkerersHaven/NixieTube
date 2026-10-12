@@ -12,9 +12,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:nixietube/sys/google_oauth.dart';
+
+import 'mock_dio.dart';
 
 void main() {
   test('loginBrowser keeps the callback server open for a delayed redirect',
@@ -27,16 +27,15 @@ void main() {
     try {
       // Fake token endpoint: any POST returns a valid token set,
       // so no real network call is made during the exchange.
-      final client = MockClient((request) async => http.Response(
+      final client = mockDio((options) async => (
+            200,
             jsonEncode({
               'access_token': 'test-access-token',
               'refresh_token': 'test-refresh-token',
               'expires_in': 3600,
             }),
-            200,
-            headers: {'content-type': 'application/json'},
           ));
-      final oauth = GoogleOAuth(httpClient: client, storePath: storePath);
+      final oauth = GoogleOAuth(dio: client, storePath: storePath);
 
       final ok = await oauth.loginBrowser(
         'test-client-id',

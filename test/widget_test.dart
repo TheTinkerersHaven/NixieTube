@@ -3,8 +3,8 @@
 
 import 'dart:io';
 
-import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
@@ -13,6 +13,7 @@ import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/main.dart';
 import 'package:nixietube/sys/discord.dart';
 import 'package:nixietube/sys/google_oauth.dart';
+import 'package:nixietube/sys/lastfm.dart';
 import 'package:nixietube/sys/mpris.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
@@ -72,11 +73,16 @@ void main() {
     addTearDown(mpris.dispose);
     final discord = DiscordPresence();
     addTearDown(discord.dispose);
+    final lastfm = LastFmService(config: state.config);
+    addTearDown(lastfm.dispose);
     await tester.pumpWidget(NixieTubeApp(
-        state: state, mpris: mpris, discord: discord));
+        state: state, mpris: mpris, discord: discord, lastfm: lastfm));
     await tester.pump();
-    // Home shows the loading spinner before the feed arrives.
-    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    // Home shows the loading skeleton before the feed arrives.
+    expect(
+      find.byWidgetPredicate((w) => w is Skeletonizer),
+      findsWidgets,
+    );
     expect(find.text('Search for music to start playing'),
         findsOneWidget);
   });
@@ -111,10 +117,12 @@ void main() {
     addTearDown(mpris.dispose);
     final discord = DiscordPresence();
     addTearDown(discord.dispose);
+    final lastfm = LastFmService(config: state.config);
+    addTearDown(lastfm.dispose);
     const advice = 'Playback failed — check your network connection or '
         'restart the app.';
     await tester.pumpWidget(NixieTubeApp(
-        state: state, mpris: mpris, discord: discord));
+        state: state, mpris: mpris, discord: discord, lastfm: lastfm));
     await tester.pump();
 
     // Benign MPV cache notice: no SnackBar.

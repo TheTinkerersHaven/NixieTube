@@ -9,9 +9,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File, FileMode;
 
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 
 import '../models/models.dart';
+import '../../sys/http_client.dart';
+import '../../sys/paths.dart';
 import 'auth_session.dart';
 import 'json.dart';
 import 'parse.dart';
@@ -88,8 +90,12 @@ class WatchtimeContext {
 class InnerTube {
   InnerTube({
     this.auth = const AuthSession.anonymous(),
-    http.Client? httpClient,
-  }) : _client = httpClient ?? http.Client();
+    Dio? dio,
+    String? squareCoversPath,
+  })  : _dio = dio ?? newHttpClient(),
+        _squareCoversFile = squareCoversPath == null
+            ? null
+            : File(squareCoversPath);
 
   /// Current auth session used (with fallbacks) for requests.
   AuthSession auth;
@@ -97,13 +103,264 @@ class InnerTube {
   /// Optional hook (e.g. OAuth refresh) consulted before every request.
   Future<AuthSession?> Function()? authProvider;
 
-  final http.Client _client;
+  final Dio _dio;
 
   /// Release native resources.
-  void close() => _client.close();
+  void close() {
+    _dio.close();
+    _requestCache.clear();
+    // Settle pending cover retries now: their timers must not outlive
+    // the client, and their late answers belong to nobody.
+    _coverRetryGen++;
+    for (final entry in _coverRetryWaits.entries) {
+      entry.key.cancel();
+      if (!entry.value.isCompleted) entry.value.complete();
+    }
+    _coverRetryWaits.clear();
+    unawaited(flushSquareCovers());
+  }
 
   /// Album details fetched during track enrichment.
   final Map<String, AlbumDetail> _albumDetailsCache = {};
+
+  // ---------- Square cover resolution (disk-backed) ----------
+
+  /// videoId → resolved square cover URL, persisted to
+  /// `<cache>/square-covers.json` so lists can show the same square album
+  /// art the player does without re-fetching on every launch.
+  final Map<String, String> _squareCovers = {};
+  final Map<String, Future<String?>> _squareCoverInflight = {};
+  final Set<String> _squareCoverMissing = {};
+  File? _squareCoversFile;
+  Timer? _squareCoverSaveTimer;
+  bool _squareCoversLoaded = false;
+
+  /// Album pages fetched for cover resolution, memoized by album id:
+  /// lists routinely hold a dozen tracks off one album, and without
+  /// this every tile would re-browse the same page while scrolling.
+  final Map<String, AlbumDetail> _coverAlbums = {};
+
+  /// Album page for cover resolution, memoized (failures re-fetch).
+  Future<AlbumDetail?> _albumForCover(String albumId) async {
+    final hit = _coverAlbums[albumId];
+    if (hit != null) return hit;
+    final detail = await album(albumId);
+    if (detail != null) _coverAlbums[albumId] = detail;
+    return detail;
+  }
+
+  /// Cap on concurrent square-cover resolutions: a list can surface many
+  /// frame-only tracks at once, and this keeps the burst polite while
+  /// still draining fast scrolls (matches the enrich batch width).
+  static const _maxSquareCoverInflight = 8;
+  int _squareCoverActive = 0;
+  Completer<void>? _squareCoverSlot;
+
+  void _loadSquareCovers() {
+    if (_squareCoversLoaded) return;
+    _squareCoversLoaded = true;
+    _squareCoversFile ??= File('${cacheDir().path}/square-covers.json');
+    try {
+      if (_squareCoversFile!.existsSync()) {
+        final data = jsonDecode(_squareCoversFile!.readAsStringSync());
+        if (data is Map) {
+          data.forEach((k, v) {
+            if (k is String && v is String && v.isNotEmpty) {
+              _squareCovers[k] = v;
+            }
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _writeSquareCovers() async {
+    final f = _squareCoversFile;
+    if (f == null) return;
+    try {
+      final tmp = '${f.path}.tmp';
+      await File(tmp).writeAsString(jsonEncode(_squareCovers), flush: true);
+      await File(tmp).rename(f.path);
+    } catch (_) {}
+  }
+
+  /// Debounced disk write so bursts of resolutions coalesce into one save.
+  void _scheduleSquareCoverSave() {
+    _squareCoverSaveTimer ??= Timer(const Duration(seconds: 2), () {
+      _squareCoverSaveTimer = null;
+      unawaited(_writeSquareCovers());
+    });
+  }
+
+  /// Flushes the square-cover cache to disk immediately (used on quit and
+  /// in tests instead of waiting for the debounce).
+  Future<void> flushSquareCovers() async {
+    _squareCoverSaveTimer?.cancel();
+    _squareCoverSaveTimer = null;
+    await _writeSquareCovers();
+  }
+
+  /// Remembers a resolved square cover for [videoId] (memory + disk).
+  void noteSquareCover(String videoId, String url) {
+    if (videoId.isEmpty || url.isEmpty) return;
+    _loadSquareCovers();
+    if (_squareCovers[videoId] == url) return;
+    _squareCovers[videoId] = url;
+    _scheduleSquareCoverSave();
+  }
+
+  /// Synchronous lookup of a previously-resolved square cover, or null.
+  String? cachedSquareCover(String videoId) {
+    _loadSquareCovers();
+    return _squareCovers[videoId];
+  }
+
+  /// Resolves and caches the square cover for [videoId] (one album
+  /// call on miss when the album id is known, else one `next` call),
+  /// coalescing concurrent lookups and bounding concurrency.
+  /// Tracks with no square cover are remembered so they aren't retried.
+  Future<String?> squareCoverOf(String videoId, {String? albumId}) async {
+    _loadSquareCovers();
+    final cached = _squareCovers[videoId];
+    if (cached != null) return cached;
+    if (_squareCoverMissing.contains(videoId)) return null;
+    final inflight = _squareCoverInflight[videoId];
+    if (inflight != null) return inflight;
+    final future = _resolveSquareCoverBounded(videoId, albumId: albumId);
+    _squareCoverInflight[videoId] = future;
+    try {
+      final url = await future;
+      if (url != null && url.isNotEmpty) {
+        noteSquareCover(videoId, url);
+      } else {
+        _squareCoverMissing.add(videoId);
+      }
+      return url;
+    } finally {
+      _squareCoverInflight.remove(videoId);
+    }
+  }
+
+  Future<String?> _resolveSquareCoverBounded(
+    String videoId, {
+    String? albumId,
+  }) async {
+    while (_squareCoverActive >= _maxSquareCoverInflight) {
+      _squareCoverSlot ??= Completer<void>();
+      await _squareCoverSlot!.future;
+    }
+    _squareCoverActive++;
+    try {
+      return await _resolveSquareCover(videoId, albumId: albumId);
+    } finally {
+      _squareCoverActive--;
+      final slot = _squareCoverSlot;
+      _squareCoverSlot = null;
+      slot?.complete();
+    }
+  }
+
+  /// Resolves the square cover for [videoId]: the album page art
+  /// first, the panel's own row as fallback. Panel thumbs sometimes
+  /// report square dimensions around letterboxed content, so they
+  /// can't be trusted; the album header is the only always-true
+  /// square. Only the row's own art ever counts — the first panel
+  /// track carrying square art is often a *different* song, and
+  /// stamping that as this video's cover would be wrong, not just
+  /// letterboxed. Transport blips (not error bodies or empty parses,
+  /// which are deterministic) retry with backoff instead of
+  /// condemning the track on one hiccup.
+  Future<String?> _resolveSquareCover(
+    String videoId, {
+    String? albumId,
+  }) async {
+    if (albumId != null && albumId.isNotEmpty) {
+      final detail = await _fetchWithRetry(() => _albumForCover(albumId));
+      if (detail != null) {
+        final url = _largestSquareThumb(detail.thumbnails);
+        if (url != null) return url;
+      }
+    }
+    final res = await _fetchWithRetry(() => _nextResponse(videoId));
+    if (res != null && !_isErrorResponse(res)) {
+      for (final p in panelsOf(res)) {
+        if (p.videoId != videoId) continue;
+        final url = _largestSquareThumb(p.thumbnails);
+        if (url != null) return url;
+      }
+    }
+    return null;
+  }
+
+  /// Pending cover-fetch backoff waits, cancelled on [close] so no
+  /// timer outlives the client (widget tests fail on stray timers).
+  final Map<Timer, Completer<void>> _coverRetryWaits = {};
+
+  /// Cover-fetch retry generation, bumped on [close]: a superseded
+  /// waiter returns null instead of resolving into a dead client.
+  int _coverRetryGen = 0;
+
+  /// Runs [fetch] until it answers (error bodies and empty parses
+  /// count as answers), retrying transport throws with backoff.
+  /// Only timeouts and Dio transport failures retry: parse-level
+  /// throws are deterministic, and retrying them would just burn
+  /// timers (which also keeps widget tests clean — no stray waits).
+  Future<T?> _fetchWithRetry<T>(Future<T?> Function() fetch) async {
+    const delays = [
+      Duration(milliseconds: 300),
+      Duration(milliseconds: 700),
+    ];
+    final gen = _coverRetryGen;
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await fetch();
+      } catch (e) {
+        if (!_isRetryableCoverError(e)) return null;
+        if (attempt >= delays.length) return null;
+        await _coverRetryDelay(delays[attempt]);
+        if (gen != _coverRetryGen) return null;
+      }
+    }
+  }
+
+  /// Transport blips worth another attempt: timeouts and Dio
+  /// connection-level failures. HTTP error statuses never throw
+  /// (validateStatus accepts everything) and parse throws mean the
+  /// body itself is unusable.
+  static bool _isRetryableCoverError(Object e) =>
+      e is TimeoutException || e is DioException;
+
+  /// Cancellable backoff wait; [close] fires all waiters early.
+  Future<void> _coverRetryDelay(Duration delay) {
+    final wait = Completer<void>();
+    late final Timer timer;
+    timer = Timer(delay, () {
+      _coverRetryWaits.remove(timer);
+      if (!wait.isCompleted) wait.complete();
+    });
+    _coverRetryWaits[timer] = wait;
+    return wait.future.then((_) => _coverRetryWaits.remove(timer));
+  }
+
+  static String? _largestSquareThumb(List<Thumbnail> thumbs) {
+    Thumbnail? best;
+    var bestW = -1;
+    for (final t in thumbs) {
+      if (t.isSquare && t.width > bestW) {
+        bestW = t.width;
+        best = t;
+      }
+    }
+    return best?.url;
+  }
+
+  /// Coalesces in-flight identical requests (path + body) so a burst of
+  /// the same call shares one request instead of hitting the network N
+  /// times. Responses are NOT cached beyond the request itself — InnerTube
+  /// responses are small and cheap, and serving a 5-minute-old
+  /// `browse`/`search`/`next` response would make refresh and session
+  /// changes look stale.
+  final Map<String, Future<dynamic>> _requestCache = {};
 
   /// Per-cpn watchtime contexts (one entry per track playback, bounded).
   final Map<String, WatchtimeContext> _watchtimeContexts = {};
@@ -147,9 +404,43 @@ class InnerTube {
   static bool _isErrorResponse(dynamic res) =>
       res is Map && res.containsKey('error');
 
+  /// Creates a unique cache key for request deduplication.
+  /// Uses path and body content to identify identical requests.
+  String _createCacheKey(String path, String bodyString) {
+    // Simple but effective: path + body hash
+    // For consistent hashing across runs, we use the body content directly
+    // since the order and content of the body determines the request identity
+    return '$path:$bodyString';
+  }
+
   /// Posts to an InnerTube endpoint with cookie/Bearer/anonymous auth
   /// fallback, mirroring Kotlin `post`.
+  ///
+  /// Identical concurrent requests are coalesced so a burst of the same
+  /// call shares one in-flight request.
   Future<dynamic> post(String path, Map<String, dynamic> body) async {
+    final bodyString = jsonEncode(body);
+    final cacheKey = _createCacheKey(path, bodyString);
+
+    // Reuse an in-flight identical request instead of duplicating it.
+    final inflight = _requestCache[cacheKey];
+    if (inflight != null) return inflight;
+
+    late final Future<dynamic> requestFuture;
+    requestFuture = _postWithAuth(path, bodyString);
+    _requestCache[cacheKey] = requestFuture;
+    // Drop the entry when it settles. `.ignore()` marks the derived
+    // future's error as handled, so a failed request never surfaces as an
+    // unhandled async error (the real callers await [requestFuture]).
+    requestFuture.whenComplete(() {
+      _requestCache.remove(cacheKey);
+    }).ignore();
+
+    return requestFuture;
+  }
+
+  /// Internal method to handle authenticated requests with auth fallbacks.
+  Future<dynamic> _postWithAuth(String path, String bodyString) async {
     AuthSession? provided;
     try {
       provided = await authProvider?.call();
@@ -181,7 +472,6 @@ class InnerTube {
 
     dynamic last;
     var bearerFailed = false;
-    final bodyString = jsonEncode(body);
     for (final candidate in sessions) {
       dynamic response;
       try {
@@ -243,39 +533,40 @@ class InnerTube {
         headers['Authorization'] = 'SAPISIDHASH ${session.sapisidHash}';
       }
     }
-    final res = await _client
-        .post(
+    final res = await _dio
+        .postUri<String>(
           Uri.parse('$_base/$path?alt=json'),
-          headers: headers,
-          body: bodyString,
+          data: bodyString,
+          options: Options(headers: headers),
         )
         .timeout(const Duration(seconds: 30));
-    return decodeJsonResponse(res.body);
+    return decodeJsonResponse(res.data ?? '');
   }
 
-  /// Loads the home feed shelves (empty when the response has no tabs).
-  Future<List<Shelf>> home() async {
+  /// Loads the home feed shelves plus the mood filter chips
+  /// (chipCloudRenderer titles), empty when the response has no tabs.
+  Future<({List<Shelf> shelves, List<String> moods})> home() async {
     final res = await post('browse', _bodyWith({'browseId': 'FEmusic_home'}));
     final tabs = nav(res, const [
       'contents',
       'singleColumnBrowseResultsRenderer',
       'tabs',
     ]);
-    if (tabs is! List) return [];
-    if (tabs.isEmpty) return [];
+    if (tabs is! List) return (shelves: <Shelf>[], moods: <String>[]);
+    if (tabs.isEmpty) return (shelves: <Shelf>[], moods: <String>[]);
     final content = nav(tabs.first, const [
       'tabRenderer',
       'content',
       'sectionListRenderer',
       'contents',
     ]);
-    if (content is! List) return [];
+    if (content is! List) return (shelves: <Shelf>[], moods: <String>[]);
     final out = <Shelf>[];
     for (final el in content) {
       final shelf = parseShelf(el);
       if (shelf != null) out.add(shelf);
     }
-    return out;
+    return (shelves: out, moods: parseHomeMoods(res));
   }
 
   /// Searches YouTube Music and normalizes results into stable categories
@@ -355,14 +646,6 @@ class InnerTube {
         .where((n) => n.isNotEmpty)
         .toSet();
 
-    bool isDominantMatch(SongItem s) => s.track.artists.any((artist) {
-      final key = canonicalMetadata(artist.name);
-      return (artist.browseId != null &&
-              artist.browseId!.isNotEmpty &&
-              dominantIds.contains(artist.browseId)) ||
-          (key.isNotEmpty && dominantNames.contains(key));
-    });
-
     bool isDominantRelease(BrowseItem b) {
       if (dominantNames.isEmpty) return false;
       final subtitle = ' ${canonicalMetadata(b.subtitle)} ';
@@ -412,21 +695,84 @@ class InnerTube {
           ..clear()
           ..addAll(distinct);
       }
-      // Exact title matches first, the dominant artist's recording above
-      // same-titled covers, then everything else in YouTube's order.
-      final exact = <SongItem>[];
-      final rest = <SongItem>[];
-      for (final s in songs.values) {
-        if (canonicalMetadata(s.track.title) == queryCanon) {
-          exact.add(s);
-        } else {
-          rest.add(s);
+      // "Title artist" queries sometimes return the artist's other
+      // songs but not the named recording itself (e.g. "kid again
+      // ivycomb" lists ivycomb tracks without "Kid Again"). When no
+      // song matches both the title and an artist word, pull the
+      // queried artist's top songs (one extra fetch) and merge any
+      // title match in.
+      final queryTokens =
+          queryCanon.split(' ').where((t) => t.isNotEmpty).toSet();
+      Set<String> wordSet(String v) => canonicalMetadata(v)
+          .split(' ')
+          .where((t) => t.isNotEmpty)
+          .toSet();
+      bool namesTitleAndArtist(SongItem s) {
+        final titleWords = wordSet(s.track.title);
+        if (titleWords.isEmpty || !titleWords.every(queryTokens.contains)) {
+          return false;
+        }
+        final artistWords = s.track.artists.expand(
+          (a) => wordSet(a.name),
+        );
+        return artistWords.any(queryTokens.contains);
+      }
+      if (songs.values.every((s) => !namesTitleAndArtist(s))) {
+        final targets = artists.values
+            .where((a) {
+              final nameWords = wordSet(a.title);
+              return nameWords.isNotEmpty &&
+                  nameWords.every(queryTokens.contains);
+            })
+            .take(1);
+        for (final target in targets) {
+          ArtistDetail? detail;
+          try {
+            detail = await artist(target.browseId);
+          } catch (_) {}
+          if (detail == null) continue;
+          bool titleMatches(Track t) {
+            final titleWords = wordSet(t.title);
+            return titleWords.isNotEmpty &&
+                titleWords.every(queryTokens.contains) &&
+                !songs.containsKey(t.videoId);
+          }
+          var hits = detail.topSongs.where(titleMatches).toList();
+          // Top songs only skim the catalog: older cuts (e.g. a "Kid
+          // Again" buried past the latest singles) surface through the
+          // artist's full songs playlist instead.
+          if (hits.isEmpty && detail.songsPlaylistId != null) {
+            try {
+              final full = await playlist(
+                detail.songsPlaylistId!,
+                params: detail.songsPlaylistParams,
+              );
+              hits = (full?.tracks ?? []).where(titleMatches).toList();
+            } catch (_) {}
+          }
+          if (hits.isEmpty) continue;
+          final merged = <String, SongItem>{
+            for (final t in hits) t.videoId: SongItem(t),
+          };
+          for (final e in songs.entries) {
+            merged.putIfAbsent(e.key, () => e.value);
+          }
+          songs
+            ..clear()
+            ..addAll(merged);
         }
       }
-      final mine = exact.where(isDominantMatch).toList();
-      final others = exact.where((s) => !isDominantMatch(s)).toList();
+      // Best text match first (exact titles, then title+artist token
+      // overlap so "title artist" queries surface the right
+      // recording), ties keeping YouTube's order.
+      final ranked = rankSearchSongs(
+        songs.values,
+        query,
+        dominantIds: dominantIds,
+        dominantNames: dominantNames,
+      );
       songs.clear();
-      for (final s in [...mine, ...others, ...rest]) {
+      for (final s in ranked) {
         songs[s.track.videoId] = s;
       }
       // Same preference inside releases.
@@ -644,6 +990,9 @@ class InnerTube {
         album: preferredAlbum,
         thumbnails: thumbs,
       );
+      // Remember the resolved square cover so lists can show it too.
+      final sqCover = _largestSquareThumb(result.thumbnails);
+      if (sqCover != null) noteSquareCover(result.videoId, sqCover);
     }
     final ref = result.album;
     final refId = ref?.browseId;
@@ -1175,14 +1524,14 @@ class InnerTube {
           } else if (bearer != null && bearer.isNotEmpty) {
             headers['Authorization'] = 'Bearer $bearer';
           }
-          final res = await _client
-              .post(
+          final res = await _dio
+              .postUri<String>(
                 Uri.parse(url),
-                headers: headers,
-                body: '{"session_token":"$safeToken"}',
+                data: '{"session_token":"$safeToken"}',
+                options: Options(headers: headers),
               )
               .timeout(const Duration(seconds: 30));
-          status = res.statusCode;
+          status = res.statusCode ?? -1;
         } else {
           status = await _getBeaconStatus(url, referer, candidate);
         }
@@ -1216,10 +1565,10 @@ class InnerTube {
     } else if (bearer != null && bearer.isNotEmpty) {
       headers['Authorization'] = 'Bearer $bearer';
     }
-    final res = await _client
-        .get(Uri.parse(url), headers: headers)
+    final res = await _dio
+        .getUri<String>(Uri.parse(url), options: Options(headers: headers))
         .timeout(const Duration(seconds: 30));
-    return res.statusCode;
+    return res.statusCode ?? -1;
   }
 
   /// Authenticated GET pixel (ptracking). Best-effort: ignores status.
@@ -1265,8 +1614,8 @@ class InnerTube {
         } else if (bearer != null && bearer.isNotEmpty) {
           headers['Authorization'] = 'Bearer $bearer';
         }
-        await _client
-            .get(Uri.parse(url), headers: headers)
+        await _dio
+            .getUri<String>(Uri.parse(url), options: Options(headers: headers))
             .timeout(const Duration(seconds: 30));
       } catch (_) {}
     }
@@ -1278,18 +1627,20 @@ class InnerTube {
     final cookie = auth.cookie;
     if (cookie == null) return null;
     try {
-      final res = await _client
-          .get(
+      final res = await _dio
+          .getUri<String>(
             Uri.parse(_origin),
-            headers: {
-              'User-Agent': _userAgent,
-              'Cookie': cookie,
-              'Accept-Language': 'en-US,en;q=0.5',
-            },
+            options: Options(
+              headers: {
+                'User-Agent': _userAgent,
+                'Cookie': cookie,
+                'Accept-Language': 'en-US,en;q=0.5',
+              },
+            ),
           )
           .timeout(const Duration(seconds: 30));
       final m = RegExp(r'''["']XSRF_TOKEN["'\s]*:\s*["']([^"']+)["']''')
-          .firstMatch(res.body);
+          .firstMatch(res.data ?? '');
       final token = m?.group(1);
       if (token == null || token.trim().isEmpty) return null;
       return token;

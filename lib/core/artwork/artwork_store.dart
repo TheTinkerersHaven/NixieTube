@@ -13,9 +13,10 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'package:image/image.dart' as img;
 
+import '../../sys/http_client.dart';
 import '../../sys/paths.dart';
 
 const maxFailureKeys = 2000;
@@ -74,13 +75,14 @@ String _sha1Hex(String url) => sha1.convert(utf8.encode(url)).toString();
 
 /// Centered-square crop as an owned buffer: for a non-square thumbnail the
 /// square is as tall as the thumbnail (landscape) or as wide (portrait),
-/// centered on the larger axis; square thumbnails are returned unchanged.
+/// centered on the larger axis — the `crop=min(iw,ih)` centre crop. Square
+/// thumbnails are returned unchanged.
 /// `copyCrop` copies pixels, so the source frame is droppable and offcuts
 /// never sit in memory.
 ///
-/// No uniform-area detection happens here: cover art itself can contain
-/// solid regions, so the crop is purely geometric — center the square on
-/// the received rectangle and keep already-square thumbnails as-is.
+/// Runs after [removeLetterbox] in the decode path (see [_decode]), so by
+/// the time the geometry applies, baked-in black bars are already gone
+/// and this stays a pure centre crop.
 img.Image centerSquare(img.Image src) {
   final w = src.width;
   final h = src.height;
@@ -99,7 +101,83 @@ img.Image? _decode(List<int> bytes, {bool cropSquare = true}) {
     return null;
   }
   if (decoded == null) return null;
-  return cropSquare ? centerSquare(decoded) : decoded;
+  return cropSquare ? centerSquare(removeLetterbox(decoded)) : decoded;
+}
+
+/// Near-black channel ceiling for bar detection. YouTube bars are pure
+/// black; a small tolerance absorbs JPEG ringing at the seam.
+const _barBlackCeiling = 10;
+
+/// Minimum share of sampled pixels reading near-black for a row or
+/// column to count as bar.
+const _barUniformity = 0.98;
+
+/// Minimum surviving fraction per axis: an all-black cover keeps its
+/// frame instead of collapsing to nothing.
+const _barMinRetain = 0.5;
+
+/// Strips baked-in letterbox/pillarbox bars (black bands facing each
+/// other) so masked-as-square frames resolve to their content box.
+/// Conservative by design: single-edge darkness (vignettes, fades)
+/// never trims, content above the black ceiling never counts, and the
+/// surviving box must keep at least half of each axis. A genuinely
+/// black cover therefore passes through untouched.
+img.Image removeLetterbox(img.Image src) {
+  final w = src.width;
+  final h = src.height;
+  if (w <= 0 || h <= 0) return src;
+  bool dark(int x, int y) {
+    final px = src.getPixel(x, y);
+    if (px.a.toInt() < 128) return false;
+    return px.r.toInt() <= _barBlackCeiling &&
+        px.g.toInt() <= _barBlackCeiling &&
+        px.b.toInt() <= _barBlackCeiling;
+  }
+
+  // A row/column counts as bar when ~every sampled pixel is black;
+  // ~64 samples per line regardless of size.
+  bool lineDark(bool horizontal, int fixed, int len) {
+    var step = len ~/ 64;
+    if (step < 1) step = 1;
+    var darks = 0;
+    var total = 0;
+    for (var i = 0; i < len; i += step) {
+      total++;
+      if (horizontal ? dark(i, fixed) : dark(fixed, i)) darks++;
+    }
+    return total > 0 && darks / total >= _barUniformity;
+  }
+
+  var top = 0;
+  while (top < h && lineDark(true, top, w)) {
+    top++;
+  }
+  var bottom = 0;
+  while (bottom < h - top && lineDark(true, h - 1 - bottom, w)) {
+    bottom++;
+  }
+  var left = 0;
+  while (left < w && lineDark(false, left, h)) {
+    left++;
+  }
+  var right = 0;
+  while (right < w - left && lineDark(false, w - 1 - right, h)) {
+    right++;
+  }
+  // Bars must face each other.
+  final vertical = top > 0 && bottom > 0;
+  final horizontal = left > 0 && right > 0;
+  if (!vertical && !horizontal) return src;
+  final x0 = horizontal ? left : 0;
+  final x1 = horizontal ? w - right : w;
+  final y0 = vertical ? top : 0;
+  final y1 = vertical ? h - bottom : h;
+  if (x1 - x0 < (w * _barMinRetain).ceil() ||
+      y1 - y0 < (h * _barMinRetain).ceil()) {
+    return src;
+  }
+  if (x0 == 0 && y0 == 0 && x1 == w && y1 == h) return src;
+  return img.copyCrop(src, x: x0, y: y0, width: x1 - x0, height: y1 - y0);
 }
 
 /// Cover palette for tinted backdrops: average colors of a
@@ -150,91 +228,171 @@ List<(int, int, int)>? coverBands(img.Image src) {
   return out;
 }
 
-void _decodeSquareEntry(List<dynamic> args) {
-  final SendPort port = args[0] as SendPort;
-  try {
-    port.send(_decode(args[1] as Uint8List));
-  } catch (_) {
-    port.send(null);
-  }
+/// Job kinds for the persistent artwork workers.
+const _jobSquare = 0;
+const _jobBanner = 1;
+const _jobCropPng = 2;
+
+/// Persistent worker main: one warm isolate per pool, listening for jobs
+/// and replying on each job's own reply port. Spawned once and reused,
+/// so artwork loads never pay an isolate spawn per decode.
+void _workerMain(List<dynamic> args) {
+  final SendPort announce = args[0] as SendPort;
+  final int kind = args[1] as int;
+  final jobs = ReceivePort();
+  announce.send(jobs.sendPort);
+  jobs.listen((dynamic message) {
+    final job = message as List<dynamic>;
+    final SendPort replyTo = job[0] as SendPort;
+    final Uint8List bytes = job[1] as Uint8List;
+    try {
+      switch (kind) {
+        case _jobBanner:
+          replyTo.send(_decode(bytes, cropSquare: false));
+        case _jobCropPng:
+          final rendered = _decode(bytes);
+          replyTo.send(rendered == null ? null : img.encodePng(rendered));
+        default:
+          replyTo.send(_decode(bytes));
+      }
+    } catch (_) {
+      replyTo.send(null);
+    }
+    // This worker is free again: re-offer it so the pool can dispatch the
+    // next queued job. Without this the pool only ever sees each worker
+    // idle once and stalls after its first `_poolSize` jobs.
+    announce.send(jobs.sendPort);
+  });
 }
 
-void _decodeBannerEntry(List<dynamic> args) {
-  final SendPort port = args[0] as SendPort;
-  try {
-    port.send(_decode(args[1] as Uint8List, cropSquare: false));
-  } catch (_) {
-    port.send(null);
+/// Workers per pool. Two keep short decodes pipelined without paying the
+/// per-job spawn cost.
+const _poolSize = 2;
+
+/// Lazily-spawned pool of persistent worker isolates for one job kind.
+/// Jobs are dispatched FIFO to idle workers; each reply routes through its
+/// own ReceivePort, so results can't be misattributed. No isolates exist
+/// until the first job (tests that never decode pay no spawn cost).
+class _ArtPool {
+  _ArtPool(this._kind);
+
+  final int _kind;
+
+  ReceivePort? _announce;
+  final List<Future<Isolate>> _isolates = [];
+  final List<SendPort> _idle = [];
+  final List<(SendPort, Uint8List)> _jobs = [];
+
+  void _ensureStarted() {
+    if (_announce != null) return;
+    _announce = ReceivePort()
+      ..listen((dynamic p) {
+        _idle.add(p as SendPort);
+        _drain();
+      });
+    for (var i = 0; i < _poolSize; i++) {
+      _isolates.add(Isolate.spawn(_workerMain, [_announce!.sendPort, _kind]));
+    }
+  }
+
+  void _drain() {
+    while (_idle.isNotEmpty && _jobs.isNotEmpty) {
+      final worker = _idle.removeLast();
+      final job = _jobs.removeAt(0);
+      worker.send([job.$1, job.$2]);
+    }
+  }
+
+  /// Runs [bytes] through the pool's job kind, resolving to its reply.
+  Future<T?> run<T>(Uint8List bytes) {
+    _ensureStarted();
+    final reply = ReceivePort();
+    _jobs.add((reply.sendPort, bytes));
+    _drain();
+    return reply.first
+        .timeout(const Duration(seconds: 30))
+        .then((dynamic v) => v as T?)
+        .whenComplete(reply.close);
+  }
+
+  void dispose() {
+    _announce?.close();
+    for (final f in _isolates) {
+      unawaited(f.then((iso) => iso.kill(priority: Isolate.immediate)));
+    }
+    _isolates.clear();
+    _idle.clear();
+    _jobs.clear();
   }
 }
-
-void _renderCropPngEntry(List<dynamic> args) {
-  final SendPort port = args[0] as SendPort;
-  try {
-    final rendered = _decode(args[1] as Uint8List);
-    port.send(rendered == null ? null : img.encodePng(rendered));
-  } catch (_) {
-    port.send(null);
-  }
-}
-
-/// Runs [entry] with [message] on a worker isolate, returning its reply.
-/// Image work never blocks the UI thread this way.
-Future<T?> _onWorker<T>(
-  void Function(List<dynamic>) entry,
-  Uint8List message,
-) async {
-  final port = ReceivePort();
-  Isolate? isolate;
-  try {
-    isolate = await Isolate.spawn(entry, [port.sendPort, message]);
-    final result = await port.first.timeout(const Duration(seconds: 30));
-    return result as T?;
-  } catch (_) {
-    return null;
-  } finally {
-    port.close();
-    isolate?.kill(priority: Isolate.immediate);
-  }
-}
-
-/// Decodes + crops raw bytes to a square cover on a worker isolate, so
-/// image work never blocks the UI thread.
-Future<img.Image?> _decodeSquareIsolate(List<int> bytes) =>
-    _onWorker<img.Image>(_decodeSquareEntry, Uint8List.fromList(bytes));
-
-/// Decodes raw bytes to an uncropped banner on a worker isolate.
-Future<img.Image?> _decodeBannerIsolate(List<int> bytes) =>
-    _onWorker<img.Image>(_decodeBannerEntry, Uint8List.fromList(bytes));
-
-/// Renders raw bytes to a cropped PNG on a worker isolate.
-Future<Uint8List?> _renderCropPngIsolate(List<int> bytes) =>
-    _onWorker<Uint8List>(_renderCropPngEntry, Uint8List.fromList(bytes));
 
 /// Pure-Dart artwork pipeline: integrity-checked disk cache with
 /// failure tracking. Decoded bitmaps are never retained in memory —
 /// Flutter's image cache plus the on-disk renders are the caches, and all
 /// decode/crop work runs on worker isolates.
 class ArtworkStore {
-  ArtworkStore({http.Client? httpClient, String? cacheDirPath})
-    : _client = httpClient ?? http.Client(),
-      _dirPath = cacheDirPath ?? '${cacheDir().path}/art2' {
+  ArtworkStore({Dio? dio, String? cacheDirPath})
+    : _dio = dio ?? newHttpClient(),
+      _dirPath = cacheDirPath ?? '${cacheDir().path}/art2',
+      _squarePool = _ArtPool(_jobSquare),
+      _bannerPool = _ArtPool(_jobBanner),
+      _cropPool = _ArtPool(_jobCropPng) {
+    // Ensure directory exists - use sync for constructor, but this is fine
+    // as it only happens once during initialization
     Directory(_dirPath).createSync(recursive: true);
   }
 
-  final http.Client _client;
+  final Dio _dio;
   final String _dirPath;
   final Map<String, int> _failures = {};
   final Map<String, int> _sourceFailures = {};
   final Map<String, Future<dynamic>> _inflight = {};
 
-  void close() => _client.close();
+  final _ArtPool _squarePool;
+  final _ArtPool _bannerPool;
+  final _ArtPool _cropPool;
 
-  String _rawFile(String url) => '$_dirPath/${_sha1Hex(url)}.img';
+  void close() {
+    _dio.close();
+    _squarePool.dispose();
+    _bannerPool.dispose();
+    _cropPool.dispose();
+  }
+
+  /// Deletes every cached artwork file (raw bytes and rendered crops) so
+  /// the next display re-downloads and re-renders from scratch. Also
+  /// resets the failure skip-lists and the banner memo: without this,
+  /// previously-failed URLs would stay skipped and banners would keep
+  /// serving stale bytes, so the clear would only partly take. Used by
+  /// the Settings "Clear artwork cache" debug action (which additionally
+  /// evicts Flutter's in-memory image cache — same-path re-renders
+  /// would otherwise decode from memory and look unchanged).
+  void clearCache() {
+    _failures.clear();
+    _sourceFailures.clear();
+    _bannerPng.clear();
+    try {
+      final dir = Directory(_dirPath);
+      if (dir.existsSync()) {
+        for (final entry in dir.listSync()) {
+          try {
+            entry.deleteSync(recursive: true);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+
+  // `.img3`/`.crop5`: bump to invalidate the artwork cache — previously
+  // cached bytes/renders (from earlier crop-logic experiments) are
+  // re-fetched and re-rendered with the current pipeline. crop5 adds
+  // letterbox stripping to the render, so pre-fix crops (with baked-in
+  // black bars, e.g. in playlist collages) must not be reused.
+  String _rawFile(String url) => '$_dirPath/${_sha1Hex(url)}.img3';
   String _sourceFile(String url) => '$_dirPath/${_sha1Hex(url)}.source3.img';
-  // `.crop2`: bump when the crop algorithm changes so previously rendered
-  // (possibly mis-cropped) files are re-rendered with the new logic.
-  String _croppedFile(String url) => '$_dirPath/${_sha1Hex(url)}.crop2.png';
+  String croppedFilePath(String url) => '$_dirPath/${_sha1Hex(url)}.crop5.png';
+
+
 
   void _noteFailure(Map<String, int> failures, String url) {
     failures[url] = (failures[url] ?? 0) + 1;
@@ -256,12 +414,14 @@ class ArtworkStore {
     return future;
   }
 
-  List<int>? _readCachedBytes(String path) {
+  /// Asynchronously reads cached bytes from file with integrity check.
+  /// Returns null if file doesn't exist, is incomplete, or can't be read.
+  Future<List<int>?> _readCachedBytesAsync(String path) async {
     try {
-      final raw = File(path).readAsBytesSync();
+      final raw = await File(path).readAsBytes();
       if (!looksComplete(raw)) {
         try {
-          File(path).deleteSync();
+          await File(path).delete();
         } catch (_) {}
         return null;
       }
@@ -271,21 +431,36 @@ class ArtworkStore {
     }
   }
 
-  void _writeAtomically(String path, List<int> bytes) {
+  /// Asynchronously writes bytes to file atomically using temp file + rename.
+  /// This prevents corruption if the write is interrupted.
+  Future<bool> _writeAtomicallyAsync(String path, List<int> bytes) async {
     try {
       final tmp =
           '$path.tmp.${DateTime.now().microsecondsSinceEpoch}.${_tmpNonce()}';
-      File(tmp).writeAsBytesSync(bytes, flush: true);
-      File(tmp).renameSync(path);
-    } catch (_) {}
+      final file = File(tmp);
+      await file.writeAsBytes(bytes, flush: true);
+      await file.rename(path);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<List<int>?> _tryDownload(String url) async {
     try {
       final effectiveUrl = url.startsWith('//') ? 'https:$url' : url;
-      final res = await _client.get(Uri.parse(effectiveUrl));
-      final bytes = res.bodyBytes;
-      if (bytes.length > 100 && looksComplete(bytes)) return bytes;
+      // Bounded like every other request: a stalled GET must fail
+      // (placeholder + one retry) instead of shimmering forever.
+      final res = await _dio
+          .getUri<List<int>>(
+            Uri.parse(effectiveUrl),
+            options: Options(responseType: ResponseType.bytes),
+          )
+          .timeout(const Duration(seconds: 30));
+      final bytes = res.data;
+      if (bytes != null && bytes.length > 100 && looksComplete(bytes)) {
+        return bytes;
+      }
       return null;
     } catch (_) {
       return null;
@@ -303,45 +478,80 @@ class ArtworkStore {
 
   /// Decoded square cover for [url], downloading and caching on miss.
   /// Decode runs on a worker isolate; nothing decoded is retained.
+  /// Uses async file operations to prevent UI thread blocking.
   Future<img.Image?> image(String url) {
     if (url.trim().isEmpty) return Future.value();
     if ((_failures[url] ?? 0) >= maxFailures) return Future.value();
     return _keyed('img:$url', () async {
-      var bytes = _readCachedBytes(_rawFile(url));
+      var bytes = await _readCachedBytesAsync(_rawFile(url));
       if (bytes == null) {
         bytes = await _download(url);
         if (bytes == null) {
           _noteFailure(_failures, url);
           return null;
         }
-        _writeAtomically(_rawFile(url), bytes);
+        await _writeAtomicallyAsync(_rawFile(url), bytes);
       }
       try {
-        return await _decodeSquareIsolate(bytes);
+        return await _squarePool.run<img.Image>(Uint8List.fromList(bytes));
       } catch (_) {
         return null;
       }
     });
   }
 
+  /// Finished banner PNG bytes for [url] at display width, memoized:
+  /// list tiles unmount on scroll and remount constantly, and without
+  /// this every return trip re-decoded, re-encoded and re-decoded the
+  /// banner (the visible second-long reload). FIFO-capped; banners are
+  /// ~1MB each at display size.
+  final Map<String, Future<Uint8List>> _bannerPng = {};
+  static const _bannerPngCap = 8;
+
+  Future<Uint8List> bannerPng(String url, {int width = 1280}) {
+    final key = '$width|$url';
+    final hit = _bannerPng[key];
+    if (hit != null) return hit;
+    if (_bannerPng.length >= _bannerPngCap) {
+      _bannerPng.remove(_bannerPng.keys.first);
+    }
+    Future<Uint8List> build() async {
+      final image = await source(url);
+      if (image == null) return Uint8List(0);
+      final sized = image.width > width
+          ? img.copyResize(image, width: width)
+          : image;
+      try {
+        return Uint8List.fromList(img.encodePng(sized));
+      } catch (_) {
+        return Uint8List(0);
+      }
+    }
+
+    final future = build();
+    _bannerPng[key] = future;
+    return future;
+  }
+
   /// Original, uncropped banner image at served aspect ratio.
+  /// Uses async file operations to prevent UI thread blocking.
   Future<img.Image?> source(String url) {
     if (url.trim().isEmpty) return Future.value();
     if ((_sourceFailures[url] ?? 0) >= maxFailures) {
       return Future.value();
     }
     return _keyed('src:$url', () async {
-      var bytes = _readCachedBytes(_sourceFile(url));
+      var bytes = await _readCachedBytesAsync(_sourceFile(url));
       if (bytes == null) {
         bytes = await _downloadSource(url);
         if (bytes == null) {
           _noteFailure(_sourceFailures, url);
           return null;
         }
-        _writeAtomically(_sourceFile(url), bytes);
+        await _writeAtomicallyAsync(_sourceFile(url), bytes);
       }
       try {
-        return await _decodeBannerIsolate(bytes);
+        return await _bannerPool.run<img.Image>(Uint8List.fromList(bytes));
       } catch (_) {
         return null;
       }
@@ -361,27 +571,28 @@ class ArtworkStore {
   }
 
   /// Stable cropped PNG file for [url], rendering on first use.
+  /// Uses async file operations to prevent UI thread blocking.
   Future<File?> file(String url) {
     if (url.trim().isEmpty) return Future.value();
     return _keyed('file:$url', () async {
-      final target = File(_croppedFile(url));
+      final target = File(croppedFilePath(url));
       try {
-        if (target.existsSync() && target.lengthSync() > 0) {
+        if (await target.exists() && await target.length() > 0) {
           return target;
         }
       } catch (_) {}
-      var bytes = _readCachedBytes(_rawFile(url));
+      var bytes = await _readCachedBytesAsync(_rawFile(url));
       if (bytes == null) {
         bytes = await _download(url);
         if (bytes == null) {
           _noteFailure(_failures, url);
           return null;
         }
-        _writeAtomically(_rawFile(url), bytes);
+        await _writeAtomicallyAsync(_rawFile(url), bytes);
       }
       Uint8List? png;
       try {
-        png = await _renderCropPngIsolate(bytes);
+        png = await _cropPool.run<Uint8List>(Uint8List.fromList(bytes));
       } catch (_) {
         png = null;
       }
@@ -389,9 +600,7 @@ class ArtworkStore {
         _noteFailure(_failures, url);
         return null;
       }
-      try {
-        _writeAtomically(target.path, png);
-      } catch (_) {
+      if (!await _writeAtomicallyAsync(target.path, png)) {
         _noteFailure(_failures, url);
         return null;
       }
@@ -400,11 +609,11 @@ class ArtworkStore {
   }
 
   /// Cropped file only if already rendered on disk.
-  File? cachedFile(String url) {
-    if (url.trim().isEmpty) return null;
+  /// Uses async file check to prevent UI thread blocking.
+  Future<File?> cachedFile(String url) async {    if (url.trim().isEmpty) return null;
     try {
-      final target = File(_croppedFile(url));
-      if (target.existsSync() && target.lengthSync() > 0) return target;
+      final target = File(croppedFilePath(url));
+      if (await target.exists() && await target.length() > 0) return target;
       return null;
     } catch (_) {
       return null;

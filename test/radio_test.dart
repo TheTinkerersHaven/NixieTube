@@ -99,11 +99,13 @@ class _FakeRadioTube extends InnerTube {
   Future<RatingStatus> rating(String videoId) async => RatingStatus.unknown;
 
   @override
-  Future<List<Shelf>> home() async {
+  Future<({List<String> moods, List<Shelf> shelves})> home() async {
     homeCalls++;
     final hook = homeHook;
-    if (hook != null) return hook();
-    return [];
+    if (hook != null) {
+      return (shelves: await hook(), moods: <String>[]);
+    }
+    return (shelves: <Shelf>[], moods: <String>[]);
   }
 }
 

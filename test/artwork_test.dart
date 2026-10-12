@@ -159,7 +159,7 @@ void main() {
       addTearDown(store.close);
       const url = 'https://artwork.invalid/cover.jpg';
       final hex = _shaForTest(url);
-      await File('${dir.path}/$hex.img')
+      await File('${dir.path}/$hex.img3')
           .writeAsBytes(jpeg);
       final image = await store.image(url);
       expect(image, isNotNull);
@@ -172,7 +172,286 @@ void main() {
       final file = await store.file(url);
       expect(file, isNotNull);
       expect(file!.existsSync(), isTrue);
-      expect(store.cachedFile(url), isNotNull);
+      // cachedFile resolves the same on-disk render.
+      final cached = await store.cachedFile(url);
+      expect(cached, isNotNull);
+      expect(cached!.path, file.path);
+    });
+
+    test('worker pool serves more decodes than its size', () async {
+      // The pool keeps 2 warm isolates; a burst of more concurrent decodes
+      // must all succeed (a stall here means a worker never reported idle),
+      // and each must return ITS OWN image (no cross-job routing).
+      final dir = await Directory.systemTemp.createTemp('nt-art-pool');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final urls = [
+        for (var i = 0; i < 6; i++) 'https://pool.invalid/$i.jpg',
+      ];
+      for (var i = 0; i < urls.length; i++) {
+        // Distinct solid color per URL; PNG keeps it lossless.
+        final raw = _solid(64 + i, 64 + i, 30 * (i + 1), 20, 10);
+        final hex = _shaForTest(urls[i]);
+        await File('${dir.path}/$hex.img3').writeAsBytes(img.encodePng(raw));
+      }
+      final squares = await Future.wait([
+        for (final u in urls) store.image(u),
+      ]);
+      for (var i = 0; i < squares.length; i++) {
+        expect(squares[i], isNotNull, reason: 'square decode $i');
+        expect(squares[i]!.width, squares[i]!.height);
+        // The returned cover belongs to THIS url.
+        expect(
+          squares[i]!.getPixel(0, 0).r.toInt(),
+          inInclusiveRange(30 * (i + 1) - 3, 30 * (i + 1) + 3),
+          reason: 'decode $i content',
+        );
+      }
+      final files = await Future.wait([for (final u in urls) store.file(u)]);
+      for (var i = 0; i < files.length; i++) {
+        expect(files[i], isNotNull, reason: 'crop render $i');
+      }
+    });
+
+    test('clearCache deletes seeded raw and rendered files', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-clear');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      const url = 'https://artwork.invalid/clear.jpg';
+      final hex = _shaForTest(url);
+      await File('${dir.path}/$hex.img3')
+          .writeAsBytes(img.encodePng(_solid(80, 40, 10, 200, 30)));
+      // Renders the on-disk crop from the seeded raw bytes.
+      final file = await store.file(url);
+      expect(file, isNotNull);
+      expect(File('${dir.path}/$hex.crop5.png').existsSync(), isTrue);
+      // Clearing removes every cached artwork file.
+      store.clearCache();
+      expect(File('${dir.path}/$hex.img3').existsSync(), isFalse);
+      expect(File('${dir.path}/$hex.crop5.png').existsSync(), isFalse);
+    });
+
+    test('clearCache resets failure skips so urls retry', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-fails');
+      addTearDown(() => dir.delete(recursive: true));
+      var requests = 0;
+      var serveGood = false;
+      final good = img.encodePng(_solid(64, 64, 10, 200, 30));
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      server.listen((request) {
+        requests++;
+        if (serveGood) {
+          request.response
+            ..headers.contentType = ContentType.binary
+            ..add(good)
+            ..close();
+        } else {
+          request.response
+            ..statusCode = HttpStatus.serviceUnavailable
+            ..close();
+        }
+      });
+      addTearDown(() => server.close(force: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final url = 'http://127.0.0.1:${server.port}/flaky.jpg';
+      // Three consecutive failures trip the skip-list.
+      for (var i = 0; i < 4; i++) {
+        expect(await store.image(url), isNull);
+      }
+      final afterSkips = requests;
+      expect(afterSkips, 3);
+      // Still skipped: no further requests.
+      expect(await store.image(url), isNull);
+      expect(requests, afterSkips);
+      // Clearing resets the skips, so the (now healthy) url retries.
+      serveGood = true;
+      store.clearCache();
+      final image = await store.image(url);
+      expect(image, isNotNull);
+      expect(requests, greaterThan(afterSkips));
+    });
+
+    test('clearCache drops the banner memo so banners re-render',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-banner');
+      addTearDown(() => dir.delete(recursive: true));
+      var requests = 0;
+      final good = img.encodePng(_solid(64, 64, 10, 200, 30));
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      server.listen((request) {
+        requests++;
+        request.response
+          ..headers.contentType = ContentType.binary
+          ..add(good)
+          ..close();
+      });
+      addTearDown(() => server.close(force: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final url = 'http://127.0.0.1:${server.port}/banner.jpg';
+      expect((await store.bannerPng(url)).isNotEmpty, isTrue);
+      expect(requests, 1);
+      // Memoized: no new request.
+      expect((await store.bannerPng(url)).isNotEmpty, isTrue);
+      expect(requests, 1);
+      // Clearing drops the memo: the next call re-fetches.
+      store.clearCache();
+      expect((await store.bannerPng(url)).isNotEmpty, isTrue);
+      expect(requests, 2);
+    });
+  });
+
+  group('bannerPng memo', () {
+    Future<HttpServer> servePng(List<int> bytes) async {
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      server.listen((request) {
+        request.response
+          ..headers.contentType = ContentType.binary
+          ..add(bytes)
+          ..close();
+      });
+      addTearDown(() => server.close(force: true));
+      return server;
+    }
+
+    test('empty urls resolve empty without fetching', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-banner');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final first = store.bannerPng('');
+      final second = store.bannerPng('');
+      expect(identical(first, second), isTrue);
+      expect(await first, isEmpty);
+    });
+
+    test('remounts reuse the finished bytes', () async {
+      final png = img.encodePng(_solid(160, 90, 10, 200, 30));
+      final server = await servePng(png);
+      final dir = await Directory.systemTemp.createTemp('nt-art-banner');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final url = 'http://127.0.0.1:${server.port}/banner.png';
+      final first = await store.bannerPng(url);
+      expect(first, isNotEmpty);
+      // Second call: identical future, no second download.
+      final second = store.bannerPng(url);
+      expect(await second, first);
+    });
+
+    test('the memo holds the newest entries', () async {
+      final png = img.encodePng(_solid(160, 90, 10, 200, 30));
+      final server = await servePng(png);
+      final dir = await Directory.systemTemp.createTemp('nt-art-banner');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final first = store.bannerPng('http://127.0.0.1:${server.port}/0.png');
+      for (var i = 1; i <= 8; i++) {
+        await store.bannerPng('http://127.0.0.1:${server.port}/$i.png');
+      }
+      // Nine entries in an eight-slot memo: the first was evicted.
+      expect(
+        identical(store.bannerPng('http://127.0.0.1:${server.port}/0.png'), first),
+        isFalse,
+      );
+    });
+  });
+
+  group('removeLetterbox', () {
+    img.Image bars({
+      required int w,
+      required int h,
+      int top = 0,
+      int bottom = 0,
+      int left = 0,
+      int right = 0,
+    }) {
+      final image = _solid(w, h, 200, 30, 30);
+      if (top > 0) {
+        img.fillRect(
+          image,
+          x1: 0,
+          y1: 0,
+          x2: w - 1,
+          y2: top - 1,
+          color: img.ColorRgb8(0, 0, 0),
+        );
+      }
+      if (bottom > 0) {
+        img.fillRect(
+          image,
+          x1: 0,
+          y1: h - bottom,
+          x2: w - 1,
+          y2: h - 1,
+          color: img.ColorRgb8(0, 0, 0),
+        );
+      }
+      if (left > 0) {
+        img.fillRect(
+          image,
+          x1: 0,
+          y1: 0,
+          x2: left - 1,
+          y2: h - 1,
+          color: img.ColorRgb8(0, 0, 0),
+        );
+      }
+      if (right > 0) {
+        img.fillRect(
+          image,
+          x1: w - right,
+          y1: 0,
+          x2: w - 1,
+          y2: h - 1,
+          color: img.ColorRgb8(0, 0, 0),
+        );
+      }
+      return image;
+    }
+
+    test('trims facing top/bottom bars to the content box', () {
+      final out = removeLetterbox(bars(w: 100, h: 100, top: 20, bottom: 20));
+      expect(out.width, 100);
+      expect(out.height, 60);
+      // Content survives: the middle row is still red.
+      final px = out.getPixel(50, 30);
+      expect(px.r.toInt(), 200);
+    });
+
+    test('trims facing left/right pillarbox bars', () {
+      final out = removeLetterbox(bars(w: 100, h: 100, left: 15, right: 15));
+      expect(out.width, 70);
+      expect(out.height, 100);
+    });
+
+    test('plain frames pass through untouched', () {
+      final out = removeLetterbox(_solid(90, 60, 200, 30, 30));
+      expect(out.width, 90);
+      expect(out.height, 60);
+    });
+
+    test('all-black covers are kept, not collapsed', () {
+      final out = removeLetterbox(_solid(50, 50, 0, 0, 0));
+      expect(out.width, 50);
+      expect(out.height, 50);
+    });
+
+    test('single-edge darkness never trims', () {
+      final out = removeLetterbox(bars(w: 100, h: 100, bottom: 20));
+      expect(out.width, 100);
+      expect(out.height, 100);
+    });
+
+    test('dark-but-not-black content is kept', () {
+      final out = removeLetterbox(_solid(80, 80, 30, 30, 30));
+      expect(out.width, 80);
+      expect(out.height, 80);
     });
   });
 }

@@ -84,9 +84,9 @@ class DiscordPresence extends ChangeNotifier {
     _statusText = statusText;
   }
 
-  late final String _appId;
-  late final bool _enabled;
-  late final DiscordStatusText _statusText;
+  late String _appId;
+  late bool _enabled;
+  late DiscordStatusText _statusText;
   String _status = 'disabled';
   String _dedup = '';
   bool _initialized = false;

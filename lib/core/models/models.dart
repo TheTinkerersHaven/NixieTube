@@ -379,6 +379,30 @@ sealed class ShelfItem {
   }) = BrowseItem;
 }
 
+/// A tap-to-play home mix: either an InnerTube mix playlist page
+/// (`VLRD…` mood/custom mixes) or a personalized mix seed card
+/// (`RDEM…`/`RDCLAK…` watch cards like My Mix, Discover Mix) carrying
+/// the seed track its radio playlist resolves from.
+class HomeMix {
+  const HomeMix({
+    required this.title,
+    required this.subtitle,
+    required this.thumbnails,
+    this.browseId,
+    this.seed,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<Thumbnail> thumbnails;
+
+  /// Mix playlist page id (`VLRD…`), when the mix opens as a page.
+  final String? browseId;
+
+  /// Seed track for personalized mix cards; plays via its radio list.
+  final Track? seed;
+}
+
 /// Playable song entry.
 class SongItem extends ShelfItem {
   const SongItem(this.track);

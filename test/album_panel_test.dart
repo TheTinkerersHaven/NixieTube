@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
@@ -126,15 +127,17 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final button = find.byType(SegmentedButton<int>);
+      final button = find.byType(M3EToggleButtonGroup);
       expect(button, findsOneWidget);
       final before = tester.getSize(button);
       // Selecting a different segment must not resize the control.
-      await tester.tap(find.text('Duration'));
+      // Labels mount twice (label + checkedLabel cross-fade), so tap
+      // the toggle widgets by position instead of by text.
+      await tester.tap(find.byType(M3EToggleButton).at(3));
       await tester.pumpAndSettle();
       final after = tester.getSize(button);
       expect(after.width, before.width);
-      await tester.tap(find.text('Default'));
+      await tester.tap(find.byType(M3EToggleButton).at(0));
       await tester.pumpAndSettle();
       expect(tester.getSize(button).width, before.width);
     });
@@ -174,6 +177,111 @@ void main() {
       expect(a, equals(b));
       expect(a.hashCode, equals(b.hashCode));
       expect(a == c, isFalse);
+    });
+  });
+
+  group('play counts', () {
+    Future<AppState> bootState() async {
+      final dir = Directory.systemTemp.createTempSync('nt-views-test');
+      addTearDown(() => dir.delete(recursive: true));
+      final tube = InnerTube();
+      addTearDown(tube.close);
+      final player = PlayerController(
+        engine: _FakeEngine(),
+        tube: tube,
+        configDirPath: dir.path,
+      );
+      addTearDown(player.dispose);
+      final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+      addTearDown(oauth.close);
+      final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
+      addTearDown(art.close);
+      final state = AppState(
+        tube: tube,
+        player: player,
+        art: art,
+        oauth: oauth,
+        config: SysConfig(configPath: '${dir.path}/config.properties'),
+        openUrl: (_) async {},
+      );
+      addTearDown(state.dispose);
+      return state;
+    }
+
+    Future<void> pumpPanel(
+      WidgetTester tester,
+      AppState state,
+      bool showViews,
+    ) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChangeNotifierProvider.value(
+              value: state,
+              child: AlbumPlaylistView(
+                title: 'Album',
+                subtitle: '',
+                description: '',
+                art: null,
+                owner: null,
+                tracks: const [
+                  Track(
+                    videoId: 'v1',
+                    title: 'One',
+                    durationSec: 100,
+                    views: '1.8M plays',
+                  ),
+                  Track(
+                    videoId: 'v2',
+                    title: 'Two',
+                    durationSec: 200,
+                  ),
+                ],
+                numbered: true,
+                showViews: showViews,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('shows play counts when enabled', (tester) async {
+      final state = await bootState();
+      await pumpPanel(tester, state, true);
+      await tester.pumpAndSettle();
+      expect(find.text('1.8M plays'), findsOneWidget);
+    });
+
+    testWidgets('hides play counts when disabled', (tester) async {
+      final state = await bootState();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChangeNotifierProvider.value(
+              value: state,
+              child: const AlbumPlaylistView(
+                title: 'Album',
+                subtitle: '',
+                description: '',
+                art: null,
+                owner: null,
+                tracks: [
+                  Track(
+                    videoId: 'v1',
+                    title: 'One',
+                    durationSec: 100,
+                    views: '1.8M plays',
+                  ),
+                ],
+                numbered: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1.8M plays'), findsNothing);
     });
   });
 }

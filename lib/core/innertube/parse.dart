@@ -48,13 +48,32 @@ List<Thumbnail> parseThumbnailList(dynamic arr) {
   return out;
 }
 
-/// First `thumbnails` array found anywhere under [node].
+/// First `thumbnails` array found anywhere under [node], plus the
+/// API's own square crops (`croppedSquareThumbnailRenderer`, the same
+/// fallback Metrolist reads) appended as extra candidates. Square
+/// tiles then prefer an API-authored square over center-cropping a
+/// wide frame, while largest-by-width selection (banners, MPRIS)
+/// keeps the wide originals. Each call site passes a single item or
+/// header node, so at most one crop array ever applies.
 List<Thumbnail> parseThumbnails(dynamic node) {
   final arr = findFirst(node, 'thumbnails');
   if (arr is! List) return [];
-  return parseThumbnailList(arr);
+  final out = parseThumbnailList(arr);
+  final seen = out.map((t) => t.url).toSet();
+  for (final r in findAll(node, 'croppedSquareThumbnailRenderer')) {
+    final thumbs = nav(r, const ['thumbnail', 'thumbnails']);
+    if (thumbs is! List) continue;
+    for (final t in parseThumbnailList(thumbs)) {
+      if (seen.add(t.url)) out.add(t);
+    }
+  }
+  return out;
 }
 
+/// Current like state of a menu item. The *toggled* endpoint names
+/// the state the toggle sits in; the *default* endpoint is the
+/// transition away from it, so reading the default reports likes
+/// for unliked songs and vice versa.
 RatingStatus parseLikeRating(dynamic item) {
   final overlay = str(
     nav(item, const [
@@ -69,16 +88,56 @@ RatingStatus parseLikeRating(dynamic item) {
   if (overlay != null) return RatingStatus.fromValue(overlay);
   final menuItems = nav(item, const ['menu', 'menuRenderer', 'items']);
   if (menuItems is! List) return RatingStatus.unknown;
+  // Toggle entries name the current state in `toggledServiceEndpoint`;
+  // `defaultServiceEndpoint` is the transition away from it (reading the
+  // default reports likes for unliked songs and vice versa). Like and
+  // dislike live in separate toggles, so an INDIFFERENT like-toggle must
+  // not shadow a DISLIKE elsewhere: prefer LIKE, then DISLIKE.
+  var sawDislike = false;
+  var sawIndifferent = false;
+  RatingStatus? plainStatus;
   for (final entry in menuItems) {
     final toggle = nav(entry, const ['toggleMenuServiceItemRenderer']);
-    final service =
-        nav(toggle, const ['defaultServiceEndpoint']) ??
-        nav(entry, const ['menuServiceItemRenderer', 'serviceEndpoint']);
-    final status = str(nav(service, const ['likeEndpoint', 'status']));
-    if (status != null && status.trim().isNotEmpty) {
-      return RatingStatus.fromValue(status);
+    if (toggle != null) {
+      final toggled = str(
+        nav(toggle, const [
+          'toggledServiceEndpoint',
+          'likeEndpoint',
+          'status',
+        ]),
+      );
+      if (toggled == null || toggled.trim().isEmpty) {
+        // No toggled endpoint (e.g. library/pin toggles): skip rather
+        // than report the default inverted.
+        continue;
+      }
+      final current = RatingStatus.fromValue(toggled);
+      if (current == RatingStatus.like) return current;
+      if (current == RatingStatus.dislike) {
+        sawDislike = true;
+      } else if (current == RatingStatus.indifferent) {
+        sawIndifferent = true;
+      }
+      // Unknown toggled values fall through to the priority below.
+      continue;
+    }
+    final status = str(
+      nav(entry, const [
+        'menuServiceItemRenderer',
+        'serviceEndpoint',
+        'likeEndpoint',
+        'status',
+      ]),
+    );
+    if (status != null &&
+        status.trim().isNotEmpty &&
+        plainStatus == null) {
+      plainStatus = RatingStatus.fromValue(status);
     }
   }
+  if (sawDislike) return RatingStatus.dislike;
+  if (sawIndifferent) return RatingStatus.indifferent;
+  if (plainStatus != null) return plainStatus;
   return RatingStatus.unknown;
 }
 
@@ -535,6 +594,120 @@ Shelf? parseShelf(dynamic el) {
   return null;
 }
 
+/// Mood filter titles from a home response's chip cloud
+/// (`chipCloudChipRenderer` nodes, e.g. Relax/Workout/Party), deduped
+/// case-insensitively in feed order. Empty when the response carries
+/// no chips. Tapping a chip runs a plain search for its title, so
+/// only the text is kept.
+List<String> parseHomeMoods(dynamic res) {
+  final out = <String>[];
+  final seen = <String>{};
+  for (final chip in findAll(res, 'chipCloudChipRenderer')) {
+    final title = runsText(nav(chip, const ['text', 'runs'])).trim();
+    if (title.isEmpty || !seen.add(title.toLowerCase())) continue;
+    out.add(title);
+  }
+  return out;
+}
+
+/// Artist keys for shelf ranking: UC channel ids plus canonical
+/// names, so feed items link to library artists with or without ids.
+Set<String> shelfArtistKeys({
+  required List<BrowseItem> artists,
+  required List<Track> tracks,
+}) {
+  final out = <String>{};
+  for (final a in artists) {
+    if (a.browseId.isNotEmpty) out.add(a.browseId);
+    final n = canonicalMetadata(a.title);
+    if (n.isNotEmpty) out.add(n);
+  }
+  for (final t in tracks) {
+    for (final a in t.artists) {
+      final id = a.browseId;
+      if (id != null && id.isNotEmpty) out.add(id);
+      final n = canonicalMetadata(a.name);
+      if (n.isNotEmpty) out.add(n);
+    }
+  }
+  return out;
+}
+
+/// Orders home shelves by user-centricity, stable: shelves whose
+/// items overlap the user's own tracks (history/liked ids), artists,
+/// or personalized mix seeds come first; generic editorial shelves
+/// (charts, new music with no overlap) keep feed order at the bottom.
+/// An empty profile scores everything zero, preserving feed order —
+/// so signed-out users see no change.
+List<Shelf> rankShelvesByProfile(
+  List<Shelf> shelves, {
+  required Set<String> trackIds,
+  required Set<String> artistKeys,
+}) {
+  bool artistHit(Track t) {
+    for (final a in t.artists) {
+      final id = a.browseId;
+      if (id != null && id.isNotEmpty && artistKeys.contains(id)) {
+        return true;
+      }
+      final n = canonicalMetadata(a.name);
+      if (n.isNotEmpty && artistKeys.contains(n)) return true;
+    }
+    return false;
+  }
+
+  int score(ShelfItem item) {
+    if (item is SongItem) {
+      final t = item.track;
+      var s = 0;
+      if (t.videoId.isNotEmpty && trackIds.contains(t.videoId)) s += 3;
+      if (artistHit(t)) s += 2;
+      final pid = t.playlistId ?? '';
+      if (pid.startsWith('RDEM') || pid.startsWith('RDCLAK')) s += 2;
+      return s;
+    }
+    if (item is BrowseItem) {
+      // Followed-artist channels surfacing in the feed.
+      if (item.browseId.isNotEmpty && artistKeys.contains(item.browseId)) {
+        return 3;
+      }
+    }
+    return 0;
+  }
+
+  final indexed = [
+    for (var i = 0; i < shelves.length; i++)
+      (score: shelves[i].items.fold(0, (sum, it) => sum + score(it)), index: i),
+  ];
+  indexed.sort((a, b) {
+    final byScore = b.score.compareTo(a.score);
+    return byScore != 0 ? byScore : a.index.compareTo(b.index);
+  });
+  return [for (final e in indexed) shelves[e.index]];
+}
+
+/// Merges locally-played tracks ahead of a server history fetch.
+/// Server history lags (or stalls) behind what just played, so local
+/// recents missing from it go first, then the server list; deduped,
+/// capped. Pure so reload merging stays unit-testable.
+List<Track> mergeLocalRecents(
+  List<Track> server,
+  List<Track> local, {
+  int cap = 100,
+}) {
+  final ids = <String>{for (final t in server) t.videoId};
+  final out = [
+    for (final t in local)
+      if (t.videoId.isNotEmpty && !ids.contains(t.videoId)) t,
+    ...server,
+  ];
+  final seen = <String>{};
+  return [
+    for (final t in out)
+      if (seen.add(t.videoId)) t,
+  ].take(cap).toList();
+}
+
 /// Parses a shelf content element into a song or browse item.
 ShelfItem? parseShelfItem(dynamic el) {
   if (el is! Map) return null;
@@ -849,6 +1022,66 @@ void parseSearchShelf(
       addAlbumSearchResult(out, card, title, titleRuns);
     }
   }
+}
+
+/// Ranks song search results against the raw [query], best match first.
+///
+/// YouTube answers "title + artist" queries (e.g. "kid again ivycomb")
+/// with the right recording buried among partial title matches, so a
+/// full-string title comparison alone never fires there. Each song
+/// scores on token overlap between the query and its title/artists:
+///
+/// * the whole query names the title exactly (previous behavior kept),
+/// * the query contains the full title as a phrase ("kid again" inside
+///   "kid again ivycomb"),
+/// * every title word appears in the query (word-order free),
+/// * per-word title overlap, artist word overlap, and the dominant
+///   (top-result/artist-section) artist recording.
+///
+/// Exact full-query title matches still outscore everything; ties keep
+/// YouTube's order (stable sort), so plain single-word queries behave
+/// exactly as before.
+List<SongItem> rankSearchSongs(
+  Iterable<SongItem> songs,
+  String query, {
+  Set<String> dominantIds = const {},
+  Set<String> dominantNames = const {},
+}) {
+  final queryCanon = canonicalMetadata(query);
+  if (queryCanon.isEmpty) return songs.toList();
+  final queryTokens = queryCanon.split(' ').where((t) => t.isNotEmpty).toSet();
+
+  bool isDominant(SongItem s) => s.track.artists.any((artist) {
+    final key = canonicalMetadata(artist.name);
+    return (artist.browseId != null &&
+            artist.browseId!.isNotEmpty &&
+            dominantIds.contains(artist.browseId)) ||
+        (key.isNotEmpty && dominantNames.contains(key));
+  });
+
+  int score(SongItem s) {
+    final titleCanon = canonicalMetadata(s.track.title);
+    if (titleCanon.isEmpty) return 0;
+    final titleTokens =
+        titleCanon.split(' ').where((t) => t.isNotEmpty).toSet();
+    final artistTokens = s.track.artists
+        .expand((a) => canonicalMetadata(a.name).split(' '))
+        .where((t) => t.isNotEmpty)
+        .toSet();
+    final titleHits = titleTokens.where(queryTokens.contains).length;
+    final artistHits = artistTokens.where(queryTokens.contains).length;
+    var points = titleHits + artistHits;
+    if (titleCanon == queryCanon) points += 400;
+    if (queryCanon.contains(titleCanon)) points += 200;
+    if (titleTokens.every(queryTokens.contains)) points += 100;
+    if (artistHits > 0) points += 50;
+    if (isDominant(s)) points += 25;
+    return points;
+  }
+
+  final ranked = songs.toList();
+  ranked.sort((a, b) => score(b).compareTo(score(a)));
+  return ranked;
 }
 
 /// Builds an album detail from a `browse` response, or null when the header

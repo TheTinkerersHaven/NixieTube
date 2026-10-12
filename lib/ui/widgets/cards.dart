@@ -80,6 +80,7 @@ class TrackRailCard extends StatelessWidget {
               size: 200,
               radius: cardRadius,
               iconSize: 48,
+              squareCoverKey: track.videoId,
             ),
             const SizedBox(height: 8),
             Text(

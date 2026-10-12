@@ -7,6 +7,10 @@ import '../models/models.dart';
 /// Queue repeat behavior.
 enum RepeatMode { off, all, one }
 
+/// Sleep timer mode: pause playback after a duration, at the end of
+/// the current track, or at the end of the queue. Off by default.
+enum SleepTimerMode { off, duration, endOfTrack, endOfQueue }
+
 /// Observable playback snapshot emitted by [PlayerController].
 class PlayerState {
   const PlayerState({
@@ -23,6 +27,8 @@ class PlayerState {
     this.shuffle = false,
     this.repeat = RepeatMode.off,
     this.autoplay = true,
+    this.sleepTimerMode = SleepTimerMode.off,
+    this.sleepTimerEndsAtMs,
     this.error,
   });
 
@@ -50,6 +56,15 @@ class PlayerState {
   final bool autoplay;
   final String? error;
 
+  /// Active sleep timer mode ([SleepTimerMode.off] when unset).
+  final SleepTimerMode sleepTimerMode;
+
+  /// Epoch millis when a duration timer fires; null unless the mode
+  /// is [SleepTimerMode.duration]. The UI derives the countdown from
+  /// this, so no extra ticking timer is needed — the position ticker
+  /// already re-emits state twice a second.
+  final int? sleepTimerEndsAtMs;
+
   PlayerState copyWith({
     Track? Function()? current,
     bool? playing,
@@ -64,6 +79,8 @@ class PlayerState {
     bool? shuffle,
     RepeatMode? repeat,
     bool? autoplay,
+    SleepTimerMode? sleepTimerMode,
+    int? Function()? sleepTimerEndsAtMs,
     String? Function()? error,
   }) {
     return PlayerState(
@@ -80,6 +97,10 @@ class PlayerState {
       shuffle: shuffle ?? this.shuffle,
       repeat: repeat ?? this.repeat,
       autoplay: autoplay ?? this.autoplay,
+      sleepTimerMode: sleepTimerMode ?? this.sleepTimerMode,
+      sleepTimerEndsAtMs: sleepTimerEndsAtMs != null
+          ? sleepTimerEndsAtMs()
+          : this.sleepTimerEndsAtMs,
       error: error != null ? error() : this.error,
     );
   }

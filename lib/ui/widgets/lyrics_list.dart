@@ -2,9 +2,13 @@
 // lyrics tab and the full-screen lyrics view: tap-to-seek rows,
 // auto-scroll tracking the song position, optional large type.
 
+import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:motor/motor.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
+import '../a11y.dart';
 import '../app_state.dart';
 
 /// Synced lyric lines with a swelling active line that auto-scrolls
@@ -67,7 +71,8 @@ class _LyricsListState extends State<LyricsList> {
       for (var i = 0; i < lyrics.length; i++) {
         if (lyrics[i].timeMs <= widget.positionMs) currentIndex = i;
       }
-      if (currentIndex < 0) currentIndex = 0;
+      // Before the first timestamp nothing is sung yet: leave -1 so
+      // no line highlights early.
     }
     if (currentIndex >= 0 && currentIndex != _autoIndex) {
       _autoIndex = currentIndex;
@@ -81,13 +86,43 @@ class _LyricsListState extends State<LyricsList> {
           Scrollable.ensureVisible(
             ctx,
             alignment: 0.35,
-            duration: const Duration(milliseconds: 300),
+            duration: readMotionDuration(
+              context,
+              const Duration(milliseconds: 300),
+            ),
+            curve: Curves.easeOut,
+          );
+        } else {
+          // Row is off-screen and not yet built; estimate its
+          // scroll offset so the list brings it into view, then
+          // the next build cycle will have a valid context for
+          // ensureVisible.
+          final estimatedHeight = widget.large ? 64.0 : 44.0;
+          final target = (currentIndex * estimatedHeight
+                  - (widget.large ? 32 : 24))
+              .clamp(0.0, ctrl.position.maxScrollExtent);
+          ctrl.animateTo(
+            target,
+            duration: readMotionDuration(
+              context,
+              const Duration(milliseconds: 300),
+            ),
             curve: Curves.easeOut,
           );
         }
       });
     }
     final scheme = Theme.of(context).colorScheme;
+    final reducedMotion = context.select<AppState, bool>(
+      (s) => s.config.reducedMotion,
+    );
+    // Resolve the swell duration once, above the list: `select`
+    // may not run inside `itemBuilder` (it would rebuild the
+    // whole sliver instead of the row that cares).
+    final swell = motionDuration(
+      context,
+      const Duration(milliseconds: 150),
+    );
     // No scrollbar: the list follows playback on its own and a thumb
     // flashing twice a second is visual noise.
     return ScrollConfiguration(
@@ -112,27 +147,47 @@ class _LyricsListState extends State<LyricsList> {
                 vertical: widget.large ? 12 : 8,
                 horizontal: 16,
               ),
-              // Quick style swell on the active line only; idle rows
-              // keep a static style so ticks don't animate the world.
-              child: AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 150),
-                curve: Curves.easeOut,
-                textAlign: TextAlign.center,
-                style:
-                    (active
-                            ? (widget.large
-                                ? Theme.of(context).textTheme.headlineMedium
-                                : Theme.of(context).textTheme.titleLarge)
-                            : (widget.large
-                                ? Theme.of(context).textTheme.titleLarge
-                                : Theme.of(context).textTheme.bodyLarge))
-                        ?.copyWith(
-                          color: active
-                              ? scheme.primary
-                              : scheme.onSurfaceVariant.withValues(alpha: 0.55),
-                        ) ??
-                    DefaultTextStyle.of(context).style,
-                child: Text(line.text),
+              child: SingleMotionBuilder(
+                motion: M3EMotion.custom(
+                  stiffness: 300,
+                  damping: 0.5,
+                ).toMotion(),
+                value: active ? 1.0 : 0.0,
+                active: !reducedMotion,
+                builder: (context, scale, _) {
+                  return Transform.scale(
+                    scale: 1.0 + scale * 0.1,
+                    child: AnimatedDefaultTextStyle(
+                      duration: swell,
+                      curve: Curves.easeOut,
+                      textAlign: TextAlign.center,
+                      style:
+                          (active
+                                  ? (widget.large
+                                      ? Theme.of(context)
+                                          .textTheme
+                                          .headlineMedium
+                                      : Theme.of(context)
+                                          .textTheme
+                                          .titleLarge)
+                                  : (widget.large
+                                      ? Theme.of(context)
+                                          .textTheme
+                                          .titleLarge
+                                      : Theme.of(context)
+                                          .textTheme
+                                          .bodyLarge))
+                              ?.copyWith(
+                                color: active
+                                    ? scheme.primary
+                                    : scheme.onSurfaceVariant
+                                        .withValues(alpha: 0.55),
+                              ) ??
+                          DefaultTextStyle.of(context).style,
+                      child: Text(line.text),
+                    ),
+                  );
+                },
               ),
             ),
           );

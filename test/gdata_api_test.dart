@@ -3,21 +3,21 @@
 
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:nixietube/core/innertube/gdata_api.dart';
 
-http.Response _ok(Object json) =>
-    http.Response(jsonEncode(json), 200);
+import 'mock_dio.dart';
+
+(int, Object) _ok(Object json) => (200, jsonEncode(json));
 
 void main() {
   group('playlists', () {
     test('pages through results and drops LL ids', () async {
       var calls = 0;
-      final client = MockClient((req) async {
+      final client = mockDio((options) async {
         calls++;
-        final page = req.url.queryParameters['pageToken'];
+        final page = options.uri.queryParameters['pageToken'];
         if (page == null) {
           return _ok({
             'items': [
@@ -53,7 +53,7 @@ void main() {
         });
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       // keepMusicPlaylists probes item videos; stub the probe to fail so
       // unclassifiable playlists stay visible.
       final pls = await api.playlists();
@@ -78,7 +78,7 @@ void main() {
 
   group('playlistTracks', () {
     test('skips deleted stubs and fixes up artists', () async {
-      final client = MockClient((req) async {
+      final client = mockDio((options) async {
         return _ok({
           'items': [
             {
@@ -101,7 +101,7 @@ void main() {
         });
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       final tracks = await api.playlistTracks('PL1');
       expect(tracks.length, 1);
       expect(tracks.first.videoId, 'V9');
@@ -111,10 +111,10 @@ void main() {
     });
 
     test('stamps durations from a batch videos lookup', () async {
-      final client = MockClient((req) async {
+      final client = mockDio((options) async {
         // The batch duration lookup: playlistItems carries
         // none, videos/contentDetails carries ISO durations.
-        if (req.url.path == '/youtube/v3/videos') {
+        if (options.uri.path == '/youtube/v3/videos') {
           return _ok({
             'items': [
               {
@@ -146,7 +146,7 @@ void main() {
         });
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       final tracks = await api.playlistTracks('PL1');
       expect(tracks.length, 2);
       expect(tracks.first.durationSec, 210);
@@ -155,9 +155,9 @@ void main() {
     });
 
     test('survives a failed duration lookup', () async {
-      final client = MockClient((req) async {
-        if (req.url.path == '/youtube/v3/videos') {
-          return http.Response('quota exceeded', 403);
+      final client = mockDio((options) async {
+        if (options.uri.path == '/youtube/v3/videos') {
+          return (403, 'quota exceeded');
         }
         return _ok({
           'items': [
@@ -171,7 +171,7 @@ void main() {
         });
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       final tracks = await api.playlistTracks('PL1');
       expect(tracks.length, 1);
       // Durations stay 0 rather than failing the playlist.
@@ -182,7 +182,7 @@ void main() {
 
   group('likedVideos', () {
     test('keeps music, drops vlogs', () async {
-      final client = MockClient((req) async {
+      final client = mockDio((options) async {
         return _ok({
           'items': [
             {
@@ -213,7 +213,7 @@ void main() {
         });
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       final liked = await api.likedVideos();
       expect(liked.length, 1);
       expect(liked.first.videoId, 'M1');
@@ -224,8 +224,8 @@ void main() {
 
   group('recentActivity', () {
     test('backfills owners from videos.list', () async {
-      final client = MockClient((req) async {
-        if (req.url.path.endsWith('/activities')) {
+      final client = mockDio((options) async {
+        if (options.uri.path.endsWith('/activities')) {
           return _ok({
             'items': [
               {
@@ -261,7 +261,7 @@ void main() {
         });
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       final act = await api.recentActivity();
       expect(act.length, 1);
       expect(act.first.videoId, 'A1');
@@ -274,11 +274,11 @@ void main() {
 
   group('mutations', () {
     test('mutations report transport success', () async {
-      final client = MockClient((req) async {
-        return http.Response('', 200);
+      final client = mockDio((options) async {
+        return (200, '');
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       expect(await api.rate('V1', true), isTrue);
       expect(await api.addToPlaylist('PL1', 'V1'), isTrue);
       expect(await api.subscribe('UC1'), isTrue);
@@ -288,8 +288,8 @@ void main() {
     });
 
     test('playlistItemId pages until found', () async {
-      final client = MockClient((req) async {
-        final page = req.url.queryParameters['pageToken'];
+      final client = mockDio((options) async {
+        final page = options.uri.queryParameters['pageToken'];
         if (page == null) {
           return _ok({
             'items': [
@@ -315,9 +315,78 @@ void main() {
         });
       });
       final api = GDataApi(
-          tokenProvider: () async => 'tok', httpClient: client);
+          tokenProvider: () async => 'tok', dio: client);
       expect(await api.playlistItemId('PL1', 'WANT'), 'ITEM-yes');
       expect(await api.playlistItemId('PL1', 'MISSING'), isNull);
+      api.close();
+    });
+
+    test('createPlaylist posts snippet/status and returns the id', () async {
+      RequestOptions? captured;
+      final client = mockDio((options) async {
+        captured = options;
+        return _ok({'id': 'PL-NEW'});
+      });
+      final api = GDataApi(
+          tokenProvider: () async => 'tok', dio: client);
+      final id = await api.createPlaylist(title: 'Roadtrip');
+      expect(id, 'PL-NEW');
+      expect(captured!.method, 'POST');
+      expect(captured!.uri.path, '/youtube/v3/playlists');
+      expect(captured!.uri.queryParameters['part'], 'snippet,status');
+      final body = jsonDecode(captured!.data as String) as Map;
+      expect((body['snippet'] as Map)['title'], 'Roadtrip');
+      expect((body['status'] as Map)['privacyStatus'], 'private');
+      api.close();
+    });
+
+    test('createPlaylist returns null on failure', () async {
+      final client = mockDio((options) async => (500, 'oops'));
+      final api = GDataApi(
+          tokenProvider: () async => 'tok', dio: client);
+      expect(await api.createPlaylist(title: 'X'), isNull);
+      api.close();
+    });
+
+    test('renamePlaylist PUTs the new title', () async {
+      RequestOptions? captured;
+      final client = mockDio((options) async {
+        captured = options;
+        return (200, '');
+      });
+      final api = GDataApi(
+          tokenProvider: () async => 'tok', dio: client);
+      expect(await api.renamePlaylist('PL1', 'New Name'), isTrue);
+      expect(captured!.method, 'PUT');
+      expect(captured!.uri.path, '/youtube/v3/playlists');
+      expect(captured!.uri.queryParameters['part'], 'snippet');
+      final body = jsonDecode(captured!.data as String) as Map;
+      expect(body['id'], 'PL1');
+      expect((body['snippet'] as Map)['title'], 'New Name');
+      api.close();
+    });
+
+    test('deletePlaylist DELETEs by id', () async {
+      RequestOptions? captured;
+      final client = mockDio((options) async {
+        captured = options;
+        return (200, '');
+      });
+      final api = GDataApi(
+          tokenProvider: () async => 'tok', dio: client);
+      expect(await api.deletePlaylist('PL1'), isTrue);
+      expect(captured!.method, 'DELETE');
+      expect(captured!.uri.path, '/youtube/v3/playlists');
+      expect(captured!.uri.queryParameters['id'], 'PL1');
+      api.close();
+    });
+
+    test('rename/delete report failure', () async {
+      final client = mockDio((options) async => (500, 'oops'));
+      final api = GDataApi(
+          tokenProvider: () async => 'tok', dio: client);
+      expect(await api.renamePlaylist('PL1', 'X'), isFalse);
+      expect(await api.deletePlaylist('PL1'), isFalse);
       api.close();
     });
   });

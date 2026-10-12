@@ -1,7 +1,9 @@
 // Mini player bar ported from Kotlin `PlayerBar`: cover, title, transport,
 // error, time row and seek slider. Tapping expands to Now Playing.
 
+import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:motor/motor.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
@@ -9,7 +11,7 @@ import '../../core/player/player_state.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
-import 'gapped_rounded_track_shape.dart';
+import 'seek_slider.dart';
 import 'volume_slider.dart';
 
 /// Bottom mini player bar; tap to expand Now Playing.
@@ -33,7 +35,7 @@ class PlayerBar extends StatefulWidget {
   State<PlayerBar> createState() => _PlayerBarState();
 }
 
-class _PlayerBarState extends State<PlayerBar> {
+class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
   /// Whether the volume slider is expanded under the transport.
   bool _volumeOpen = false;
 
@@ -87,87 +89,92 @@ class _PlayerBarState extends State<PlayerBar> {
           child: SizedBox(
             width: double.infinity,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              // Vertical only: the rows above keep the 16dp side
+              // inset, while the seek slot below goes full-bleed
+              // to the card edges.
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      ArtworkImage(
-                        track?.displayArtwork,
-                        size: 56,
-                        radius: cardRadius,
-                        iconSize: 28,
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              track?.title ??
-                                  'Search for music to start playing',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodyLarge,
-                            ),
-                            Text(
-                              track?.artistNames() ?? '',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                          ],
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        ArtworkImage(
+                          track?.displayArtwork,
+                          size: 56,
+                          radius: cardRadius,
+                          iconSize: 28,
+                          // Same square art the lists show (already
+                          // cached), so the bar never re-downloads.
+                          squareCoverKey: track?.videoId,
                         ),
-                      ),
-                      if (loading)
-                        const SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 3),
-                        )
-                      else
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(
-                                Icons.skip_previous_rounded,
-                                size: 28,
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                track?.title ??
+                                    'Search for music to start playing',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodyLarge,
                               ),
-                              tooltip: 'Previous',
-                              onPressed: track == null
-                                  ? null
-                                  : () => state.player.previous(),
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                playing
-                                    ? Icons.pause_rounded
-                                    : Icons.play_arrow_rounded,
-                                size: 28,
+                              Text(
+                                track?.artistNames() ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: scheme.onSurfaceVariant),
                               ),
-                              tooltip: 'Play/pause',
-                              onPressed: track == null
-                                  ? null
-                                  : () => state.player.togglePlayPause(),
+                            ],
+                          ),
+                        ),
+                      // Controls stay mounted while a track
+                      // loads, only disabled: the row never
+                      // collapses, so the bar keeps its height.
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(
+                              Icons.skip_previous_rounded,
+                              size: 28,
                             ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.skip_next_rounded,
-                                size: 28,
-                              ),
-                              tooltip: 'Next',
-                              onPressed: track == null
-                                  ? null
-                                  : () => state.player.next(),
+                            tooltip: 'Previous',
+                            onPressed: track == null || loading
+                                ? null
+                                : () => state.player.previous(),
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              playing
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              size: 28,
                             ),
-                            AnimatedSize(
-                              duration: const Duration(milliseconds: 180),
-                              curve: Curves.easeOutCubic,
-                              alignment: Alignment.centerLeft,
-                              child: Row(
+                            tooltip: 'Play/pause',
+                            onPressed: track == null || loading
+                                ? null
+                                : () => state.player.togglePlayPause(),
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.skip_next_rounded,
+                              size: 28,
+                            ),
+                            tooltip: 'Next',
+                            onPressed: track == null || loading
+                                ? null
+                                : () => state.player.next(),
+                          ),
+                            SingleMotionBuilder(
+                            motion:
+                                M3EMotion.expressiveEffectsDefault.toMotion(),
+                            value: _volumeOpen ? 1.0 : 0.0,
+                            builder: (context, value, _) {
+                              return Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
@@ -183,84 +190,89 @@ class _PlayerBarState extends State<PlayerBar> {
                                       () => _volumeOpen = !_volumeOpen,
                                     ),
                                   ),
-                                  // The slider pops out to the right of
-                                  // the icon, inline with the transport.
-                                  if (_volumeOpen) ...[
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 120,
-                                      child: VolumeSlider(
-                                        state: state,
-                                        trackHeight: 12,
-                                        thumbHeight: 18,
-                                      ),
+                                  const SizedBox(width: 4),
+                                  SizedBox(
+                                    width: 120.0 * value,
+                                    child: VolumeSlider(
+                                      state: state,
+                                      trackHeight: 12,
+                                      thumbHeight: 18,
                                     ),
-                                  ],
+                                  ),
                                 ],
-                              ),
-                            ),
+                              );
+                            },
+                          ),
                           ],
                         ),
                     ],
                   ),
+                ),
                   // Volume pop-out removed; volume control lives inline
                   // in the transport row (see below).
                   if (error != null)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        error,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(color: scheme.error),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          error,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: scheme.error),
+                        ),
                       ),
                     ),
                   const SizedBox(height: 4),
                   // Own layer: the 2Hz label change must not re-record
                   // the card, its shadow and the texts above it.
                   RepaintBoundary(
-                    child: Row(
-                      children: [
-                        _ProgressText(
-                          buildText: (s) => Text(
-                            _fmtMs(s.positionMs),
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: scheme.onSurfaceVariant),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          _ProgressText(
+                            buildText: (s) => Text(
+                              formatClock(s.positionMs),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
                           ),
-                        ),
-                        const Spacer(),
-                        _ProgressText(
-                          buildText: (s) => Text(
-                            '-${_fmtMs((s.durationMs - s.positionMs).clamp(0, 1 << 62))}',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          const Spacer(),
+                          _ProgressText(
+                            buildText: (s) => Text(
+                              '-${formatClock((s.durationMs - s.positionMs).clamp(0, 1 << 62))}',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SliderTheme(
-                    data: const SliderThemeData(
-                      trackHeight: 16,
-                      trackShape: GappedRoundedTrackShape(),
-                      thumbSize: WidgetStatePropertyAll(Size(4, 24)),
-                      padding: EdgeInsets
-                          .zero, // remove the built-in horizontal inset
-                      // Continuous sliders hide the indicator by default
-                      // (onlyForDiscrete); force it on for seek drags.
-                      showValueIndicator: ShowValueIndicator.onDrag,
-                      // ignore: deprecated_member_use
-                      year2023: false,
-                    ),
-                    child: SizedBox(
-                      height: 20,
-                      width: double.infinity,
-                      child: _ProgressSlider(
-                        state: state,
-                        track: track != null,
+                        ],
                       ),
                     ),
+                  ),
+                  // Snug 24dp slot: the slider compresses to it
+                  // (painting its 16dp track centered) while a
+                  // track loads the slot shows the squiggly linear
+                  // indicator instead — only 10dp tall, so the
+                  // symmetric padding ((24 - 10) / 2) centers it
+                  // exactly where the track sits, and swapping
+                  // between the two never moves the bar.
+                  SizedBox(
+                    height: 24,
+                    child: loading
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 7, horizontal: 16),
+                            child: M3ELinearWavyProgressIndicator(),
+                          )
+                        : Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
+                            child: SeekSlider(
+                              state: state,
+                              enabled: track != null,
+                              thumbHeight: 16,
+                            ),
+                          ),
                   ),
                 ],
               ),
@@ -270,12 +282,6 @@ class _PlayerBarState extends State<PlayerBar> {
       ),
     );
   }
-}
-
-String _fmtMs(int ms) {
-  if (ms <= 0) return '0:00';
-  final s = ms ~/ 1000;
-  return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
 }
 
 /// Text rebuilt on progress ticks only, reading the live player snapshot
@@ -291,55 +297,6 @@ class _ProgressText extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: state.progressTick,
       builder: (context, _, _) => buildText(state.player.state),
-    );
-  }
-}
-
-/// Seek slider rebuilt on progress ticks only (same reason as above),
-/// plus local drag state so the thumb follows the finger while seeking.
-/// The seek itself still fires on release so playback never stutters.
-class _ProgressSlider extends StatefulWidget {
-  const _ProgressSlider({required this.state, required this.track});
-
-  final AppState state;
-  final bool track;
-
-  @override
-  State<_ProgressSlider> createState() => _ProgressSliderState();
-}
-
-class _ProgressSliderState extends State<_ProgressSlider> {
-  double? _dragValue;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: widget.state.progressTick,
-      builder: (context, _, _) {
-        final s = widget.state.player.state;
-        final max = s.durationMs > 0 ? s.durationMs.toDouble() : 1.0;
-        final live = s.positionMs.toDouble().clamp(0, max);
-        return RepaintBoundary(
-          child: Slider(
-            value: (_dragValue ?? live).clamp(0, max).toDouble(),
-            min: 0,
-            max: max,
-            // A non-null label enables the value-indicator bubble; it is
-            // recomputed each build, so it follows the drag value.
-            label: _fmtMs((_dragValue ?? live).toInt()),
-            onChangeEnd: !widget.track
-                ? null
-                : (v) {
-                    final target = v.toInt();
-                    setState(() => _dragValue = null);
-                    widget.state.player.seekTo(target);
-                  },
-            onChanged: !widget.track
-                ? null
-                : (v) => setState(() => _dragValue = v),
-          ),
-        );
-      },
     );
   }
 }

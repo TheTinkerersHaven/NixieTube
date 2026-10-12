@@ -5,10 +5,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
+
+import 'mock_dio.dart';
 
 void main() {
   group('SysConfig', () {
@@ -21,11 +21,14 @@ void main() {
       expect(config.discordEnabled, isFalse);
       expect(config.discordAppIdOrDefault, defaultDiscordAppId);
       expect(config.reportPlayback, isFalse);
+      expect(config.lyricsSource, 'lrclib');
+      config.lyricsSource = 'ytmusic';
       config.set('discord.appId', '123');
       config.setBool('mpris.enabled', false);
       final again = SysConfig(configPath: '${dir.path}/config.properties');
       expect(again.discordAppIdOrDefault, '123');
       expect(again.mprisEnabled, isFalse);
+      expect(again.lyricsSource, 'ytmusic');
     });
 
     test('readProperties decodes \\uXXXX Java escapes', () async {
@@ -93,16 +96,16 @@ void main() {
           await Directory.systemTemp.createTemp('nt-oauth-test');
       addTearDown(() => dir.delete(recursive: true));
       var calls = 0;
-      final client = MockClient((req) async {
+      final client = mockDio((options) async {
         calls++;
-        return http.Response('{}', 200);
+        return (200, '{}');
       });
       final config = SysConfig(configPath: '${dir.path}/config.properties');
       config.set('google.clientId', 'id');
       config.set('google.clientSecret', 'secret');
       final oauth = GoogleOAuth(
         config: config,
-        httpClient: client,
+        dio: client,
         storePath: '${dir.path}/oauth.properties',
       );
       addTearDown(oauth.close);
@@ -122,20 +125,21 @@ void main() {
       final dir =
           await Directory.systemTemp.createTemp('nt-oauth-refresh');
       addTearDown(() => dir.delete(recursive: true));
-      final client = MockClient((req) async {
-        return http.Response(
-            jsonEncode({
-              'access_token': 'NEW',
-              'expires_in': 3600,
-            }),
-            200);
+      final client = mockDio((options) async {
+        return (
+          200,
+          jsonEncode({
+            'access_token': 'NEW',
+            'expires_in': 3600,
+          }),
+        );
       });
       final config = SysConfig(configPath: '${dir.path}/config.properties');
       config.set('google.clientId', 'id');
       config.set('google.clientSecret', 'secret');
       final oauth = GoogleOAuth(
         config: config,
-        httpClient: client,
+        dio: client,
         storePath: '${dir.path}/oauth.properties',
       );
       addTearDown(oauth.close);

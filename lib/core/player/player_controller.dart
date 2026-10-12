@@ -48,6 +48,14 @@ const seekSettleTimeout = Duration(seconds: 6);
 /// Engine positions within this window count as arrived after a seek.
 const seekArrivalToleranceMs = 1000;
 
+/// Engine positions at or below this count as a restarted track right
+/// after a fresh start (the real position is ~0 there).
+const freshPositionThresholdMs = 1500;
+
+/// Outer bound for the fresh-start hold: a frozen engine still wins
+/// eventually instead of pinning the slider at 0 forever.
+const freshPositionTimeout = Duration(seconds: 6);
+
 /// Serializable snapshot of queue/index/position persisted across restarts.
 class SessionData {
   const SessionData({
@@ -188,6 +196,16 @@ class PlayerController implements PlayerEngineListener {
   /// Time the pending seek was issued, for the 6s settle timeout.
   DateTime? _pendingSeekAt;
 
+  /// Fresh-start guard: right after a new track opens, the engine
+  /// briefly keeps reporting the previous track's position. While set,
+  /// the ticker holds 0 instead of publishing those stale reads
+  /// (which would teleport the slider to the old spot and sweep back).
+  /// Cleared once the engine demonstrably restarts (position back near
+  /// zero, or moving) or the timeout elapses.
+  bool _awaitingFreshPosition = false;
+  DateTime? _freshHoldStart;
+  int? _lastRawEnginePos;
+
   /// Recently played queue positions for shuffle previous(). Bounded;
   /// cleared whenever playback starts somewhere explicit.
   final List<int> _shuffleHistory = [];
@@ -204,6 +222,8 @@ class PlayerController implements PlayerEngineListener {
     if (_disposed) return;
     _disposed = true;
     _playToken++;
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
     _ticker?.cancel();
     _ticker = null;
     _prefetchGen++;
@@ -431,6 +451,146 @@ class PlayerController implements PlayerEngineListener {
     }
   }
 
+  /// Moves the queue entry from [oldIndex] to [newIndex], keeping the
+  /// current track playing from its live position. [newIndex] is the
+  /// final insertion index (the `ReorderableListView.onReorderItem`
+  /// convention, already adjusted for the removed item). Positions
+  /// shuffle history is keyed on break, so it is forgotten. No-op for
+  /// out-of-range or identity moves.
+  void moveQueue(int oldIndex, int newIndex) {
+    final s = _state;
+    final n = s.queue.length;
+    if (oldIndex < 0 || oldIndex >= n || newIndex < 0 || newIndex >= n) return;
+    if (oldIndex == newIndex) return;
+    final q = List<Track>.of(s.queue);
+    final moved = q.removeAt(oldIndex);
+    q.insert(newIndex, moved);
+    var idx = s.index;
+    if (oldIndex == s.index) {
+      idx = newIndex;
+    } else if (oldIndex < s.index && newIndex >= s.index) {
+      idx -= 1;
+    } else if (oldIndex > s.index && newIndex <= s.index) {
+      idx += 1;
+    }
+    _shuffleHistory.clear();
+    _update(s.copyWith(queue: q, index: idx));
+    refreshPrefetch();
+  }
+
+  /// Removes the queue entry at [index]. Removing the current track
+  /// starts whatever lands on its position; removing the last song
+  /// stops fully. Anything else keeps playback untouched.
+  /// Returns false for out-of-range indices.
+  bool removeAt(int index) {
+    final s = _state;
+    if (index < 0 || index >= s.queue.length) return false;
+    _shuffleHistory.clear();
+    if (index == s.index) {
+      final q = List<Track>.of(s.queue)..removeAt(index);
+      if (q.isEmpty) {
+        // Explicitly dismissing the playing song stops everything.
+        _playToken++;
+        _ticker?.cancel();
+        _ticker = null;
+        unawaited(_engine.stop());
+        _clearPrefetch();
+        _loadedVideoId = null;
+        _pendingSeekTargetMs = null;
+        _pendingSeekAt = null;
+        _awaitingFreshPosition = false;
+        _freshHoldStart = null;
+        _lastRawEnginePos = null;
+        _update(
+          s.copyWith(
+            current: () => null,
+            queue: const [],
+            index: -1,
+            playing: false,
+            stopped: true,
+            loading: false,
+            positionMs: 0,
+            error: () => null,
+          ),
+        );
+        try {
+          _sessionFile().deleteSync();
+        } catch (_) {}
+        return true;
+      }
+      final idx = index.clamp(0, q.length - 1);
+      _update(s.copyWith(queue: q, index: idx));
+      _startCurrent();
+      return true;
+    }
+    final q = List<Track>.of(s.queue)..removeAt(index);
+    final idx = index < s.index ? s.index - 1 : s.index;
+    _update(s.copyWith(queue: q, index: idx));
+    refreshPrefetch();
+    return true;
+  }
+
+  /// Inserts [track] at [index] (clamped), shifting the current index
+  /// when the insert lands at or before it. Powers remove-undo: with
+  /// nothing loaded, the restored song starts playing again.
+  void insertAt(int index, Track track) {
+    final s = _state;
+    final at = index.clamp(0, s.queue.length);
+    final q = List<Track>.of(s.queue)..insert(at, track);
+    if (s.current == null) {
+      _shuffleHistory.clear();
+      _update(s.copyWith(queue: q, index: 0));
+      _startCurrent();
+      return;
+    }
+    final idx = (s.index >= 0 && at <= s.index) ? s.index + 1 : s.index;
+    _shuffleHistory.clear();
+    _update(s.copyWith(queue: q, index: idx));
+    refreshPrefetch();
+  }
+
+  /// Discards everything except the current song, which keeps playing
+  /// from its live position. With nothing loaded, stops fully and
+  /// forgets the session like an explicit stop does.
+  void clearQueue() {
+    final s = _state;
+    final current = s.current;
+    if (current == null || s.index < 0 || s.index >= s.queue.length) {
+      _playToken++;
+      _ticker?.cancel();
+      _ticker = null;
+      unawaited(_engine.stop());
+      _clearPrefetch();
+      _loadedVideoId = null;
+      _pendingSeekTargetMs = null;
+      _pendingSeekAt = null;
+      _awaitingFreshPosition = false;
+      _freshHoldStart = null;
+      _lastRawEnginePos = null;
+      _shuffleHistory.clear();
+      _update(
+        _state.copyWith(
+          current: () => null,
+          queue: const [],
+          index: -1,
+          playing: false,
+          stopped: true,
+          loading: false,
+          positionMs: 0,
+          error: () => null,
+        ),
+      );
+      try {
+        _sessionFile().deleteSync();
+      } catch (_) {}
+      return;
+    }
+    _shuffleHistory.clear();
+    _update(s.copyWith(queue: [current], index: 0));
+    refreshPrefetch();
+    saveSession();
+  }
+
   /// Toggles between pause and resume; restarts when stopped or the engine
   /// holds another track.
   void togglePlayPause() {
@@ -464,8 +624,19 @@ class PlayerController implements PlayerEngineListener {
     _startTicker();
   }
 
+  /// Pauses playback, keeping the stream loaded. No-op when nothing
+  /// is playing.
+  void pause() {
+    final s = _state;
+    if (s.current == null || !s.playing || s.loading) return;
+    unawaited(_engine.pause());
+    _update(s.copyWith(playing: false));
+    saveSession();
+  }
+
   /// Stops playback, invalidates in-flight work, and deletes the session.
   void stop() {
+    _clearSleepTimer();
     _playToken++;
     _ticker?.cancel();
     _ticker = null;
@@ -474,6 +645,9 @@ class PlayerController implements PlayerEngineListener {
     _loadedVideoId = null;
     _pendingSeekTargetMs = null;
     _pendingSeekAt = null;
+    _awaitingFreshPosition = false;
+    _freshHoldStart = null;
+    _lastRawEnginePos = null;
     _update(
       _state.copyWith(
         playing: false,
@@ -486,6 +660,91 @@ class PlayerController implements PlayerEngineListener {
     try {
       _sessionFile().deleteSync();
     } catch (_) {}
+  }
+
+  /// One-shot sleep timer future; null unless a duration timer is
+  /// armed. End-of-track/queue modes need no timer — they hook the
+  /// natural finish path instead, so zero timers tick while armed.
+  Timer? _sleepTimer;
+
+  /// Arms a sleep timer that pauses after [duration]. Replaces any
+  /// armed timer. Ignored without a loaded track or for non-positive
+  /// durations.
+  void setSleepTimerDuration(Duration duration) {
+    _clearSleepTimer(notify: false);
+    if (duration <= Duration.zero || _state.current == null) return;
+    final endsAt =
+        DateTime.now().millisecondsSinceEpoch + duration.inMilliseconds;
+    _sleepTimer = Timer(duration, _onSleepTimerFired);
+    _update(
+      _state.copyWith(
+        sleepTimerMode: SleepTimerMode.duration,
+        sleepTimerEndsAtMs: () => endsAt,
+      ),
+    );
+  }
+
+  /// Arms a sleep timer that pauses at the next natural track finish
+  /// instead of advancing. Replaces any armed timer.
+  void setSleepTimerEndOfTrack() {
+    if (_state.current == null) return;
+    _clearSleepTimer(notify: false);
+    _update(
+      _state.copyWith(
+        sleepTimerMode: SleepTimerMode.endOfTrack,
+        sleepTimerEndsAtMs: () => null,
+      ),
+    );
+  }
+
+  /// Arms a sleep timer that pauses when the queue ends instead of
+  /// looping or continuing radio. In shuffle mode (which has no end)
+  /// it pauses at the next finish instead. Replaces any armed timer.
+  void setSleepTimerEndOfQueue() {
+    if (_state.current == null || _state.queue.isEmpty) return;
+    _clearSleepTimer(notify: false);
+    _update(
+      _state.copyWith(
+        sleepTimerMode: SleepTimerMode.endOfQueue,
+        sleepTimerEndsAtMs: () => null,
+      ),
+    );
+  }
+
+  /// Disarms any sleep timer.
+  void cancelSleepTimer() => _clearSleepTimer();
+
+  /// Cancels the timer; emits a state reset unless [notify] is false
+  /// (the setters emit their own update right after replacing).
+  void _clearSleepTimer({bool notify = true}) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    if (notify &&
+        (_state.sleepTimerMode != SleepTimerMode.off ||
+            _state.sleepTimerEndsAtMs != null)) {
+      _update(
+        _state.copyWith(
+          sleepTimerMode: SleepTimerMode.off,
+          sleepTimerEndsAtMs: () => null,
+        ),
+      );
+    }
+  }
+
+  void _onSleepTimerFired() {
+    _sleepTimer = null;
+    if (_disposed || _state.sleepTimerMode != SleepTimerMode.duration) return;
+    _clearSleepTimer();
+    pause();
+  }
+
+  /// True when the current track is the last one with a definite end
+  /// (ordered queue, at its tail). Shuffle never ends; repeat-all
+  /// still counts the pass end as the queue end.
+  bool _isQueueEnd() {
+    final s = _state;
+    if (s.shuffle || s.queue.isEmpty || s.index < 0) return false;
+    return s.index >= s.queue.length - 1;
   }
 
   /// Persists queue, index, position, and volume; skipped while stopped.
@@ -516,44 +775,56 @@ class PlayerController implements PlayerEngineListener {
 
   /// Restores the persisted session paused at its saved position without
   /// autoplaying. Streams are re-resolved on play, so no stale URLs are kept.
-  bool restoreSession() {
+  /// The file read, JSON parse and queue reconstruction run on a worker
+  /// isolate — a large saved queue can run to megabytes of JSON, which
+  /// must never stall app startup.
+  Future<bool> restoreSession() async {
+    final path = _sessionFile().path;
+    SessionData? data;
     try {
-      final f = _sessionFile();
-      if (!f.existsSync()) return false;
-      final data = SessionData.fromJson(
-        jsonDecode(f.readAsStringSync()) as Map<String, dynamic>,
-      );
-      if (data.queue.isEmpty ||
-          data.index < 0 ||
-          data.index >= data.queue.length) {
-        return false;
-      }
-      final track = data.queue[data.index];
-      final catalogMs = track.durationSec * 1000;
-      final pos = data.positionMs.clamp(
-        0,
-        catalogMs > 0 ? catalogMs : (1 << 62),
-      );
-      final volume = data.volume.clamp(0, 100);
-      unawaited(_engine.setVolume(volume));
-      _update(
-        _state.copyWith(
-          queue: List.of(data.queue),
-          index: data.index,
-          current: () => track,
-          playing: false,
-          stopped: false,
-          loading: false,
-          positionMs: pos,
-          durationMs: catalogMs,
-          volume: volume,
-          error: () => null,
-        ),
-      );
-      return true;
+      data = await Isolate.run<SessionData?>(() {
+        try {
+          final f = File(path);
+          if (!f.existsSync()) return null;
+          return SessionData.fromJson(
+            jsonDecode(f.readAsStringSync()) as Map<String, dynamic>,
+          );
+        } catch (_) {
+          return null;
+        }
+      });
     } catch (_) {
       return false;
     }
+    if (data == null) return false;
+    if (data.queue.isEmpty ||
+        data.index < 0 ||
+        data.index >= data.queue.length) {
+      return false;
+    }
+    final track = data.queue[data.index];
+    final catalogMs = track.durationSec * 1000;
+    final pos = data.positionMs.clamp(
+      0,
+      catalogMs > 0 ? catalogMs : (1 << 62),
+    );
+    final volume = data.volume.clamp(0, 100);
+    unawaited(_engine.setVolume(volume));
+    _update(
+      _state.copyWith(
+        queue: List.of(data.queue),
+        index: data.index,
+        current: () => track,
+        playing: false,
+        stopped: false,
+        loading: false,
+        positionMs: pos,
+        durationMs: catalogMs,
+        volume: volume,
+        error: () => null,
+      ),
+    );
+    return true;
   }
 
   File _sessionFile() {
@@ -793,6 +1064,33 @@ class PlayerController implements PlayerEngineListener {
     );
   }
 
+  /// Restamps every queued (and current) track found in [ratings] with a
+  /// single state emission. Returns how many tracks changed; emits
+  /// nothing when everything already matches, so batch stamp passes
+  /// never churn the player stream.
+  int updateTrackRatings(Map<String, RatingStatus> ratings) {
+    if (ratings.isEmpty) return 0;
+    var changed = 0;
+    Track update(Track track) {
+      final rating = ratings[track.videoId];
+      if (rating == null || rating == track.rating) return track;
+      changed++;
+      return track.copyWith(rating: rating);
+    }
+
+    final current = _state.current;
+    final queue = _state.queue.map(update).toList();
+    final fixedCurrent = current == null ? null : update(current);
+    if (changed == 0) return 0;
+    _update(
+      _state.copyWith(
+        current: () => fixedCurrent,
+        queue: queue,
+      ),
+    );
+    return changed;
+  }
+
   /// Updates like/dislike counters; -1 values never overwrite known counts.
   void updateTrackStats(String videoId, int likeCount, int dislikeCount) {
     if (likeCount < 0 && dislikeCount < 0) return;
@@ -936,7 +1234,7 @@ class PlayerController implements PlayerEngineListener {
     if (token == _playToken) _loadedVideoId = track.videoId;
     _update(_state.copyWith(loading: false, playing: true));
     updateTrackStats(track.videoId, stream.likes, stream.dislikes);
-    _startTicker();
+    _startTicker(freshStart: true);
     // Prefetch the next track while this one plays for gapless-ish handoff.
     if (token == _playToken) {
       final cur = _state;
@@ -1056,6 +1354,17 @@ class PlayerController implements PlayerEngineListener {
       return;
     }
     _lastFinishAt = now;
+    if (_state.sleepTimerMode == SleepTimerMode.endOfTrack) {
+      _clearSleepTimer();
+      pause();
+      return;
+    }
+    if (_state.sleepTimerMode == SleepTimerMode.endOfQueue &&
+        _isQueueEnd()) {
+      _clearSleepTimer();
+      pause();
+      return;
+    }
     next(manual: false);
   }
 
@@ -1086,10 +1395,35 @@ class PlayerController implements PlayerEngineListener {
     _startCurrent();
   }
 
+  /// Whether a raw engine [pos] read during a fresh-start hold is the
+  /// restarted track (clears the hold) rather than the old track's
+  /// ghost. True when back near zero, when moving between polls, or
+  /// when the hold times out so a wedged engine never pins 0 forever.
+  bool _isFreshEnginePosition(int pos) {
+    final start = _freshHoldStart;
+    final timedOut = start != null &&
+        DateTime.now().difference(start) >= freshPositionTimeout;
+    final restarted = pos <= freshPositionThresholdMs ||
+        (_lastRawEnginePos != null && pos != _lastRawEnginePos);
+    if (timedOut || restarted) {
+      _awaitingFreshPosition = false;
+      return true;
+    }
+    return false;
+  }
+
   /// Polls engine position/duration every 500ms, masking slow seeks and
-  /// persisting the session.
-  void _startTicker() {
+  /// persisting the session. With [freshStart], the first reads are
+  /// held at 0 until the engine demonstrably restarts (see
+  /// [_awaitingFreshPosition]): right after a new track opens, the
+  /// engine briefly keeps reporting the previous track's position.
+  void _startTicker({bool freshStart = false}) {
     _ticker?.cancel();
+    if (freshStart) {
+      _awaitingFreshPosition = true;
+      _freshHoldStart = DateTime.now();
+      _lastRawEnginePos = null;
+    }
     final token = _playToken;
     _ticker = Timer.periodic(tickerInterval, (_) {
       if (token != _playToken) {
@@ -1117,10 +1451,18 @@ class PlayerController implements PlayerEngineListener {
           _pendingSeekAt = null;
           pos = rawPos;
         }
+      } else if (_awaitingFreshPosition) {
+        // The new track starts at 0; anything large or frozen here is
+        // the old track's ghost. Publish 0 until the engine restarts
+        // (back near zero, or moving) or the hold times out.
+        pos = _isFreshEnginePosition(rawPos) ? rawPos : 0;
       } else {
         pos = rawPos;
       }
-      final len = _engine.durationMs();
+      _lastRawEnginePos = rawPos;
+      // A held (likely stale) duration is as wrong as a held position:
+      // keep the catalog duration until the engine restarts.
+      final len = _awaitingFreshPosition ? 0 : _engine.durationMs();
       final playing = _engine.isPlaying();
       if (token != _playToken) return;
       final cur = _state;

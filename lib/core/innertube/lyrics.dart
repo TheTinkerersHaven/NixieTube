@@ -4,9 +4,12 @@
 
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 
+import '../../sys/http_client.dart';
 import '../models/models.dart';
+import 'inner_tube.dart' show InnerTube;
+import 'json.dart';
 
 const _lrclibUa = 'NixieTube/1.0';
 
@@ -25,24 +28,24 @@ bool _retryable(int status) => status == 429 || status >= 500;
 /// Shared HTTP client, mirroring the Kotlin client's single
 /// lifetime client: keeps connections warm across lookups
 /// instead of handshaking per track change.
-final http.Client _sharedClient = http.Client();
+final Dio _sharedClient = newHttpClient();
 
 /// GETs [url] with a retry + backoff for transient failures
 /// (rate limits, 5xx, dropped connections). A 404 or a
 /// successful response is returned as-is.
-Future<http.Response> _getWithRetry(http.Client client, Uri url) async {
+Future<Response<String>> _getWithRetry(Dio client, Uri url) async {
   var delay = lrclibRetryDelay;
   for (var attempt = 0;; attempt++) {
-    http.Response? res;
+    Response<String>? res;
     try {
       res = await client
-          .get(url, headers: {'User-Agent': _lrclibUa})
+          .getUri<String>(url, options: Options(headers: {'User-Agent': _lrclibUa}))
           .timeout(const Duration(seconds: 30));
     } catch (_) {
       if (attempt >= _lrclibRetries) rethrow;
     }
     if (res != null &&
-        (!_retryable(res.statusCode) || attempt >= _lrclibRetries)) {
+        (!_retryable(res.statusCode ?? 0) || attempt >= _lrclibRetries)) {
       return res;
     }
     await Future<void>.delayed(delay);
@@ -52,7 +55,14 @@ Future<http.Response> _getWithRetry(http.Client client, Uri url) async {
 
 /// One LRCLIB lyric candidate with the metadata used to rank it.
 class _Candidate {
-  _Candidate(this.lines, this.album, this.title, this.artist, this.durationSec);
+  _Candidate(
+    this.lines,
+    this.album,
+    this.title,
+    this.artist,
+    this.durationSec, {
+    this.id,
+  });
 
   final List<LyricLine> lines;
   final String? album;
@@ -60,25 +70,46 @@ class _Candidate {
   final String artist;
   final int durationSec;
 
+  /// LRCLIB entry id, for de-duplicating merged search rounds.
+  final int? id;
+
   /// True when this candidate's title/artist match the requested track.
+  /// Titles match normalized-equal, or with every parenthesized /
+  /// bracketed segment stripped — either side may carry "(extended)"
+  /// or "[Remix]" credits the other lacks. Artists match when either
+  /// token set contains the other, so "UK Apache, SHY FX" still hits
+  /// a "UK Apache"-only entry and vice versa.
   bool matches(String requestedTitle, String requestedArtist) {
-    if (normalizeLrc(title) != normalizeLrc(requestedTitle)) return false;
+    final wantTitle = normalizeLrc(requestedTitle);
+    final gotTitle = normalizeLrc(title);
+    final wantBase = _baseTitle(requestedTitle);
+    final gotBase = _baseTitle(title);
+    final titleOk =
+        (wantTitle.isNotEmpty && wantTitle == gotTitle) ||
+        (wantBase.isNotEmpty && wantBase == gotBase);
+    if (!titleOk) return false;
     final requested = normalizeLrc(requestedArtist);
     final actual = normalizeLrc(artist);
     if (requested.isEmpty || actual.isEmpty) return requested.isEmpty;
-    if (requested == actual) return true;
-    final requestedTokens = requested
-        .split(' ')
-        .where((t) => t.isNotEmpty)
-        .toSet();
-    final actualTokens = actual.split(' ').where((t) => t.isNotEmpty).toSet();
-    return requestedTokens.isNotEmpty &&
-        actualTokens.containsAll(requestedTokens);
+    final requestedTokens = _tokens(requested);
+    final actualTokens = _tokens(actual);
+    if (actualTokens.containsAll(requestedTokens) ||
+        requestedTokens.containsAll(actualTokens)) {
+      return true;
+    }
+    // Punctuation-asymmetric credits ("ACDC" vs "AC/DC"): fall
+    // back to spaceless containment either way.
+    final rf = requested.replaceAll(' ', '');
+    final af = actual.replaceAll(' ', '');
+    return af.contains(rf) || rf.contains(af);
   }
 }
 
 /// Normalizes a title/artist for fuzzy matching by stripping features,
-/// editions and punctuation.
+/// editions and punctuation. Artist separators (slash, ampersand,
+/// comma, …) become spaces BEFORE punctuation is stripped, so
+/// "knock2/dillon" tokenizes as two artists instead of gluing
+/// into "knock2dillon".
 String normalizeLrc(String value) {
   var n = value.toLowerCase();
   n = n.replaceAll(
@@ -87,13 +118,45 @@ String normalizeLrc(String value) {
   );
   n = n.replaceAll(
     RegExp(
-      r'\s*[–—-]\s*(remaster|remix|edit|live|acoustic|sped up|slowed|mix|version|single|ep)\b.*$',
+      r'\s*[–—-]\s*(remaster|remix|edit|live|acoustic|sped up|slowed|mix|version|single|ep|extended)\b.*$',
     ),
     '',
   );
+  n = n.replaceAll(RegExp(r'[/&,;+×•|]+'), ' ');
   n = n.replaceAll(RegExp(r'[^a-z0-9 ]'), '');
   n = n.replaceAll(RegExp(r'\s+'), ' ');
   return n.trim();
+}
+
+/// Title with every parenthesized/bracketed segment removed, then
+/// normalized: "rampage (extended) (feat. DJ SS)" and "rampage"
+/// both become "rampage", tolerating edition leftovers on either
+/// side of the comparison.
+String _baseTitle(String title) => normalizeLrc(
+      title
+          .replaceAll(RegExp(r'\([^)]*\)'), '')
+          .replaceAll(RegExp(r'\[[^\]]*\]'), ''),
+    );
+
+/// Space-separated tokens of an already-normalized string.
+Set<String> _tokens(String normalized) =>
+    normalized.split(' ').where((t) => t.isNotEmpty).toSet();
+
+/// First artist chunk ("UK Apache, SHY FX" → "UK Apache") for the
+/// simplified fallback query.
+String _primaryArtist(String artist) {
+  final parts = artist.split(
+    RegExp(
+      r'\s*(?:,|&|;|/|[+×]|\bfeat\.?|\bft\.?|\bwith\b)\s*',
+      caseSensitive: false,
+    ),
+  );
+  final first = parts.firstWhere(
+    (p) => p.trim().isNotEmpty,
+    orElse: () => '',
+  );
+  final t = first.trim();
+  return t.isEmpty ? artist.trim() : t;
 }
 
 _Candidate? _candidateFrom(dynamic el) {
@@ -113,14 +176,20 @@ _Candidate? _candidateFrom(dynamic el) {
   final durationSec = duration is num
       ? duration.toInt()
       : int.tryParse((duration as String?) ?? '') ?? 0;
+  final id = el['id'];
   return _Candidate(
     _lyricsFrom(el),
     album.isEmpty ? null : album,
     title,
     artist,
     durationSec,
+    id: id is num ? id.toInt() : null,
   );
 }
+
+/// True when any line is timestamped.
+bool _hasSyncedLines(List<LyricLine> lines) =>
+    lines.any((line) => line.timeMs >= 0);
 
 /// Extracts lyric lines from one LRCLIB JSON object, preferring synced
 /// over plain lyrics.
@@ -170,9 +239,9 @@ Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
   String title,
   String album,
   int durationSec, {
-  http.Client? httpClient,
+  Dio? dio,
 }) async {
-  final client = httpClient ?? _sharedClient;
+  final client = dio ?? _sharedClient;
   try {
     Future<_Candidate?> tryGet(String url) async {
       try {
@@ -180,7 +249,7 @@ Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
           client,
           Uri.parse(url),
         );
-        return _candidateFrom(jsonDecode(res.body));
+        return _candidateFrom(jsonDecode(res.data ?? ''));
       } catch (_) {
         return null;
       }
@@ -195,32 +264,65 @@ Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
     final direct = await tryGet(
       'https://lrclib.net/api/get?${Uri(queryParameters: params).query}',
     );
-    final directAlbum = (direct != null && direct.matches(title, artist))
-        ? direct.album
-        : null;
-    if (direct != null &&
-        direct.matches(title, artist) &&
-        direct.lines.isNotEmpty) {
-      return (lines: direct.lines, album: direct.album);
+    // A synced direct hit wins immediately. A plain-only one is
+    // kept as fallback while search looks for a synced cut of
+    // the same song.
+    _Candidate? fallback;
+    String? fallbackAlbum;
+    if (direct != null && direct.matches(title, artist)) {
+      fallbackAlbum = direct.album;
+      if (direct.lines.isNotEmpty) {
+        if (_hasSyncedLines(direct.lines)) {
+          return (lines: direct.lines, album: direct.album);
+        }
+        fallback = direct;
+      }
     }
     final searchParams = {'track_name': title, 'artist_name': artist};
-    List<_Candidate> candidates = [];
-    try {
-      final res = await _getWithRetry(
-        client,
-        Uri.parse(
-          'https://lrclib.net/api/search?${Uri(queryParameters: searchParams).query}',
-        ),
-      );
-      final arr = jsonDecode(res.body);
-      if (arr is List) {
-        candidates = arr
-            .map(_candidateFrom)
-            .whereType<_Candidate>()
-            .where((c) => c.matches(title, artist))
-            .toList();
-      }
-    } catch (_) {}
+    // Search LRCLIB with progressively simpler queries: the verbatim
+    // YTM metadata first (exact-ish hits, cheapest when it lands),
+    // then the normalized title (YTM titles like "[Chase & Status
+    // Remix] (feat. IRAH)" otherwise match nothing server-side),
+    // then normalized title plus the primary artist (featured
+    // credits otherwise filter everything out). Stops at the first
+    // round yielding synced lyrics; queries identical to an
+    // earlier round are skipped.
+    final normTitle = normalizeLrc(title);
+    final queries = <Map<String, String>>[searchParams];
+    if (normTitle.isNotEmpty && normTitle != title.toLowerCase()) {
+      queries.add({'track_name': normTitle, 'artist_name': artist});
+    }
+    final primaryArtist = _primaryArtist(artist);
+    if (primaryArtist.isNotEmpty &&
+        primaryArtist.toLowerCase() != artist.trim().toLowerCase()) {
+      queries.add({
+        'track_name': normTitle.isNotEmpty ? normTitle : title,
+        'artist_name': primaryArtist,
+      });
+    }
+    final seenIds = <int>{};
+    final candidates = <_Candidate>[];
+    for (final params in queries) {
+      try {
+        final res = await _getWithRetry(
+          client,
+          Uri.parse(
+            'https://lrclib.net/api/search?${Uri(queryParameters: params).query}',
+          ),
+        );
+        final arr = jsonDecode(res.data ?? '');
+        if (arr is List) {
+          for (final el in arr) {
+            final c = _candidateFrom(el);
+            if (c == null || !c.matches(title, artist)) continue;
+            final id = c.id;
+            if (id != null && !seenIds.add(id)) continue;
+            candidates.add(c);
+          }
+        }
+      } catch (_) {}
+      if (candidates.any((c) => _hasSyncedLines(c.lines))) break;
+    }
     _Candidate? best;
     int bestScore0 = -1;
     int bestScore1 = -1;
@@ -241,15 +343,15 @@ Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
       }
     }
     if (best != null) {
-      return (lines: best.lines, album: best.album ?? directAlbum);
+      return (lines: best.lines, album: best.album ?? fallbackAlbum);
     }
-    return (lines: <LyricLine>[], album: directAlbum);
+    return (lines: fallback?.lines ?? <LyricLine>[], album: fallbackAlbum);
   } catch (_) {
     return (lines: <LyricLine>[], album: null);
   } finally {
     // Injected clients belong to the caller; the shared
     // one lives for the app's lifetime (like Kotlin's).
-    if (httpClient != null) client.close();
+    if (dio != null) client.close();
   }
 }
 
@@ -259,14 +361,159 @@ Future<List<LyricLine>> fetchLyrics(
   String title,
   String album,
   int durationSec, {
-  http.Client? httpClient,
+  Dio? dio,
 }) async {
   final res = await fetchLyricsAndAlbum(
     artist,
     title,
     album,
     durationSec,
-    httpClient: httpClient,
+    dio: dio,
   );
   return res.lines;
+}
+
+// ---------- YouTube Music lyrics ----------
+
+/// Lyrics provider options for the Now Playing lyrics tab.
+enum LyricsSource {
+  /// Community lyrics from LRCLIB, timestamped when the match is synced.
+  lrclib('LRCLIB'),
+
+  /// Official lyrics from YouTube Music (Musixmatch), untimed lines.
+  ytmusic('YT Music');
+
+  const LyricsSource(this.label);
+
+  /// Button-group label.
+  final String label;
+
+  /// Parses a persisted key, falling back to LRCLIB.
+  static LyricsSource fromKey(String key) {
+    for (final s in LyricsSource.values) {
+      if (s.name == key) return s;
+    }
+    return LyricsSource.lrclib;
+  }
+}
+
+const _ytmLyricsUa =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) '
+    'Gecko/20100101 Firefox/88.0';
+const _ytmLyricsOrigin = 'https://music.youtube.com';
+const _ytmLyricsBase = 'https://music.youtube.com/youtubei/v1';
+
+/// Page type of the watch-next Lyrics tab endpoint.
+const _ytmLyricsPageType = 'MUSIC_PAGE_TYPE_TRACK_LYRICS';
+
+/// Finds the lyrics-page browseId in a `next` response: the watch-next
+/// tab whose endpoint page type is track-lyrics. Null when YTM has no
+/// lyrics for the track (the tab is missing or marked unselectable).
+String? ytmLyricsBrowseId(dynamic res) {
+  final tabs = nav(res, const [
+    'contents',
+    'singleColumnMusicWatchNextResultsRenderer',
+    'tabbedRenderer',
+    'watchNextTabbedResultsRenderer',
+    'tabs',
+  ]);
+  if (tabs is! List) return null;
+  String? titled;
+  for (final t in tabs) {
+    if (t is! Map) continue;
+    final renderer = t['tabRenderer'];
+    if (renderer is! Map) continue;
+    final endpoint = renderer['endpoint'];
+    final browse = endpoint is Map ? endpoint['browseEndpoint'] : null;
+    if (browse is! Map) continue;
+    final id = browse['browseId'];
+    if (id is! String || id.isEmpty) continue;
+    if (renderer['unselectable'] == true) continue;
+    final pageType = nav(browse, const [
+      'browseEndpointContextSupportedConfigs',
+      'browseEndpointContextMusicConfig',
+      'pageType',
+    ]);
+    if (pageType == _ytmLyricsPageType) return id;
+    if (renderer['title'] == 'Lyrics') titled ??= id;
+  }
+  return titled;
+}
+
+/// Parses YT Music lyrics text from a lyrics-browse response: the
+/// `musicDescriptionShelfRenderer` runs concatenated, one untimed line
+/// per non-blank row. Empty when YTM has no lyrics (the unavailable
+/// message renders a different shelf).
+List<LyricLine> ytmLyricsFromJson(dynamic res) {
+  final sections = nav(res, const [
+    'contents',
+    'sectionListRenderer',
+    'contents',
+  ]);
+  if (sections is! List) return [];
+  final buf = StringBuffer();
+  for (final s in sections) {
+    if (s is! Map) continue;
+    final shelf = s['musicDescriptionShelfRenderer'];
+    if (shelf is! Map) continue;
+    final runs = nav(shelf, const ['description', 'runs']);
+    if (runs is! List) continue;
+    for (final r in runs) {
+      if (r is Map && r['text'] is String) buf.write(r['text']);
+    }
+  }
+  return buf
+      .toString()
+      .split('\n')
+      .where((line) => line.trim().isNotEmpty)
+      .map((line) => LyricLine(timeMs: -1, text: line.trim()))
+      .toList();
+}
+
+/// Fetches lyrics from YouTube Music for [videoId]: the `next`
+/// response's Lyrics tab gives a browseId whose page carries the
+/// provider's (untimed) lyrics text. Empty when YTM has none.
+Future<List<LyricLine>> fetchYtmLyrics(String videoId, {Dio? dio}) async {
+  final client = dio ?? _sharedClient;
+  try {
+    Future<String> post(String path, Map<String, dynamic> body) async {
+      final res = await client
+          .postUri<String>(
+            Uri.parse('$_ytmLyricsBase/$path?alt=json'),
+            data: jsonEncode({
+              'context': {
+                'client': {
+                  'clientName': 'WEB_REMIX',
+                  'clientVersion': InnerTube.clientVersion(),
+                  'hl': 'en',
+                },
+              },
+              ...body,
+            }),
+            options: Options(
+              headers: {
+                'User-Agent': _ytmLyricsUa,
+                'Origin': _ytmLyricsOrigin,
+                'Content-Type': 'application/json',
+              },
+            ),
+          )
+          .timeout(const Duration(seconds: 30));
+      return res.data ?? '';
+    }
+
+    final browseId = ytmLyricsBrowseId(
+      await decodeJsonResponse(await post('next', {'videoId': videoId})),
+    );
+    if (browseId == null) return [];
+    return ytmLyricsFromJson(
+      await decodeJsonResponse(await post('browse', {'browseId': browseId})),
+    );
+  } catch (_) {
+    return [];
+  } finally {
+    // Injected clients belong to the caller; the shared
+    // one lives for the app's lifetime (like Kotlin's).
+    if (dio != null) client.close();
+  }
 }
