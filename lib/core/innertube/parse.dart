@@ -100,11 +100,7 @@ RatingStatus parseLikeRating(dynamic item) {
     final toggle = nav(entry, const ['toggleMenuServiceItemRenderer']);
     if (toggle != null) {
       final toggled = str(
-        nav(toggle, const [
-          'toggledServiceEndpoint',
-          'likeEndpoint',
-          'status',
-        ]),
+        nav(toggle, const ['toggledServiceEndpoint', 'likeEndpoint', 'status']),
       );
       if (toggled == null || toggled.trim().isEmpty) {
         // No toggled endpoint (e.g. library/pin toggles): skip rather
@@ -129,9 +125,7 @@ RatingStatus parseLikeRating(dynamic item) {
         'status',
       ]),
     );
-    if (status != null &&
-        status.trim().isNotEmpty &&
-        plainStatus == null) {
+    if (status != null && status.trim().isNotEmpty && plainStatus == null) {
       plainStatus = RatingStatus.fromValue(status);
     }
   }
@@ -183,8 +177,15 @@ final _creditStripRe = RegExp(
   caseSensitive: false,
 );
 
+/// True when a title carries a featured-artist credit
+/// ("Song (feat. X)"). Used to prefer the credited variant when two
+/// sources disagree on a track title.
 bool hasFeaturedCredit(String value) => _featureCreditRe.hasMatch(value);
 
+/// Picks the better of two candidate titles for the same track:
+/// prefers the variant carrying a featured-artist credit, otherwise
+/// keeps the current one. Contributors disagree on "feat." placement,
+/// so this settles it in one place instead of per call site.
 String preferredTrackTitle(String current, String candidate) {
   final oldTitle = current.trim();
   final newTitle = candidate.trim();
@@ -202,6 +203,10 @@ String preferredTrackTitle(String current, String candidate) {
   return oldTitle;
 }
 
+/// True when a byline run is metadata, not a credit: bare joiners
+/// ("and", "feat"), type labels ("official", "lyric video"), years,
+/// durations and count strings ("1.2M views"). Byline runs mix real
+/// artist names with this noise, so every consumer filters first.
 bool isBylineNoise(String value) {
   final v = canonicalMetadata(value);
   const plain = {
@@ -284,6 +289,9 @@ final _releaseYearRe = RegExp(r'(?<!\d)(?:19|20)\d{2}(?!\d)');
 String detectReleaseYear(String text) =>
     _releaseYearRe.firstMatch(text)?.group(0) ?? '';
 
+/// Release kind from subtitle tokens ("Album • 2015", "Single").
+/// Token order matters: 'ep' beats 'album' so "EP • Album" reads as an
+/// EP. Null when no token matches — most artist bylines have none.
 ReleaseKind? detectReleaseKind(String text) {
   final tokens = text
       .toLowerCase()
@@ -299,6 +307,9 @@ ReleaseKind? detectReleaseKind(String text) {
   return null;
 }
 
+/// First watch video id linked from title runs, or null. Title and
+/// artist runs share one array, so this scans for the first run that
+/// actually carries a watch endpoint.
 String? firstVideoId(dynamic runs) {
   if (runs is! List) return null;
   for (final run in runs) {
@@ -1062,8 +1073,10 @@ List<SongItem> rankSearchSongs(
   int score(SongItem s) {
     final titleCanon = canonicalMetadata(s.track.title);
     if (titleCanon.isEmpty) return 0;
-    final titleTokens =
-        titleCanon.split(' ').where((t) => t.isNotEmpty).toSet();
+    final titleTokens = titleCanon
+        .split(' ')
+        .where((t) => t.isNotEmpty)
+        .toSet();
     final artistTokens = s.track.artists
         .expand((a) => canonicalMetadata(a.name).split(' '))
         .where((t) => t.isNotEmpty)

@@ -17,15 +17,14 @@ PlayerState _state({
   int positionMs = 1000,
   int durationMs = 200000,
   List<Track> queue = const [_t1, _t2],
-}) =>
-    PlayerState(
-      current: current ?? _t1,
-      playing: playing,
-      loading: loading,
-      positionMs: positionMs,
-      durationMs: durationMs,
-      queue: queue,
-    );
+}) => PlayerState(
+  current: current ?? _t1,
+  playing: playing,
+  loading: loading,
+  positionMs: positionMs,
+  durationMs: durationMs,
+  queue: queue,
+);
 
 void main() {
   group('isProgressOnlyUpdate', () {
@@ -35,9 +34,12 @@ void main() {
 
     test('position-only movement is progress-only', () {
       expect(
-          isProgressOnlyUpdate(
-              _state(positionMs: 1000), _state(positionMs: 1500)),
-          isTrue);
+        isProgressOnlyUpdate(
+          _state(positionMs: 1000),
+          _state(positionMs: 1500),
+        ),
+        isTrue,
+      );
     });
 
     test('transport changes are real', () {
@@ -45,42 +47,38 @@ void main() {
       expect(isProgressOnlyUpdate(base, _state(playing: false)), isFalse);
       expect(isProgressOnlyUpdate(base, _state(loading: true)), isFalse);
       expect(
-          isProgressOnlyUpdate(
-              base, _state(current: _t2, positionMs: 0)),
-          isFalse);
+        isProgressOnlyUpdate(base, _state(current: _t2, positionMs: 0)),
+        isFalse,
+      );
     });
 
     test('duration latch and seeks are real', () {
       final base = _state(durationMs: 0);
-      expect(
-          isProgressOnlyUpdate(base, _state(durationMs: 200000)),
-          isFalse);
+      expect(isProgressOnlyUpdate(base, _state(durationMs: 200000)), isFalse);
     });
 
     test('rating changes are real', () {
       final base = _state();
       final liked = _t1.copyWith(rating: RatingStatus.like);
       expect(
-          isProgressOnlyUpdate(
-              base, _state(current: liked, queue: [liked, _t2])),
-          isFalse);
+        isProgressOnlyUpdate(base, _state(current: liked, queue: [liked, _t2])),
+        isFalse,
+      );
     });
 
     test('queue edits are real', () {
       final base = _state();
       expect(
-          isProgressOnlyUpdate(
-              base, _state(queue: [_t1, _t2, _t1])),
-          isFalse);
+        isProgressOnlyUpdate(base, _state(queue: [_t1, _t2, _t1])),
+        isFalse,
+      );
     });
   });
 
   group('queueSignature', () {
     test('stable for equal queues, differs on edit', () {
-      expect(queueSignature([_t1, _t2]),
-          queueSignature([_t1, _t2]));
-      expect(queueSignature([_t1, _t2]),
-          isNot(queueSignature([_t1])));
+      expect(queueSignature([_t1, _t2]), queueSignature([_t1, _t2]));
+      expect(queueSignature([_t1, _t2]), isNot(queueSignature([_t1])));
     });
   });
 }

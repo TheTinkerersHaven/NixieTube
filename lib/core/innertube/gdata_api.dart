@@ -57,10 +57,8 @@ class _VideoMeta {
 
 /// Account Data API v3 client over an OAuth token provider.
 class GDataApi {
-  GDataApi({
-    required Future<String?> Function() tokenProvider,
-    Dio? dio,
-  }) : _dio = dio ?? newHttpClient() {
+  GDataApi({required Future<String?> Function() tokenProvider, Dio? dio})
+    : _dio = dio ?? newHttpClient() {
     _tokenProvider = tokenProvider;
   }
 
@@ -72,6 +70,7 @@ class GDataApi {
   /// add-to-playlist dialog forever).
   static const _gdataTimeout = Duration(seconds: 20);
 
+  /// Releases the HTTP client.
   void close() => _dio.close();
 
   /// True for 2xx statuses. Dio's status is nullable; a missing
@@ -408,10 +407,7 @@ class GDataApi {
       final end = (i + 50 < tracks.length) ? i + 50 : tracks.length;
       final ids = tracks.sublist(i, end).map((t) => t.videoId).join(',');
       try {
-        final res = await _get('videos', {
-          'part': 'contentDetails',
-          'id': ids,
-        });
+        final res = await _get('videos', {'part': 'contentDetails', 'id': ids});
         final byId = <String, int>{};
         for (final item in _itemsOf(res)) {
           if (item is! Map) continue;
@@ -915,7 +911,10 @@ class GDataApi {
             uri,
             data: jsonEncode({
               'snippet': {
-                'resourceId': {'kind': 'youtube#channel', 'channelId': channelId},
+                'resourceId': {
+                  'kind': 'youtube#channel',
+                  'channelId': channelId,
+                },
               },
             }),
             options: Options(

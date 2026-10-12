@@ -268,11 +268,7 @@ class _SearchScreenState extends State<SearchScreen> {
               Icons.history_rounded,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
-            title: Text(
-              q,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+            title: Text(q, maxLines: 1, overflow: TextOverflow.ellipsis),
             trailing: IconButton(
               icon: const Icon(Icons.close_rounded),
               tooltip: 'Remove',

@@ -41,9 +41,7 @@ class NowPlayingScreen extends StatelessWidget {
       (s) => s.coverPalette,
     );
     final full = context.select<AppState, bool>((s) => s.lyricsFull);
-    final signedIn = context.select<AppState, bool>(
-      (s) => s.account != null,
-    );
+    final signedIn = context.select<AppState, bool>((s) => s.account != null);
     final gdataAvailable = context.select<AppState, bool>(
       (s) => s.gdataAvailable,
     );
@@ -71,9 +69,7 @@ class NowPlayingScreen extends StatelessWidget {
         children: [
           // Own layer: the 600ms palette wash animation repaints here
           // without touching the cover and transport above it.
-          RepaintBoundary(
-            child: PaletteBackdrop(palette: palette),
-          ),
+          RepaintBoundary(child: PaletteBackdrop(palette: palette)),
           Padding(
             padding: const EdgeInsets.all(screenPadding),
             child: Column(
@@ -128,18 +124,16 @@ class NowPlayingScreen extends StatelessWidget {
                           M3EFabMenuItem(
                             icon: const Icon(Icons.playlist_add_rounded),
                             label: 'Add to playlist',
-                            onPressed: () =>
-                                context.read<AppState>().openPlaylistDialog(
-                                  track,
-                                ),
+                            onPressed: () => context
+                                .read<AppState>()
+                                .openPlaylistDialog(track),
                           ),
                         // Queue discard lives here in the title-bar
                         // menu rather than the tab, so it is one
                         // tap away without crowding Up next.
                         if (hasQueue)
                           M3EFabMenuItem(
-                            icon:
-                                const Icon(Icons.delete_sweep_outlined),
+                            icon: const Icon(Icons.delete_sweep_outlined),
                             label: 'Clear up next',
                             onPressed: () => _handleNowMenu(
                               context,
@@ -178,8 +172,9 @@ class NowPlayingScreen extends StatelessWidget {
                       // Snap to 32px steps: the size feeds the image
                       // cache key, so a continuous size would re-decode
                       // the cover on every pixel of a window-resize drag.
-                      final artSize =
-                          ((rawSize / 32).round() * 32).clamp(64, 360).toDouble();
+                      final artSize = ((rawSize / 32).round() * 32)
+                          .clamp(64, 360)
+                          .toDouble();
                       return Row(
                         children: [
                           Expanded(
@@ -237,11 +232,17 @@ class _TransportColumnState extends State<_TransportColumn> {
   Future<void> _rate(RatingStatus rating) async {
     if (_pendingRating != null) return;
     final videoId = widget.track.videoId;
-    setState(() { _pendingRating = rating; _pendingVideoId = videoId; });
+    setState(() {
+      _pendingRating = rating;
+      _pendingVideoId = videoId;
+    });
     final state = context.read<AppState>();
     await state.rateCurrentFeedback(context, rating);
     if (mounted && _pendingVideoId == videoId) {
-      setState(() { _pendingRating = null; _pendingVideoId = null; });
+      setState(() {
+        _pendingRating = null;
+        _pendingVideoId = null;
+      });
     }
   }
 
@@ -430,7 +431,8 @@ class _TransportColumnState extends State<_TransportColumn> {
               _SleepTimerButton(state: state),
               if (signedIn) ...[
                 IconButton(
-                  icon: _pendingRating == RatingStatus.like &&
+                  icon:
+                      _pendingRating == RatingStatus.like &&
                           _pendingVideoId == track.videoId
                       ? SizedBox(
                           width: 24,
@@ -451,13 +453,14 @@ class _TransportColumnState extends State<_TransportColumn> {
                   onPressed: _pendingRating != null
                       ? null
                       : () => _rate(
-                            track.rating == RatingStatus.like
-                                ? RatingStatus.indifferent
-                                : RatingStatus.like,
-                          ),
+                          track.rating == RatingStatus.like
+                              ? RatingStatus.indifferent
+                              : RatingStatus.like,
+                        ),
                 ),
                 IconButton(
-                  icon: _pendingRating == RatingStatus.dislike &&
+                  icon:
+                      _pendingRating == RatingStatus.dislike &&
                           _pendingVideoId == track.videoId
                       ? SizedBox(
                           width: 24,
@@ -478,10 +481,10 @@ class _TransportColumnState extends State<_TransportColumn> {
                   onPressed: _pendingRating != null
                       ? null
                       : () => _rate(
-                            track.rating == RatingStatus.dislike
-                                ? RatingStatus.indifferent
-                                : RatingStatus.dislike,
-                          ),
+                          track.rating == RatingStatus.dislike
+                              ? RatingStatus.indifferent
+                              : RatingStatus.dislike,
+                        ),
                 ),
               ],
             ],
@@ -701,8 +704,7 @@ class _UpNextTab extends StatelessWidget {
           // canvasColor; scoping a transparent canvas lets the translucent
           // fills and hairline borders show the cover tint through.
           child: Theme(
-            data: Theme.of(context)
-                .copyWith(canvasColor: Colors.transparent),
+            data: Theme.of(context).copyWith(canvasColor: Colors.transparent),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -714,12 +716,10 @@ class _UpNextTab extends StatelessWidget {
                       style: TextStyle(color: scheme.onSurface),
                     ),
                     backgroundColor: chipFill,
-                    selectedColor:
-                        scheme.primary.withValues(alpha: 0.28),
+                    selectedColor: scheme.primary.withValues(alpha: 0.28),
                     checkmarkColor: scheme.onSurface,
                     side: chipEdge,
-                    onSelected: (_) =>
-                        state.player.toggleAutoplay(),
+                    onSelected: (_) => state.player.toggleAutoplay(),
                   ),
                   const SizedBox(width: 8),
                   ActionChip(
@@ -737,29 +737,25 @@ class _UpNextTab extends StatelessWidget {
                     onPressed: currentId == null
                         ? null
                         : () async {
-                            final current =
-                                state.player.state.current;
+                            final current = state.player.state.current;
                             if (current == null) return;
-                            final res =
-                                await state.startRadio(current);
+                            final res = await state.startRadio(current);
                             if (!context.mounted) return;
                             // User moved on mid-fetch: stay silent.
-                            if (state.player.state.current
-                                    ?.videoId !=
+                            if (state.player.state.current?.videoId !=
                                 current.videoId) {
                               return;
                             }
-                            ScaffoldMessenger.of(context)
-                                .showSnackBar(
+                            ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
                                   !res.loaded
                                       ? 'Could not load the station — check '
-                                          'your connection.'
+                                            'your connection.'
                                       : res.queued > 0
-                                          ? 'Radio: ${res.queued} station '
-                                              'tracks queued.'
-                                          : 'Station already in queue.',
+                                      ? 'Radio: ${res.queued} station '
+                                            'tracks queued.'
+                                      : 'Station already in queue.',
                                 ),
                               ),
                             );
@@ -804,8 +800,7 @@ class _UpNextTab extends StatelessWidget {
                       child: GestureDetector(
                         // Desktop right-click menu; swipe and the
                         // drag handle keep working alongside it.
-                        onSecondaryTapDown: (details) =>
-                            _showQueueRowMenu(
+                        onSecondaryTapDown: (details) => _showQueueRowMenu(
                           context,
                           state,
                           details.globalPosition,
@@ -1015,9 +1010,7 @@ class _LyricsTabState extends State<_LyricsTab> {
             ),
           ],
         ),
-        Expanded(
-          child: _LyricsBody(ctrl: _ctrl, large: false),
-        ),
+        Expanded(child: _LyricsBody(ctrl: _ctrl, large: false)),
       ],
     );
   }
@@ -1115,9 +1108,7 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          RepaintBoundary(
-            child: PaletteBackdrop(palette: widget.palette),
-          ),
+          RepaintBoundary(child: PaletteBackdrop(palette: widget.palette)),
           Padding(
             padding: const EdgeInsets.fromLTRB(
               screenPadding,
@@ -1158,9 +1149,7 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Expanded(
-                  child: _LyricsBody(ctrl: _ctrl, large: true),
-                ),
+                Expanded(child: _LyricsBody(ctrl: _ctrl, large: true)),
                 const PlayerBar(tappable: false),
               ],
             ),
@@ -1304,8 +1293,6 @@ class _InfoTab extends StatelessWidget {
   }
 }
 
-
-
 String _fmtCount(int n) {
   if (n < 0) return '';
   if (n < 1000) return '$n';
@@ -1336,9 +1323,7 @@ class _SleepTimerButton extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final active = mode != SleepTimerMode.off;
     return IconButton(
-      icon: Icon(
-        active ? Icons.bedtime_rounded : Icons.bedtime_outlined,
-      ),
+      icon: Icon(active ? Icons.bedtime_rounded : Icons.bedtime_outlined),
       tooltip: active ? 'Sleep timer on' : 'Sleep timer',
       color: active ? scheme.primary : scheme.onSurface,
       onPressed: () => _showSleepTimerSheet(context),
@@ -1351,14 +1336,14 @@ class _SleepTimerButton extends StatelessWidget {
 Future<void> _showSleepTimerSheet(BuildContext context) async {
   final mode = context.read<AppState>().playerState.sleepTimerMode;
   String label(_SleepChoice c) => switch (c) {
-        _SleepChoice.off => 'Cancel timer',
-        _SleepChoice.m15 => 'In 15 minutes',
-        _SleepChoice.m30 => 'In 30 minutes',
-        _SleepChoice.m45 => 'In 45 minutes',
-        _SleepChoice.m60 => 'In 1 hour',
-        _SleepChoice.endOfTrack => 'End of track',
-        _SleepChoice.endOfQueue => 'End of queue',
-      };
+    _SleepChoice.off => 'Cancel timer',
+    _SleepChoice.m15 => 'In 15 minutes',
+    _SleepChoice.m30 => 'In 30 minutes',
+    _SleepChoice.m45 => 'In 45 minutes',
+    _SleepChoice.m60 => 'In 1 hour',
+    _SleepChoice.endOfTrack => 'End of track',
+    _SleepChoice.endOfQueue => 'End of queue',
+  };
   final choices = [
     if (mode != SleepTimerMode.off) _SleepChoice.off,
     _SleepChoice.m15,

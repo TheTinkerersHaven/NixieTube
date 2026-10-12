@@ -45,7 +45,8 @@ class _EmptyTube extends InnerTube {
   Future<Map<String, List<ShelfItem>>> search(String query) async => {};
 }
 
-Future<AppState> _boot() async {  final dir = Directory.systemTemp.createTempSync('nt-searchhist-test');
+Future<AppState> _boot() async {
+  final dir = Directory.systemTemp.createTempSync('nt-searchhist-test');
   addTearDown(() => dir.deleteSync(recursive: true));
   final tube = _EmptyTube();
   addTearDown(tube.close);
@@ -83,43 +84,52 @@ Object? _needsIsolation() => _isolated
     : 'Set XDG_CONFIG_HOME to a temp dir to run config-persistence tests';
 
 void main() {
-  test('searchFor records trimmed queries newest-first',
-      skip: _needsIsolation(), () async {
-    final state = await _boot();
-    await state.searchFor('  Kid Again  ');
-    await state.searchFor('ivycomb');
-    expect(state.searchHistory, ['ivycomb', 'Kid Again']);
-    // Re-searching bumps to the front without duplicating.
-    await state.searchFor('kid again');
-    expect(state.searchHistory, ['kid again', 'ivycomb']);
-  });
+  test(
+    'searchFor records trimmed queries newest-first',
+    skip: _needsIsolation(),
+    () async {
+      final state = await _boot();
+      await state.searchFor('  Kid Again  ');
+      await state.searchFor('ivycomb');
+      expect(state.searchHistory, ['ivycomb', 'Kid Again']);
+      // Re-searching bumps to the front without duplicating.
+      await state.searchFor('kid again');
+      expect(state.searchHistory, ['kid again', 'ivycomb']);
+    },
+  );
 
-  test('removeSearchHistory drops one entry and persists',
-      skip: _needsIsolation(), () async {
-    final state = await _boot();
-    await state.searchFor('aaa');
-    await state.searchFor('bbb');
-    await state.searchFor('ccc');
-    state.removeSearchHistory('bbb');
-    expect(state.searchHistory, ['ccc', 'aaa']);
-    // Unknown entries are a no-op (and notify nothing observable).
-    state.removeSearchHistory('zzz');
-    expect(state.searchHistory, ['ccc', 'aaa']);
-    // A fresh state reads back the persisted remainder on startup.
-    final reread = await _boot();
-    await reread.loadAuth();
-    expect(reread.searchHistory, ['ccc', 'aaa']);
-  });
+  test(
+    'removeSearchHistory drops one entry and persists',
+    skip: _needsIsolation(),
+    () async {
+      final state = await _boot();
+      await state.searchFor('aaa');
+      await state.searchFor('bbb');
+      await state.searchFor('ccc');
+      state.removeSearchHistory('bbb');
+      expect(state.searchHistory, ['ccc', 'aaa']);
+      // Unknown entries are a no-op (and notify nothing observable).
+      state.removeSearchHistory('zzz');
+      expect(state.searchHistory, ['ccc', 'aaa']);
+      // A fresh state reads back the persisted remainder on startup.
+      final reread = await _boot();
+      await reread.loadAuth();
+      expect(reread.searchHistory, ['ccc', 'aaa']);
+    },
+  );
 
-  test('clearSearchHistory empties memory and disk',
-      skip: _needsIsolation(), () async {
-    final state = await _boot();
-    await state.searchFor('aaa');
-    expect(state.searchHistory, isNotEmpty);
-    state.clearSearchHistory();
-    expect(state.searchHistory, isEmpty);
-    final reread = await _boot();
-    await reread.loadAuth();
-    expect(reread.searchHistory, isEmpty);
-  });
+  test(
+    'clearSearchHistory empties memory and disk',
+    skip: _needsIsolation(),
+    () async {
+      final state = await _boot();
+      await state.searchFor('aaa');
+      expect(state.searchHistory, isNotEmpty);
+      state.clearSearchHistory();
+      expect(state.searchHistory, isEmpty);
+      final reread = await _boot();
+      await reread.loadAuth();
+      expect(reread.searchHistory, isEmpty);
+    },
+  );
 }

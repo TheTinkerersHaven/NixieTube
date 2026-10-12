@@ -245,7 +245,8 @@ class LibraryScreen extends StatelessWidget {
     AppState state,
     OpenPlaylist opened,
     String action,
-  ) async {    if (action == 'rename') {
+  ) async {
+    if (action == 'rename') {
       final controller = TextEditingController(text: opened.playlist.title);
       final newName = await showDialog<String>(
         context: context,
@@ -411,8 +412,8 @@ class LibraryScreen extends StatelessWidget {
               a.thumbnails.isEmpty
                   ? null
                   : a.thumbnails
-                      .reduce((x, y) => x.width >= y.width ? x : y)
-                      .url,
+                        .reduce((x, y) => x.width >= y.width ? x : y)
+                        .url,
               size: 48,
               circular: true,
               iconSize: 24,

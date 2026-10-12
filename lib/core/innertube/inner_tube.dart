@@ -92,10 +92,10 @@ class InnerTube {
     this.auth = const AuthSession.anonymous(),
     Dio? dio,
     String? squareCoversPath,
-  })  : _dio = dio ?? newHttpClient(),
-        _squareCoversFile = squareCoversPath == null
-            ? null
-            : File(squareCoversPath);
+  }) : _dio = dio ?? newHttpClient(),
+       _squareCoversFile = squareCoversPath == null
+           ? null
+           : File(squareCoversPath);
 
   /// Current auth session used (with fallbacks) for requests.
   AuthSession auth;
@@ -270,10 +270,7 @@ class InnerTube {
   /// letterboxed. Transport blips (not error bodies or empty parses,
   /// which are deterministic) retry with backoff instead of
   /// condemning the track on one hiccup.
-  Future<String?> _resolveSquareCover(
-    String videoId, {
-    String? albumId,
-  }) async {
+  Future<String?> _resolveSquareCover(String videoId, {String? albumId}) async {
     if (albumId != null && albumId.isNotEmpty) {
       final detail = await _fetchWithRetry(() => _albumForCover(albumId));
       if (detail != null) {
@@ -306,10 +303,7 @@ class InnerTube {
   /// throws are deterministic, and retrying them would just burn
   /// timers (which also keeps widget tests clean — no stray waits).
   Future<T?> _fetchWithRetry<T>(Future<T?> Function() fetch) async {
-    const delays = [
-      Duration(milliseconds: 300),
-      Duration(milliseconds: 700),
-    ];
+    const delays = [Duration(milliseconds: 300), Duration(milliseconds: 700)];
     final gen = _coverRetryGen;
     for (var attempt = 0; ; attempt++) {
       try {
@@ -701,22 +695,21 @@ class InnerTube {
       // song matches both the title and an artist word, pull the
       // queried artist's top songs (one extra fetch) and merge any
       // title match in.
-      final queryTokens =
-          queryCanon.split(' ').where((t) => t.isNotEmpty).toSet();
-      Set<String> wordSet(String v) => canonicalMetadata(v)
+      final queryTokens = queryCanon
           .split(' ')
           .where((t) => t.isNotEmpty)
           .toSet();
+      Set<String> wordSet(String v) =>
+          canonicalMetadata(v).split(' ').where((t) => t.isNotEmpty).toSet();
       bool namesTitleAndArtist(SongItem s) {
         final titleWords = wordSet(s.track.title);
         if (titleWords.isEmpty || !titleWords.every(queryTokens.contains)) {
           return false;
         }
-        final artistWords = s.track.artists.expand(
-          (a) => wordSet(a.name),
-        );
+        final artistWords = s.track.artists.expand((a) => wordSet(a.name));
         return artistWords.any(queryTokens.contains);
       }
+
       if (songs.values.every((s) => !namesTitleAndArtist(s))) {
         final targets = artists.values
             .where((a) {
@@ -737,6 +730,7 @@ class InnerTube {
                 titleWords.every(queryTokens.contains) &&
                 !songs.containsKey(t.videoId);
           }
+
           var hits = detail.topSongs.where(titleMatches).toList();
           // Top songs only skim the catalog: older cuts (e.g. a "Kid
           // Again" buried past the latest singles) surface through the

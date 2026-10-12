@@ -123,7 +123,11 @@ Future<T?> showSpringMenu<T>({
 }
 
 class _SpringMenuBody<T> extends StatefulWidget {
-  const _SpringMenuBody({super.key, required this.items, required this.onSelect});
+  const _SpringMenuBody({
+    super.key,
+    required this.items,
+    required this.onSelect,
+  });
 
   final List<SpringMenuItem<T>> items;
   final ValueChanged<T> onSelect;
@@ -255,10 +259,10 @@ class _SpringMenuBodyState<T> extends State<_SpringMenuBody<T>>
                 Text(
                   item.label,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: cs.onSurface,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0.15,
-                      ),
+                    color: cs.onSurface,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.15,
+                  ),
                 ),
               ],
             ),

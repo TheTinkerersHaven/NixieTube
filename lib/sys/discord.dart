@@ -17,12 +17,14 @@ import 'sys_config.dart' show defaultDiscordAppId;
 /// What Discord shows as the activity name mode (persisted; see note above).
 enum DiscordStatusText { app, song, artists }
 
+/// Parses a persisted status-text key, defaulting to app mode.
 DiscordStatusText discordStatusTextFromKey(String key) => switch (key) {
   'song' => DiscordStatusText.song,
   'artists' => DiscordStatusText.artists,
   _ => DiscordStatusText.app,
 };
 
+/// Serializes a status-text mode back to its config key.
 String discordStatusTextKey(DiscordStatusText mode) => switch (mode) {
   DiscordStatusText.app => 'app',
   DiscordStatusText.song => 'song',
@@ -105,6 +107,8 @@ class DiscordPresence extends ChangeNotifier {
     }
   }
 
+  /// Swaps the API application, dropping the live session: the next
+  /// update reconnects under the new id.
   void setAppId(String value) {
     if (_appId == value) return;
     _appId = value;
@@ -114,6 +118,7 @@ class DiscordPresence extends ChangeNotifier {
     }
   }
 
+  /// Toggles presence, tearing down the IPC connection when off.
   void setEnabled(bool value) {
     if (_enabled == value) return;
     _enabled = value;
@@ -126,11 +131,14 @@ class DiscordPresence extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Switches the activity-name mode (persisted by the caller).
   void setStatusText(DiscordStatusText value) {
     _statusText = value;
     notifyListeners();
   }
 
+  /// Forgets the last pushed state so the next update re-sends even
+  /// when nothing changed (used after reconnects).
   void invalidate() {
     _dedup = '';
   }

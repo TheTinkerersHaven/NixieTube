@@ -110,12 +110,12 @@ class _FakeRadioTube extends InnerTube {
 }
 
 Track _track(String id) => Track(
-      videoId: id,
-      title: 'Title $id',
-      artists: [ArtistRef('Artist $id')],
-      durationSec: 200,
-      radioPlaylistId: 'RDAMVM$id',
-    );
+  videoId: id,
+  title: 'Title $id',
+  artists: [ArtistRef('Artist $id')],
+  durationSec: 200,
+  radioPlaylistId: 'RDAMVM$id',
+);
 
 ({AppState state, _FakeEngine engine, _FakeRadioTube tube}) _app({
   bool playback = false,
@@ -167,10 +167,7 @@ void main() {
       expect(env.engine.playedUrls, hasLength(1));
 
       player.appendRadio([_track('a'), _track('b'), _track('c')]);
-      expect(
-        player.state.queue.map((t) => t.videoId),
-        ['a', 'b', 'c'],
-      );
+      expect(player.state.queue.map((t) => t.videoId), ['a', 'b', 'c']);
       // The engine was not asked to play again: no restart.
       expect(env.engine.playedUrls, hasLength(1));
       expect(player.state.current?.videoId, 'a');
@@ -191,17 +188,17 @@ void main() {
   });
 
   group('playSingle', () {
-    test('plays at once, then lands the radio mix without restart',
-        () async {
+    test('plays at once, then lands the radio mix without restart', () async {
       final env = _app(playback: true);
       env.tube.mixes['a'] = [_track('a'), _track('b'), _track('c')];
 
       await env.state.playSingle(_track('a'));
       expect(env.engine.playedUrls, ['https://x/a']);
-      expect(
-        env.state.player.state.queue.map((t) => t.videoId),
-        ['a', 'b', 'c'],
-      );
+      expect(env.state.player.state.queue.map((t) => t.videoId), [
+        'a',
+        'b',
+        'c',
+      ]);
       // One engine play for the single: the mix arrived via append.
       expect(env.engine.playedUrls, hasLength(1));
     });
@@ -216,10 +213,7 @@ void main() {
       gate.complete([_track('x')]);
       await pending.timeout(const Duration(seconds: 5));
       await _settle();
-      expect(
-        env.state.player.state.queue.map((t) => t.videoId),
-        ['z'],
-      );
+      expect(env.state.player.state.queue.map((t) => t.videoId), ['z']);
     });
 
     test('playSongs with one track starts its radio', () async {
@@ -229,10 +223,7 @@ void main() {
       env.state.playSongs([_track('a')], 0);
       await _settle();
       await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(
-        env.state.player.state.queue.map((t) => t.videoId),
-        ['a', 'b'],
-      );
+      expect(env.state.player.state.queue.map((t) => t.videoId), ['a', 'b']);
       expect(env.engine.playedUrls, hasLength(1));
     });
 
@@ -242,10 +233,7 @@ void main() {
 
       env.state.playSongs([_track('a'), _track('b')], 1);
       await _settle();
-      expect(
-        env.state.player.state.queue.map((t) => t.videoId),
-        ['a', 'b'],
-      );
+      expect(env.state.player.state.queue.map((t) => t.videoId), ['a', 'b']);
       expect(env.state.player.state.current?.videoId, 'b');
     });
   });
@@ -260,10 +248,7 @@ void main() {
       env.tube.mixes['a'] = [_track('a'), _track('b')];
 
       await env.state.startRadio(player.state.current!);
-      expect(
-        player.state.queue.map((t) => t.videoId),
-        ['a', 'b'],
-      );
+      expect(player.state.queue.map((t) => t.videoId), ['a', 'b']);
       // Still exactly one engine play: the song never restarted.
       expect(env.engine.playedUrls, hasLength(1));
       expect(player.state.current?.videoId, 'a');
@@ -284,42 +269,47 @@ void main() {
       // measured against the played head, not the replaced tail).
       final repeat = await env.state.startRadio(player.state.current!);
       expect(repeat, (queued: 2, loaded: true));
-      expect(
-        player.state.queue.map((t) => t.videoId),
-        ['a', 'b', 'c'],
-      );
+      expect(player.state.queue.map((t) => t.videoId), ['a', 'b', 'c']);
       // Fresh seed: seed filtered out of its own mix.
       env.tube.mixes['b'] = [_track('b'), _track('c')];
       final fresh = await env.state.startRadio(_track('b'));
       expect(fresh, (queued: 1, loaded: true));
     });
 
-    test('same-track radio replaces Up next, keeps history and position',
-        () async {
-      final env = _app(playback: true);
-      final player = env.state.player;
-      player.playTracks(
-          [_track('prev'), _track('a'), _track('old1'), _track('old2')]);
-      player.playAt(1);
-      await _settle();
-      await _settle();
-      expect(player.state.current?.videoId, 'a');
-      final playsBefore = env.engine.playedUrls.length;
-      env.tube.mixes['a'] = [_track('a'), _track('m1'), _track('m2')];
+    test(
+      'same-track radio replaces Up next, keeps history and position',
+      () async {
+        final env = _app(playback: true);
+        final player = env.state.player;
+        player.playTracks([
+          _track('prev'),
+          _track('a'),
+          _track('old1'),
+          _track('old2'),
+        ]);
+        player.playAt(1);
+        await _settle();
+        await _settle();
+        expect(player.state.current?.videoId, 'a');
+        final playsBefore = env.engine.playedUrls.length;
+        env.tube.mixes['a'] = [_track('a'), _track('m1'), _track('m2')];
 
-      final res = await env.state.startRadio(player.state.current!);
-      expect(res, (queued: 2, loaded: true));
-      // Played history stays; the stale tail is gone.
-      expect(
-        player.state.queue.map((t) => t.videoId),
-        ['prev', 'a', 'm1', 'm2'],
-      );
-      expect(player.state.index, 1);
-      expect(player.state.current?.videoId, 'a');
-      // No engine replay: the song never restarted.
-      expect(env.engine.playedUrls.length, playsBefore);
-      expect(player.state.loading, isFalse);
-    });
+        final res = await env.state.startRadio(player.state.current!);
+        expect(res, (queued: 2, loaded: true));
+        // Played history stays; the stale tail is gone.
+        expect(player.state.queue.map((t) => t.videoId), [
+          'prev',
+          'a',
+          'm1',
+          'm2',
+        ]);
+        expect(player.state.index, 1);
+        expect(player.state.current?.videoId, 'a');
+        // No engine replay: the song never restarted.
+        expect(env.engine.playedUrls.length, playsBefore);
+        expect(player.state.loading, isFalse);
+      },
+    );
 
     test('different seed starts a fresh station', () async {
       final env = _app(playback: true);
@@ -330,10 +320,7 @@ void main() {
 
       await env.state.startRadio(_track('b'));
       await _settle();
-      expect(
-        player.state.queue.map((t) => t.videoId),
-        ['b', 'c'],
-      );
+      expect(player.state.queue.map((t) => t.videoId), ['b', 'c']);
       expect(player.state.current?.videoId, 'b');
       expect(env.engine.playedUrls.last, 'https://x/b');
     });
@@ -347,7 +334,7 @@ void main() {
         // First load hangs; the retry answers at once.
         if (env.tube.homeCalls == 1) return gate.future;
         return Future.value([
-          Shelf('Fresh', [SongItem(_track('f'))])
+          Shelf('Fresh', [SongItem(_track('f'))]),
         ]);
       };
 

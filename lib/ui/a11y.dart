@@ -21,9 +21,7 @@ import 'app_state.dart';
 bool _reduced(BuildContext context, bool listen) {
   try {
     if (listen) {
-      return context.select<AppState, bool>(
-        (s) => s.config.reducedMotion,
-      );
+      return context.select<AppState, bool>((s) => s.config.reducedMotion);
     }
     return Provider.of<AppState>(context, listen: false).config.reducedMotion;
   } on ProviderNotFoundException {
@@ -47,9 +45,7 @@ Duration readMotionDuration(BuildContext context, Duration d) =>
 /// scope (standalone widget tests).
 bool highContrastOf(BuildContext context) {
   try {
-    return context.select<AppState, bool>(
-      (s) => s.config.highContrast,
-    );
+    return context.select<AppState, bool>((s) => s.config.highContrast);
   } on ProviderNotFoundException {
     return false;
   }

@@ -7,17 +7,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/innertube/parse.dart';
 import 'package:nixietube/core/models/models.dart';
 
-Map<String, dynamic> _run(String text,
-    {String? videoId, String? browseId}) {
+Map<String, dynamic> _run(String text, {String? videoId, String? browseId}) {
   final run = <String, dynamic>{'text': text};
   if (videoId != null) {
     run['navigationEndpoint'] = {
-      'watchEndpoint': {'videoId': videoId}
+      'watchEndpoint': {'videoId': videoId},
     };
   }
   if (browseId != null) {
     run['navigationEndpoint'] = {
-      'browseEndpoint': {'browseId': browseId}
+      'browseEndpoint': {'browseId': browseId},
     };
   }
   return run;
@@ -26,8 +25,8 @@ Map<String, dynamic> _run(String text,
 Map<String, dynamic> _col(List<Map<String, dynamic>> runs) {
   return {
     'musicResponsiveListItemFlexColumnRenderer': {
-      'text': {'runs': runs}
-    }
+      'text': {'runs': runs},
+    },
   };
 }
 
@@ -48,7 +47,7 @@ void main() {
           ]),
         ],
         'thumbnails': [
-          {'url': 'https://x/a.jpg', 'width': 60, 'height': 60}
+          {'url': 'https://x/a.jpg', 'width': 60, 'height': 60},
         ],
       };
       final t = parseListItem(li)!;
@@ -69,11 +68,7 @@ void main() {
       final li = {
         'flexColumns': [
           _col([_run('Track', videoId: 'V1')]),
-          _col([
-            _run('Lone Singer'),
-            _run(' • '),
-            _run('Great Record'),
-          ]),
+          _col([_run('Lone Singer'), _run(' • '), _run('Great Record')]),
         ],
       };
       final t = parseListItem(li)!;
@@ -95,20 +90,20 @@ void main() {
     test('byline with linked artist and release', () {
       final item = {
         'title': {
-          'runs': [_run('Panel Song')]
+          'runs': [_run('Panel Song')],
         },
         'navigationEndpoint': {
-          'watchEndpoint': {'videoId': 'PV1'}
+          'watchEndpoint': {'videoId': 'PV1'},
         },
         'longBylineText': {
           'runs': [
             _run('Panel Artist', browseId: 'UC999'),
             _run(' • '),
             _run('Panel Album', browseId: 'MPRE999'),
-          ]
+          ],
         },
         'lengthText': {
-          'runs': [_run('4:01')]
+          'runs': [_run('4:01')],
         },
       };
       final t = parsePanelVideo(item)!;
@@ -122,17 +117,13 @@ void main() {
     test('plain byline infers artist then album', () {
       final item = {
         'title': {
-          'runs': [_run('Other Song')]
+          'runs': [_run('Other Song')],
         },
         'navigationEndpoint': {
-          'watchEndpoint': {'videoId': 'PV2'}
+          'watchEndpoint': {'videoId': 'PV2'},
         },
         'shortBylineText': {
-          'runs': [
-            _run('Mystery Act'),
-            _run(' • '),
-            _run('Hidden Gem'),
-          ]
+          'runs': [_run('Mystery Act'), _run(' • '), _run('Hidden Gem')],
         },
       };
       final t = parsePanelVideo(item)!;
@@ -148,39 +139,39 @@ void main() {
           'header': {
             'musicCarouselShelfBasicHeaderRenderer': {
               'title': {
-                'runs': [_run('Listen again')]
-              }
-            }
+                'runs': [_run('Listen again')],
+              },
+            },
           },
           'contents': [
             {
               'musicTwoRowItemRenderer': {
                 'title': {
-                  'runs': [_run('Quick Song')]
+                  'runs': [_run('Quick Song')],
                 },
                 'subtitle': {
-                  'runs': [_run('Quick Artist')]
+                  'runs': [_run('Quick Artist')],
                 },
                 'navigationEndpoint': {
-                  'watchEndpoint': {'videoId': 'Q1'}
+                  'watchEndpoint': {'videoId': 'Q1'},
                 },
-              }
+              },
             },
             {
               'musicTwoRowItemRenderer': {
                 'title': {
-                  'runs': [_run('Cool Album')]
+                  'runs': [_run('Cool Album')],
                 },
                 'subtitle': {
-                  'runs': [_run('Album • 2023')]
+                  'runs': [_run('Album • 2023')],
                 },
                 'navigationEndpoint': {
-                  'browseEndpoint': {'browseId': 'MPRE1'}
+                  'browseEndpoint': {'browseId': 'MPRE1'},
                 },
-              }
+              },
             },
           ],
-        }
+        },
       };
       final s = parseShelf(shelf)!;
       expect(s.title, 'Listen again');
@@ -199,30 +190,30 @@ void main() {
           'header': {
             'musicCarouselShelfBasicHeaderRenderer': {
               'title': {
-                'runs': [_run('New music')]
-              }
-            }
+                'runs': [_run('New music')],
+              },
+            },
           },
           'contents': [
             {
               'musicTwoRowItemRenderer': {
                 'title': {
-                  'runs': [_run('Linked Song')]
+                  'runs': [_run('Linked Song')],
                 },
                 'subtitle': {
                   'runs': [
                     _run('Real Artist', browseId: 'UCART'),
                     _run(' • '),
                     _run('Real Album', browseId: 'MPREALB'),
-                  ]
+                  ],
                 },
                 'navigationEndpoint': {
-                  'watchEndpoint': {'videoId': 'V1'}
+                  'watchEndpoint': {'videoId': 'V1'},
                 },
-              }
+              },
             },
           ],
-        }
+        },
       };
       final s = parseShelf(shelf)!;
       final song = s.items.single as SongItem;
@@ -239,26 +230,26 @@ void main() {
           'header': {
             'musicCarouselShelfBasicHeaderRenderer': {
               'title': {
-                'runs': [_run('Charts')]
-              }
-            }
+                'runs': [_run('Charts')],
+              },
+            },
           },
           'contents': [
             {
               'musicTwoRowItemRenderer': {
                 'title': {
-                  'runs': [_run('Plain Song')]
+                  'runs': [_run('Plain Song')],
                 },
                 'subtitle': {
-                  'runs': [_run('Plain Artist • Plain Album')]
+                  'runs': [_run('Plain Artist • Plain Album')],
                 },
                 'navigationEndpoint': {
-                  'watchEndpoint': {'videoId': 'V2'}
+                  'watchEndpoint': {'videoId': 'V2'},
                 },
-              }
+              },
             },
           ],
-        }
+        },
       };
       final s = parseShelf(shelf)!;
       final song = s.items.single as SongItem;
@@ -267,77 +258,86 @@ void main() {
   });
 
   group('buildPlaylist', () {
-    test('parses musicResponsiveHeaderRenderer with linked author and thumbnails', () {
-      final res = {
-        'contents': {
-          'twoColumnBrowseResultsRenderer': {
-            'tabs': [
-              {
-                'tabRenderer': {
-                  'content': {
-                    'sectionListRenderer': {
-                      'contents': [
-                        {
-                          'musicResponsiveHeaderRenderer': {
-                            'title': {
-                              'runs': [_run('My Awesome Playlist')]
+    test(
+      'parses musicResponsiveHeaderRenderer with linked author and thumbnails',
+      () {
+        final res = {
+          'contents': {
+            'twoColumnBrowseResultsRenderer': {
+              'tabs': [
+                {
+                  'tabRenderer': {
+                    'content': {
+                      'sectionListRenderer': {
+                        'contents': [
+                          {
+                            'musicResponsiveHeaderRenderer': {
+                              'title': {
+                                'runs': [_run('My Awesome Playlist')],
+                              },
+                              'subtitle': {
+                                'runs': [_run('Playlist description')],
+                              },
+                              'straplineTextOne': {
+                                'runs': [
+                                  _run('Cool Artist', browseId: 'UCARTIST123'),
+                                ],
+                              },
+                              'thumbnail': {
+                                'musicThumbnailRenderer': {
+                                  'thumbnail': {
+                                    'thumbnails': [
+                                      {
+                                        'url': 'https://img/pl_544.jpg',
+                                        'width': 544,
+                                        'height': 544,
+                                      },
+                                    ],
+                                  },
+                                },
+                              },
                             },
-                            'subtitle': {
-                              'runs': [_run('Playlist description')]
+                          },
+                          {
+                            'musicPlaylistShelfRenderer': {
+                              'contents': [
+                                {
+                                  'musicResponsiveListItemRenderer': {
+                                    'flexColumns': [
+                                      _col([_run('Track 1', videoId: 'T1')]),
+                                    ],
+                                  },
+                                },
+                              ],
                             },
-                            'straplineTextOne': {
-                              'runs': [_run('Cool Artist', browseId: 'UCARTIST123')]
-                            },
-                            'thumbnail': {
-                              'musicThumbnailRenderer': {
-                                'thumbnail': {
-                                  'thumbnails': [
-                                    {'url': 'https://img/pl_544.jpg', 'width': 544, 'height': 544}
-                                  ]
-                                }
-                              }
-                            }
-                          }
-                        },
-                        {
-                          'musicPlaylistShelfRenderer': {
-                            'contents': [
-                              {
-                                'musicResponsiveListItemRenderer': {
-                                  'flexColumns': [
-                                    _col([_run('Track 1', videoId: 'T1')])
-                                  ]
-                                }
-                              }
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        }
-      };
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        };
 
-      final pl = buildPlaylist(res)!;
-      expect(pl.title, 'My Awesome Playlist');
-      expect(pl.subtitle, 'Playlist description');
-      expect(pl.thumbnails.length, 1);
-      expect(pl.thumbnails.first.url, 'https://img/pl_544.jpg');
-      expect(pl.author?.name, 'Cool Artist');
-      expect(pl.author?.browseId, 'UCARTIST123');
-      expect(pl.tracks.length, 1);
-      expect(pl.tracks.first.videoId, 'T1');
-    });
+        final pl = buildPlaylist(res)!;
+        expect(pl.title, 'My Awesome Playlist');
+        expect(pl.subtitle, 'Playlist description');
+        expect(pl.thumbnails.length, 1);
+        expect(pl.thumbnails.first.url, 'https://img/pl_544.jpg');
+        expect(pl.author?.name, 'Cool Artist');
+        expect(pl.author?.browseId, 'UCARTIST123');
+        expect(pl.tracks.length, 1);
+        expect(pl.tracks.first.videoId, 'T1');
+      },
+    );
 
     test('falls back to track thumbnail when header thumbnail is missing', () {
       final res = {
         'musicResponsiveHeaderRenderer': {
           'title': {
-            'runs': [_run('Track Thumb Playlist')]
+            'runs': [_run('Track Thumb Playlist')],
           },
         },
         'musicPlaylistShelfRenderer': {
@@ -345,21 +345,25 @@ void main() {
             {
               'musicResponsiveListItemRenderer': {
                 'flexColumns': [
-                  _col([_run('Song', videoId: 'S1')])
+                  _col([_run('Song', videoId: 'S1')]),
                 ],
                 'thumbnail': {
                   'musicThumbnailRenderer': {
                     'thumbnail': {
                       'thumbnails': [
-                        {'url': 'https://img/track1.jpg', 'width': 120, 'height': 120}
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }
+                        {
+                          'url': 'https://img/track1.jpg',
+                          'width': 120,
+                          'height': 120,
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
       };
 
       final pl = buildPlaylist(res)!;
@@ -377,12 +381,12 @@ void main() {
             'musicThumbnailRenderer': {
               'thumbnail': {
                 'thumbnails': [
-                  {'url': 'https://img/cover.jpg', 'width': 300, 'height': 300}
-                ]
-              }
-            }
-          }
-        }
+                  {'url': 'https://img/cover.jpg', 'width': 300, 'height': 300},
+                ],
+              },
+            },
+          },
+        },
       };
       final thumbs = playlistArtworkThumbs(res);
       expect(thumbs.length, 1);
@@ -399,15 +403,19 @@ void main() {
                   'musicThumbnailRenderer': {
                     'thumbnail': {
                       'thumbnails': [
-                        {'url': 'https://img/shelf_track.jpg', 'width': 200, 'height': 200}
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }
+                        {
+                          'url': 'https://img/shelf_track.jpg',
+                          'width': 200,
+                          'height': 200,
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
       };
       final thumbs = playlistArtworkThumbs(res);
       expect(thumbs.length, 1);
@@ -422,22 +430,22 @@ void main() {
           'defaultServiceEndpoint': def == null
               ? null
               : {
-                  'likeEndpoint': {'status': def}
+                  'likeEndpoint': {'status': def},
                 },
           'toggledServiceEndpoint': toggled == null
               ? null
               : {
-                  'likeEndpoint': {'status': toggled}
+                  'likeEndpoint': {'status': toggled},
                 },
-        }
+        },
       };
     }
 
     Map<String, dynamic> menuOf(List<Map<String, dynamic>> items) {
       return {
         'menu': {
-          'menuRenderer': {'items': items}
-        }
+          'menuRenderer': {'items': items},
+        },
       };
     }
 
@@ -478,21 +486,27 @@ void main() {
           'menuRenderer': {
             'topLevelButtons': [
               {
-                'likeButtonRenderer': {'likeStatus': 'LIKE'}
-              }
+                'likeButtonRenderer': {'likeStatus': 'LIKE'},
+              },
             ],
             'items': [toggleEntry('LIKE', 'INDIFFERENT')],
-          }
-        }
+          },
+        },
       };
       expect(parseLikeRating(item), RatingStatus.like);
     });
 
     test('no like signals reports unknown', () {
-      expect(parseLikeRating(menuOf([toggleEntry(null, null)])),
-          RatingStatus.unknown);
-      expect(parseLikeRating({'menu': {'menuRenderer': {}}}),
-          RatingStatus.unknown);
+      expect(
+        parseLikeRating(menuOf([toggleEntry(null, null)])),
+        RatingStatus.unknown,
+      );
+      expect(
+        parseLikeRating({
+          'menu': {'menuRenderer': {}},
+        }),
+        RatingStatus.unknown,
+      );
     });
   });
 
@@ -547,23 +561,20 @@ void main() {
         song('b', 'Unrelated Song Two', 'Band B'),
       ];
       final ranked = rankSearchSongs(songs, 'xyzzy');
-      expect(
-        ranked.map((s) => s.track.videoId).toList(),
-        ['a', 'b'],
-      );
+      expect(ranked.map((s) => s.track.videoId).toList(), ['a', 'b']);
     });
   });
 
   group('parseHomeMoods', () {
     Map<String, dynamic> chip(String title) => {
-          'chipCloudChipRenderer': {
-            'text': {
-              'runs': [
-                {'text': title}
-              ]
-            }
-          }
-        };
+      'chipCloudChipRenderer': {
+        'text': {
+          'runs': [
+            {'text': title},
+          ],
+        },
+      },
+    };
 
     test('reads chip titles in feed order, deduped', () {
       final res = {
@@ -582,17 +593,17 @@ void main() {
                               chip('Workout'),
                               chip('relax'),
                               chip('  '),
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        }
+                            ],
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
       };
       expect(parseHomeMoods(res), ['Relax', 'Workout']);
     });
@@ -603,8 +614,13 @@ void main() {
     });
   });
 
-  group('rankShelvesByProfile', () {    SongItem song(String id,
-        {String artist = '', String? artistId, String? playlistId}) {
+  group('rankShelvesByProfile', () {
+    SongItem song(
+      String id, {
+      String artist = '',
+      String? artistId,
+      String? playlistId,
+    }) {
       return SongItem(
         Track(
           videoId: id,
@@ -619,11 +635,11 @@ void main() {
     }
 
     BrowseItem browse(String id, String title) => BrowseItem(
-          title: title,
-          subtitle: '',
-          browseId: id,
-          thumbnails: const [],
-        );
+      title: title,
+      subtitle: '',
+      browseId: id,
+      thumbnails: const [],
+    );
 
     test('history overlap outranks editorial, ties keep feed order', () {
       final shelves = [
@@ -636,10 +652,11 @@ void main() {
         trackIds: {'mine1'},
         artistKeys: const {},
       );
-      expect(
-        ranked.map((s) => s.title),
-        ['Listen again', 'Top songs', 'Charts'],
-      );
+      expect(ranked.map((s) => s.title), [
+        'Listen again',
+        'Top songs',
+        'Charts',
+      ]);
     });
 
     test('mix seeds and followed artists outrank generic rows', () {
@@ -653,10 +670,11 @@ void main() {
         trackIds: const {},
         artistKeys: {'UCabc'},
       );
-      expect(
-        ranked.map((s) => s.title),
-        ['Artist spotlight', 'My Mix', 'New music'],
-      );
+      expect(ranked.map((s) => s.title), [
+        'Artist spotlight',
+        'My Mix',
+        'New music',
+      ]);
     });
 
     test('artist name overlap counts without channel ids', () {
@@ -695,39 +713,44 @@ void main() {
     });
   });
 
-  group('parseThumbnails square crops', () {    Map<String, dynamic> thumbs(List<Map<String, dynamic>> ts) =>
-        {'thumbnails': ts};
-    Map<String, dynamic> thumb(String url, int w, int h) =>
-        {'url': url, 'width': w, 'height': h};
+  group('parseThumbnails square crops', () {
+    Map<String, dynamic> thumbs(List<Map<String, dynamic>> ts) => {
+      'thumbnails': ts,
+    };
+    Map<String, dynamic> thumb(String url, int w, int h) => {
+      'url': url,
+      'width': w,
+      'height': h,
+    };
 
     test('appends the API square crop beside the main thumbs', () {
       final node = {
         'thumbnail': {
           'musicThumbnailRenderer': {
-            'thumbnail': thumbs([thumb('https://img/wide.jpg', 640, 360)])
+            'thumbnail': thumbs([thumb('https://img/wide.jpg', 640, 360)]),
           },
           'croppedSquareThumbnailRenderer': {
-            'thumbnail': thumbs([thumb('https://img/sq.jpg', 120, 120)])
+            'thumbnail': thumbs([thumb('https://img/sq.jpg', 120, 120)]),
           },
-        }
+        },
       };
       final parsed = parseThumbnails(node);
-      expect(
-        parsed.map((t) => t.url),
-        ['https://img/wide.jpg', 'https://img/sq.jpg'],
-      );
+      expect(parsed.map((t) => t.url), [
+        'https://img/wide.jpg',
+        'https://img/sq.jpg',
+      ]);
     });
 
     test('displayArtwork prefers the API square over a wide frame', () {
       final node = {
         'thumbnail': {
           'musicThumbnailRenderer': {
-            'thumbnail': thumbs([thumb('https://img/wide.jpg', 640, 360)])
+            'thumbnail': thumbs([thumb('https://img/wide.jpg', 640, 360)]),
           },
           'croppedSquareThumbnailRenderer': {
-            'thumbnail': thumbs([thumb('https://img/sq.jpg', 120, 120)])
+            'thumbnail': thumbs([thumb('https://img/sq.jpg', 120, 120)]),
           },
-        }
+        },
       };
       final track = Track(
         videoId: 'v',
@@ -743,26 +766,24 @@ void main() {
       final node = {
         'thumbnail': {
           'musicThumbnailRenderer': {
-            'thumbnail': thumbs([thumb('https://img/a.jpg', 60, 60)])
+            'thumbnail': thumbs([thumb('https://img/a.jpg', 60, 60)]),
           },
-        }
+        },
       };
       final parsed = parseThumbnails(node);
       expect(parsed.map((t) => t.url), ['https://img/a.jpg']);
     });
   });
 
-  group('mergeLocalRecents', () {    Track track(String id) => Track(videoId: id, title: 'Title $id');
+  group('mergeLocalRecents', () {
+    Track track(String id) => Track(videoId: id, title: 'Title $id');
 
     test('local-only tracks go first, server order kept', () {
       final merged = mergeLocalRecents(
         [track('s1'), track('s2')],
         [track('v1'), track('s2')],
       );
-      expect(
-        merged.map((t) => t.videoId),
-        ['v1', 's1', 's2'],
-      );
+      expect(merged.map((t) => t.videoId), ['v1', 's1', 's2']);
     });
 
     test('empty local list keeps the server list', () {
@@ -807,12 +828,14 @@ void main() {
       );
       final encoded = jsonEncode(original.toJson());
       final decoded = Track.fromJson(
-        (jsonDecode(encoded) as Map)
-            .map((k, v) => MapEntry(k.toString(), v)),
+        (jsonDecode(encoded) as Map).map((k, v) => MapEntry(k.toString(), v)),
       );
       expect(decoded.videoId, 'v1');
       expect(decoded.title, 'Ten Toes');
-      expect(decoded.artists.map((a) => a.name), ['Artist One', 'Unlinked Artist']);
+      expect(decoded.artists.map((a) => a.name), [
+        'Artist One',
+        'Unlinked Artist',
+      ]);
       expect(decoded.artists.first.browseId, 'UCabc');
       expect(decoded.album?.browseId, 'MPRE1');
       expect(decoded.thumbnails.first.url, 'https://img/a.jpg=w540-h540');
@@ -830,6 +853,7 @@ void main() {
           return null;
         }
       }
+
       expect(decode('junk'), isNull);
       expect(decode({})?.videoId, '');
     });

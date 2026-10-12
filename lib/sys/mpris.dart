@@ -23,6 +23,8 @@ String loopStatusOf(RepeatMode repeat) => switch (repeat) {
   RepeatMode.all => 'Playlist',
 };
 
+/// Maps an MPRIS LoopStatus back onto repeat modes; anything
+/// unrecognized means off.
 RepeatMode repeatOfLoopStatus(String status) => switch (status) {
   'Track' => RepeatMode.one,
   'Playlist' => RepeatMode.all,
@@ -59,6 +61,8 @@ Map<String, DBusValue> mprisMetadata(
   };
 }
 
+/// MPRIS PlaybackStatus for a snapshot: no track or an explicit
+/// stop reads Stopped, otherwise Playing/Paused.
 String playbackStatusOf(PlayerState s) {
   if (s.current == null || s.stopped) return 'Stopped';
   return s.playing ? 'Playing' : 'Paused';
@@ -384,6 +388,7 @@ class MprisService extends ChangeNotifier {
   bool get active => _active;
   String? get lastError => _lastError;
 
+  /// Toggles the service, stopping first when switched off.
   void setEnabled(bool value) {
     _enabled = value;
     if (!value) {
@@ -392,6 +397,8 @@ class MprisService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Artwork source for MPRIS track art URLs, settable after
+  /// construction.
   void setArtworkStore(ArtworkStore art) {
     _artworkStore = art;
   }

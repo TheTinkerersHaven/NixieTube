@@ -6,10 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:nixietube/ui/widgets/spring_context_menu.dart';
 
-Future<String?> _openMenu(
-  WidgetTester tester, {
-  bool disableFirst = false,
-}) {
+Future<String?> _openMenu(WidgetTester tester, {bool disableFirst = false}) {
   return showSpringMenu<String>(
     context: tester.element(find.text('open')),
     position: const Offset(10, 10),
@@ -39,9 +36,8 @@ void main() {
               onPressed: () async {
                 final selected = await _openMenu(tester);
                 if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('picked $selected')),
-                );
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text('picked $selected')));
               },
               child: const Text('open'),
             ),
@@ -51,8 +47,7 @@ void main() {
     );
   }
 
-  testWidgets('tapping an item returns its value and closes',
-      (tester) async {
+  testWidgets('tapping an item returns its value and closes', (tester) async {
     await pumpOpener(tester);
     await tester.tap(find.text('open'));
     await tester.pump();
@@ -95,8 +90,8 @@ void main() {
     expect(find.text('Remove from queue'), findsOneWidget);
   });
 
-  testWidgets('clicking away collapses like the title menu',
-      (tester) async {    await pumpOpener(tester);
+  testWidgets('clicking away collapses like the title menu', (tester) async {
+    await pumpOpener(tester);
     await tester.tap(find.text('open'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));

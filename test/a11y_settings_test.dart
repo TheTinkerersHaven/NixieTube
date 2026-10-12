@@ -108,18 +108,18 @@ Future<({AppState state, String configPath})> _pumpWith(
 /// same providers the app root registers.
 Future<({AppState state, String configPath})> _pumpSettings(
   WidgetTester tester,
-) =>
-    _pumpWith(tester, const SettingsScreen());
+) => _pumpWith(tester, const SettingsScreen());
 
 /// The switch inside the toggle row titled [title].
 Finder _switchOf(String title) => find.descendant(
-      of: find.widgetWithText(Row, title),
-      matching: find.byType(Switch),
+  of: find.widgetWithText(Row, title),
+  matching: find.byType(Switch),
 );
 
 void main() {
-  testWidgets('accessibility section renders and persists both toggles',
-      (tester) async {
+  testWidgets('accessibility section renders and persists both toggles', (
+    tester,
+  ) async {
     final (:state, :configPath) = await _pumpSettings(tester);
     // The settings list builds lazily; scroll the toggles into view.
     await tester.scrollUntilVisible(
@@ -133,8 +133,10 @@ void main() {
     // Both off by default; the transition runs at full length.
     expect(state.config.highContrast, isFalse);
     expect(state.config.reducedMotion, isFalse);
-    expect(state.nowPlayingTransitionDuration,
-        const Duration(milliseconds: 250));
+    expect(
+      state.nowPlayingTransitionDuration,
+      const Duration(milliseconds: 250),
+    );
 
     // Toggling Reduce motion collapses the transition to zero.
     await tester.tap(_switchOf('Reduce motion'));
@@ -161,8 +163,9 @@ void main() {
     expect(reloaded.reducedMotion, isTrue);
   });
 
-  testWidgets('reduce motion toggles off and restores the transition',
-      (tester) async {
+  testWidgets('reduce motion toggles off and restores the transition', (
+    tester,
+  ) async {
     final (:state, :configPath) = await _pumpSettings(tester);
     // Start from the enabled state so a single gesture turns
     // it back off (material_ui's Switch reliably toggles on
@@ -179,14 +182,17 @@ void main() {
     final switchFinder = _switchOf('Reduce motion');
     await tester.drag(switchFinder, const Offset(-500.0, 0.0));
     expect(state.config.reducedMotion, isFalse);
-    expect(state.nowPlayingTransitionDuration,
-        const Duration(milliseconds: 250));
+    expect(
+      state.nowPlayingTransitionDuration,
+      const Duration(milliseconds: 250),
+    );
     final reloaded = SysConfig(configPath: configPath);
     expect(reloaded.reducedMotion, isFalse);
   });
 
-  testWidgets('high contrast swaps the cover wash for a solid surface',
-      (tester) async {
+  testWidgets('high contrast swaps the cover wash for a solid surface', (
+    tester,
+  ) async {
     const red = Color(0xFF5C0E0E);
     final result = await _pumpWith(
       tester,

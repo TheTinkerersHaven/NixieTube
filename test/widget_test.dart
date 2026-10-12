@@ -45,8 +45,7 @@ class _FakeEngine implements PlayerEngine {
 
 void main() {
   testWidgets('boots the app shell', (tester) async {
-    final dir =
-        Directory.systemTemp.createTempSync('nt-app-test');
+    final dir = Directory.systemTemp.createTempSync('nt-app-test');
     addTearDown(() => dir.delete(recursive: true));
     final tube = InnerTube();
     addTearDown(tube.close);
@@ -75,22 +74,24 @@ void main() {
     addTearDown(discord.dispose);
     final lastfm = LastFmService(config: state.config);
     addTearDown(lastfm.dispose);
-    await tester.pumpWidget(NixieTubeApp(
-        state: state, mpris: mpris, discord: discord, lastfm: lastfm));
+    await tester.pumpWidget(
+      NixieTubeApp(
+        state: state,
+        mpris: mpris,
+        discord: discord,
+        lastfm: lastfm,
+      ),
+    );
     await tester.pump();
     // Home shows the loading skeleton before the feed arrives.
-    expect(
-      find.byWidgetPredicate((w) => w is Skeletonizer),
-      findsWidgets,
-    );
-    expect(find.text('Search for music to start playing'),
-        findsOneWidget);
+    expect(find.byWidgetPredicate((w) => w is Skeletonizer), findsWidgets);
+    expect(find.text('Search for music to start playing'), findsOneWidget);
   });
 
-  testWidgets('playback errors surface a SnackBar, MPV cache noise does not',
-      (tester) async {
-    final dir =
-        Directory.systemTemp.createTempSync('nt-err-test');
+  testWidgets('playback errors surface a SnackBar, MPV cache noise does not', (
+    tester,
+  ) async {
+    final dir = Directory.systemTemp.createTempSync('nt-err-test');
     addTearDown(() => dir.deleteSync(recursive: true));
     final tube = InnerTube();
     addTearDown(tube.close);
@@ -119,15 +120,23 @@ void main() {
     addTearDown(discord.dispose);
     final lastfm = LastFmService(config: state.config);
     addTearDown(lastfm.dispose);
-    const advice = 'Playback failed — check your network connection or '
+    const advice =
+        'Playback failed — check your network connection or '
         'restart the app.';
-    await tester.pumpWidget(NixieTubeApp(
-        state: state, mpris: mpris, discord: discord, lastfm: lastfm));
+    await tester.pumpWidget(
+      NixieTubeApp(
+        state: state,
+        mpris: mpris,
+        discord: discord,
+        lastfm: lastfm,
+      ),
+    );
     await tester.pump();
 
     // Benign MPV cache notice: no SnackBar.
     await player.handleEngineError(
-        'MPV: [error] mkv: Failed to create file cache.');
+      'MPV: [error] mkv: Failed to create file cache.',
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text(advice), findsNothing);

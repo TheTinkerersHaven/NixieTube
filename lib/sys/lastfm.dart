@@ -84,9 +84,10 @@ class LastFmService extends ChangeNotifier {
 
   final ScrobbleProgress _progress = ScrobbleProgress();
 
-  /// Human-readable state: "disabled", "signed in as …", "signed out", or
-  /// "error: …".
   String _status = 'disabled';
+
+  /// Human-readable state: "disabled", "signed in as …", "signed out",
+  /// or "error: …".
   String get status => _status;
 
   /// Currently linked Last.fm username, or empty when logged out.
@@ -321,10 +322,7 @@ class LastFmService extends ChangeNotifier {
   Future<void> update(PlayerState s) => _handleState(s, _progress);
 
   /// Routes one player emission to a track start or a progress update.
-  Future<void> _handleState(
-    PlayerState s,
-    ScrobbleProgress progress,
-  ) async {
+  Future<void> _handleState(PlayerState s, ScrobbleProgress progress) async {
     final track = s.current;
     final videoId = track?.videoId;
     if (videoId == null || videoId != progress.videoId) {

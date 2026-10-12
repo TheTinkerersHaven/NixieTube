@@ -86,9 +86,7 @@ const _t1 = Track(videoId: 'v1', title: 'One', durationSec: 200);
 /// one loaded track (200s), returning the state and the
 /// controllable engine.
 Future<({AppState state, _FakeEngine engine, PlayerController player})>
-      _setupSlider(
-  WidgetTester tester,
-) async {
+_setupSlider(WidgetTester tester) async {
   final dir = Directory.systemTemp.createTempSync('nt-seek-test');
   addTearDown(() => dir.deleteSync(recursive: true));
   final tube = _QuietTube();
@@ -165,19 +163,16 @@ void main() {
     await tester.tapAt(rect.center + Offset(rect.width * 0.2, 0));
     // The thumb passes through the middle of the track on
     // its way to the tapped point (a teleport would not).
-    expect(
-      await _pumpUntil(tester, (v) => v > 20000 && v < 135000),
-      isTrue,
-    );
+    expect(await _pumpUntil(tester, (v) => v > 20000 && v < 135000), isTrue);
     await tester.pumpAndSettle();
     // The tap lands 20% past center; the M3E slider
     // insets the track by the thumb radius on each
     // side, so map the offset through the same math.
     const margin = M3ESliderDefaults.thumbRadius;
-    final fraction = ((rect.center.dx + rect.width * 0.2 -
-                rect.left - margin) /
-            (rect.width - 2 * margin))
-        .clamp(0.0, 1.0);
+    final fraction =
+        ((rect.center.dx + rect.width * 0.2 - rect.left - margin) /
+                (rect.width - 2 * margin))
+            .clamp(0.0, 1.0);
     final expected = fraction * 200000;
     expect(_sliderValue(tester), closeTo(expected, 0.5));
     expect(r.state.player.state.positionMs, expected.round());
@@ -211,8 +206,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('a finished song sweeps the thumb back to the start',
-      (tester) async {
+  testWidgets('a finished song sweeps the thumb back to the start', (
+    tester,
+  ) async {
     final r = await _setupSlider(tester);
     // The fresh-start hold releases once the engine restarts near 0.
     r.engine.position = 500;
@@ -226,10 +222,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     // The thumb glides back through the middle of the
     // track instead of teleporting to 0.
-    expect(
-      await _pumpUntil(tester, (v) => v > 50000 && v < 150000),
-      isTrue,
-    );
+    expect(await _pumpUntil(tester, (v) => v > 50000 && v < 150000), isTrue);
     await tester.pumpAndSettle();
     expect(_sliderValue(tester), lessThan(1));
     r.player.dispose();

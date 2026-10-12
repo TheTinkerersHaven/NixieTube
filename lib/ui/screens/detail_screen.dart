@@ -235,8 +235,7 @@ class _ArtistDetailView extends StatelessWidget {
                       final res = await state.startArtistRadio(artist);
                       if (!context.mounted) return;
                       // User moved on mid-fetch: stay silent.
-                      if (state.player.state.current?.videoId !=
-                          seed.videoId) {
+                      if (state.player.state.current?.videoId != seed.videoId) {
                         return;
                       }
                       // Success restarts playback visibly; only a dead
@@ -338,6 +337,8 @@ class _ArtistDetailView extends StatelessWidget {
   }
 }
 
+/// Detail banner: memoizes one PNG render per URL so list scrolls
+/// back and forth don't re-decode it.
 class _BannerImage extends StatefulWidget {
   const _BannerImage({required this.url});
 

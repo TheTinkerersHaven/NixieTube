@@ -13,8 +13,5 @@ import 'package:dio/dio.dart';
 
 /// A fresh Dio with the app-wide HTTP semantics.
 Dio newHttpClient() => Dio(
-  BaseOptions(
-    validateStatus: (_) => true,
-    responseType: ResponseType.plain,
-  ),
+  BaseOptions(validateStatus: (_) => true, responseType: ResponseType.plain),
 );

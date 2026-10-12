@@ -29,7 +29,8 @@ import '../../sys/browser_login.dart';
 ///
 /// No `$` interpolation inside: this is a plain (non-raw, no Flutter
 /// template) string without Dart placeholders.
-const _loginButtonScript = '(function(){'
+const _loginButtonScript =
+    '(function(){'
     'try{'
     'if(!location.hostname||location.hostname.indexOf("music.youtube.com")<0)return;'
     'function addBtn(){'
@@ -79,7 +80,8 @@ class _BrowserLoginWindow extends StatefulWidget {
 }
 
 class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
-  Webview? _webview;  Timer? _timeoutTimer;
+  Webview? _webview;
+  Timer? _timeoutTimer;
   bool _done = false;
   bool _closed = false;
   bool _checking = false;
@@ -98,17 +100,19 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
       // can't wedge the app.
       Future<T> capped<T>(Future<T> f) =>
           f.timeout(const Duration(seconds: 10));
-      final webview = await capped(WebviewWindow.create(
-        configuration: const CreateConfiguration(
-          title: 'Log in with Google',
-          windowWidth: 1000,
-          windowHeight: 700,
-          // No Flutter title bar: that spawns a second engine (Impeller)
-          // which fights the Skia main app over EGL. System
-          // decorations instead (see VENDORED.md).
-          titleBarHeight: 0,
+      final webview = await capped(
+        WebviewWindow.create(
+          configuration: const CreateConfiguration(
+            title: 'Log in with Google',
+            windowWidth: 1000,
+            windowHeight: 700,
+            // No Flutter title bar: that spawns a second engine (Impeller)
+            // which fights the Skia main app over EGL. System
+            // decorations instead (see VENDORED.md).
+            titleBarHeight: 0,
+          ),
         ),
-      ));
+      );
       if (!mounted || _done) {
         _safeClose(webview);
         return;
@@ -158,9 +162,9 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
         );
         return;
       }
-      final all = await webview
-          .getAllCookies()
-          .timeout(const Duration(seconds: 10));
+      final all = await webview.getAllCookies().timeout(
+        const Duration(seconds: 10),
+      );
       // Webview may have closed while awaiting.
       if (_done || _closed || !mounted) return;
       final header = youTubeCookieHeader(
@@ -179,9 +183,7 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
       }
     } catch (_) {
       if (!mounted || _done) return;
-      setState(
-        () => _status = 'Could not read the session — try again.',
-      );
+      setState(() => _status = 'Could not read the session — try again.');
     } finally {
       if (mounted && !_done) setState(() => _checking = false);
     }
@@ -229,18 +231,14 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_error != null)
-            Text(
-              _error!,
-              style: TextStyle(color: scheme.error),
-            )
+            Text(_error!, style: TextStyle(color: scheme.error))
           else if (!ready) ...[
             const M3ELoadingIndicator(),
             const SizedBox(height: 12),
             Text(
               'Opening the login window…',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ] else ...[
             Text(
@@ -251,9 +249,8 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
               'When you are back on YouTube Music and signed in, '
               'press the floating button inside that window — or '
               'the button below. The session is read exactly once.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
             ),
             if (_checking) ...[
               const SizedBox(height: 12),
@@ -263,9 +260,8 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
               const SizedBox(height: 8),
               Text(
                 _status!,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
               ),
             ],
           ],

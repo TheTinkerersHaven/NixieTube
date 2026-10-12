@@ -13,8 +13,10 @@ void main() {
       final session = AuthSession.fromCookie(_cookie)!;
       // The hash must bind the secure value, not the fallback: recompute
       // the digest over the fallback and require a mismatch.
-      final fallbackHash =
-          AuthSession.deriveSapisidHash(0, 'fallback-value').split('_').last;
+      final fallbackHash = AuthSession.deriveSapisidHash(
+        0,
+        'fallback-value',
+      ).split('_').last;
       final hash = session.sapisidHash!;
       expect(hash, contains('_'));
       expect(hash.endsWith(fallbackHash), isFalse);
@@ -23,7 +25,8 @@ void main() {
 
     test('falls back to plain SAPISID', () {
       final session = AuthSession.fromCookie(
-          'SID=abc; SAPISID=plain-value; LOGIN_INFO=ok')!;
+        'SID=abc; SAPISID=plain-value; LOGIN_INFO=ok',
+      )!;
       expect(session.sapisidHash, isNotNull);
     });
 
@@ -38,7 +41,8 @@ void main() {
       expect(hash.length, 40);
       expect(RegExp(r'^[0-9a-f]{40}$').hasMatch(hash), isTrue);
       final session = AuthSession.fromCookie(
-          'SID=abc; __Secure-3PAPISID=test-value;')!;
+        'SID=abc; __Secure-3PAPISID=test-value;',
+      )!;
       final parts = session.sapisidHash!.split('_');
       expect(parts.length, 2);
       expect(int.tryParse(parts[0]), isNotNull);
@@ -47,18 +51,19 @@ void main() {
 
     test('strips quotes and whitespace', () {
       final session = AuthSession.fromCookie(
-          'SID=abc; __Secure-3PAPISID="quoted-value";')!;
+        'SID=abc; __Secure-3PAPISID="quoted-value";',
+      )!;
       expect(session.sapisidHash, isNotNull);
       final wrapped = AuthSession.fromCookie(
-          'SID=abc;\n  __Secure-3PAPISID=wrapped-value;');
+        'SID=abc;\n  __Secure-3PAPISID=wrapped-value;',
+      );
       expect(wrapped, isNotNull);
     });
   });
 
   group('validateCookie', () {
     test('truncated cookie rejected with hint', () {
-      final err =
-          validateCookie('SID=abc…; __Secure-3PAPISID=x')!;
+      final err = validateCookie('SID=abc…; __Secure-3PAPISID=x')!;
       expect(err, contains('TRUNCATED'));
     });
 
@@ -78,10 +83,7 @@ void main() {
       expect(const AuthSession.anonymous().isAnonymous, isTrue);
       expect(const AuthSession().isAnonymous, isTrue);
       expect(AuthSession.fromCookie(_cookie)!.isAnonymous, isFalse);
-      expect(
-        const AuthSession(accessToken: 'tok').isAnonymous,
-        isFalse,
-      );
+      expect(const AuthSession(accessToken: 'tok').isAnonymous, isFalse);
     });
   });
 }

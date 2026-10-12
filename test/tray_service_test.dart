@@ -8,11 +8,11 @@ import 'package:nixietube/core/player/player_state.dart';
 import 'package:nixietube/sys/tray_service.dart';
 
 Track _track(String id) => Track(
-      videoId: id,
-      title: 'Title $id',
-      artists: [ArtistRef('Artist $id')],
-      durationSec: 200,
-    );
+  videoId: id,
+  title: 'Title $id',
+  artists: [ArtistRef('Artist $id')],
+  durationSec: 200,
+);
 
 void main() {
   test('play/pause label follows playback', () {
@@ -22,10 +22,7 @@ void main() {
 
   test('tooltip names the track or falls back to the app', () {
     expect(trayTooltipFor(null), 'NixieTube');
-    expect(
-      trayTooltipFor(_track('v1')),
-      'Title v1 — Artist v1',
-    );
+    expect(trayTooltipFor(_track('v1')), 'Title v1 — Artist v1');
     expect(
       trayTooltipFor(
         const Track(videoId: 'v2', title: 'Untitled', durationSec: 1),

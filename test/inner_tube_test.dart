@@ -30,15 +30,17 @@ void main() {
       final client = mockDio((options) async {
         seen.add(Map.of(options.headers));
         if (_header(options.headers, 'cookie') != null) {
-          return _envelope({'error': {'code': 401}});
+          return _envelope({
+            'error': {'code': 401},
+          });
         }
-        return _envelope({
-          'contents': <String, dynamic>{}
-        });
+        return _envelope({'contents': <String, dynamic>{}});
       });
       final tube = InnerTube(
         auth: const AuthSession(
-            cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc'),
+          cookie: 'SID=x; SAPISID=y',
+          sapisidHash: '1_abc',
+        ),
         dio: client,
       );
       final res = await tube.post('search', {'query': 'x'});
@@ -54,15 +56,18 @@ void main() {
       var calls = 0;
       final client = mockDio((options) async {
         calls++;
-        return _envelope({'error': {'code': 401}});
+        return _envelope({
+          'error': {'code': 401},
+        });
       });
       final tube = InnerTube(
         auth: const AuthSession(
-            cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc'),
+          cookie: 'SID=x; SAPISID=y',
+          sapisidHash: '1_abc',
+        ),
         dio: client,
       );
-      await tube.post(
-          'browse', {'browseId': 'FEmusic_library_landing'});
+      await tube.post('browse', {'browseId': 'FEmusic_library_landing'});
       expect(calls, 1);
       tube.close();
     });
@@ -72,11 +77,11 @@ void main() {
       final client = mockDio((options) async {
         seen.add(Map.of(options.headers));
         if (_header(options.headers, 'authorization') != null) {
-          return _envelope({'error': {'code': 400}});
+          return _envelope({
+            'error': {'code': 400},
+          });
         }
-        return _envelope({
-          'contents': <String, dynamic>{}
-        });
+        return _envelope({'contents': <String, dynamic>{}});
       });
       final tube = InnerTube(dio: client);
       const bearer = AuthSession(accessToken: 'tok');
@@ -98,11 +103,12 @@ void main() {
       });
       final tube = InnerTube(
         auth: const AuthSession(
-            cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc'),
+          cookie: 'SID=x; SAPISID=y',
+          sapisidHash: '1_abc',
+        ),
         dio: client,
       );
-      tube.authProvider =
-          () async => const AuthSession(accessToken: 'tok');
+      tube.authProvider = () async => const AuthSession(accessToken: 'tok');
       await tube.post('feedback', {});
       expect(seen.length, 1);
       expect(_header(seen[0], 'authorization'), startsWith('Bearer '));

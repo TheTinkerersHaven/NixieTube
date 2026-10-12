@@ -98,9 +98,8 @@ class TrackRow extends StatelessWidget {
         track.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: playing ? scheme.primary : scheme.onSurface,
-            ),
+        style: Theme.of(context).textTheme.titleMedium
+            ?.copyWith(color: playing ? scheme.primary : scheme.onSurface),
       ),
       subtitle: subtitle.isEmpty
           ? null
@@ -108,9 +107,8 @@ class TrackRow extends StatelessWidget {
               subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: scheme.onSurfaceVariant),
             ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -136,10 +134,8 @@ class TrackRow extends StatelessWidget {
                       if (viewsLabel != null)
                         Text(
                           viewsLabel,
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                  ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
                         ),
                     ],
                   ),
@@ -209,11 +205,8 @@ class TrackRow extends StatelessWidget {
     // never stacks two menus (the single-menu guard would eat theirs).
     if (!contextMenu) return tile;
     return GestureDetector(
-      onSecondaryTapDown: (details) => _showMenu(
-        context,
-        context.read<AppState>(),
-        details.globalPosition,
-      ),
+      onSecondaryTapDown: (details) =>
+          _showMenu(context, context.read<AppState>(), details.globalPosition),
       child: tile,
     );
   }
@@ -261,9 +254,8 @@ class TrackRow extends StatelessWidget {
           state.player.playTracks([track]);
         } else {
           state.player.enqueueNext(track);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Queued next')),
-          );
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('Queued next')));
         }
       case TrackRowAction.addToPlaylist:
         state.openPlaylistDialog(track);

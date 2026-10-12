@@ -18,35 +18,35 @@ void main() {
   group('fixup', () {
     test('label split and version guard', () {
       // Label upload "Artist - Track" splits.
-      expect(
-        fixup('Glitch Cat - PHANTOM-LOCK', 'Glitch Cat', []),
-        (artist: 'Glitch Cat', title: 'PHANTOM-LOCK'),
-      );
+      expect(fixup('Glitch Cat - PHANTOM-LOCK', 'Glitch Cat', []), (
+        artist: 'Glitch Cat',
+        title: 'PHANTOM-LOCK',
+      ));
       // Version suffix stays put.
-      expect(
-        fixup('Song - Live', 'Some Channel', []),
-        (artist: 'Some Channel', title: 'Song - Live'),
-      );
+      expect(fixup('Song - Live', 'Some Channel', []), (
+        artist: 'Some Channel',
+        title: 'Song - Live',
+      ));
       // Topic channel is authoritative.
-      expect(
-        fixup('MAGNUM', 'Ric de Large - Topic', []),
-        (artist: 'Ric de Large', title: 'MAGNUM'),
-      );
+      expect(fixup('MAGNUM', 'Ric de Large - Topic', []), (
+        artist: 'Ric de Large',
+        title: 'MAGNUM',
+      ));
       // Distributor channel defers to tags.
-      expect(
-        fixup('Deep End', 'Release - Topic', ['Whiney', 'Deep End']),
-        (artist: 'Whiney', title: 'Deep End'),
-      );
+      expect(fixup('Deep End', 'Release - Topic', ['Whiney', 'Deep End']), (
+        artist: 'Whiney',
+        title: 'Deep End',
+      ));
     });
   });
 
   group('hasGenericReleaseArtist', () {
     test('flags empty and placeholder credits only', () {
       Track track(String id, List<String> artists) => Track(
-            videoId: id,
-            title: 'T',
-            artists: artists.map((n) => ArtistRef(n)).toList(),
-          );
+        videoId: id,
+        title: 'T',
+        artists: artists.map((n) => ArtistRef(n)).toList(),
+      );
       expect(hasGenericReleaseArtist(track('a', [])), isTrue);
       expect(hasGenericReleaseArtist(track('b', ['Release'])), isTrue);
       expect(hasGenericReleaseArtist(track('c', ['Boom Kitty'])), isFalse);
@@ -60,8 +60,11 @@ void main() {
   group('albumFromTags', () {
     test('single shape returns the title', () {
       expect(
-        albumFromTags('Deep End', 'Whiney', 'Release - Topic',
-            ['Whiney', 'Single', 'Deep End']),
+        albumFromTags('Deep End', 'Whiney', 'Release - Topic', [
+          'Whiney',
+          'Single',
+          'Deep End',
+        ]),
         'Deep End',
       );
     });
@@ -82,8 +85,9 @@ void main() {
         ReleaseKind.single,
       );
       expect(
-        albumKindFromTags('T', 'Greatest Hits', 'Release - Topic',
-            ['Compilation']),
+        albumKindFromTags('T', 'Greatest Hits', 'Release - Topic', [
+          'Compilation',
+        ]),
         ReleaseKind.compilation,
       );
     });

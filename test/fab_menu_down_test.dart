@@ -10,10 +10,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:nixietube/ui/widgets/fab_menu_down.dart';
 
-Widget pumpMenu(
-  WidgetTester tester, {
-  required List<M3EFabMenuItem> items,
-}) {
+Widget pumpMenu(WidgetTester tester, {required List<M3EFabMenuItem> items}) {
   return MaterialApp(
     home: Scaffold(
       body: Align(
@@ -37,10 +34,7 @@ void main() {
       pumpMenu(
         tester,
         items: const [
-          M3EFabMenuItem(
-            icon: Icon(Icons.link_rounded),
-            label: 'Share link',
-          ),
+          M3EFabMenuItem(icon: Icon(Icons.link_rounded), label: 'Share link'),
           M3EFabMenuItem(
             icon: Icon(Icons.open_in_new_rounded),
             label: 'Open in YouTube',
@@ -83,8 +77,7 @@ void main() {
     expect(pill.right, greaterThan(trigger.center.dx));
   });
 
-  testWidgets('tapping an item fires it and closes the menu',
-      (tester) async {
+  testWidgets('tapping an item fires it and closes the menu', (tester) async {
     var tapped = 0;
     await tester.pumpWidget(
       pumpMenu(
@@ -123,10 +116,7 @@ void main() {
       pumpMenu(
         tester,
         items: const [
-          M3EFabMenuItem(
-            icon: Icon(Icons.link_rounded),
-            label: 'Share link',
-          ),
+          M3EFabMenuItem(icon: Icon(Icons.link_rounded), label: 'Share link'),
         ],
       ),
     );
@@ -144,16 +134,12 @@ void main() {
     expect(find.text('Share link'), findsNothing);
   });
 
-  testWidgets('clicking away collapses instead of vanishing',
-      (tester) async {
+  testWidgets('clicking away collapses instead of vanishing', (tester) async {
     await tester.pumpWidget(
       pumpMenu(
         tester,
         items: const [
-          M3EFabMenuItem(
-            icon: Icon(Icons.link_rounded),
-            label: 'Share link',
-          ),
+          M3EFabMenuItem(icon: Icon(Icons.link_rounded), label: 'Share link'),
           M3EFabMenuItem(
             icon: Icon(Icons.open_in_new_rounded),
             label: 'Open in YouTube',

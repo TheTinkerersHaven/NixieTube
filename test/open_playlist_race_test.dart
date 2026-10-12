@@ -46,14 +46,12 @@ class _QuietTube extends InnerTube {
   Future<List<Track>> enrichTracks(
     List<Track> tracks, {
     int concurrency = 8,
-  }) async =>
-      tracks;
+  }) async => tracks;
   @override
   Future<Map<String, RatingStatus>> ratings(
     List<String> videoIds, {
     int concurrency = 8,
-  }) async =>
-      {};
+  }) async => {};
   @override
   Future<Track> enrichTrack(Track track) async => track;
   @override
@@ -75,21 +73,18 @@ class _GatedGData extends GDataApi {
   @override
   Future<List<Track>> likedVideos({int max = 2000}) async => [];
   @override
-  Future<List<Track>> playlistTracks(
-    String playlistId, {
-    int max = 5000,
-  }) =>
+  Future<List<Track>> playlistTracks(String playlistId, {int max = 5000}) =>
       (gates[playlistId] ??= Completer<List<Track>>()).future;
   @override
   Future<String?> channelAvatar() async => null;
 }
 
 Track _track(String id) => Track(
-      videoId: id,
-      title: 'Title $id',
-      artists: [ArtistRef('Artist $id', browseId: 'UC$id')],
-      durationSec: 200,
-    );
+  videoId: id,
+  title: 'Title $id',
+  artists: [ArtistRef('Artist $id', browseId: 'UC$id')],
+  durationSec: 200,
+);
 
 const _plA = GPlaylist(id: 'plA', title: 'A', itemCount: 1);
 const _plB = GPlaylist(id: 'plB', title: 'B', itemCount: 1);

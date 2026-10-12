@@ -35,11 +35,14 @@ final Dio _sharedClient = newHttpClient();
 /// successful response is returned as-is.
 Future<Response<String>> _getWithRetry(Dio client, Uri url) async {
   var delay = lrclibRetryDelay;
-  for (var attempt = 0;; attempt++) {
+  for (var attempt = 0; ; attempt++) {
     Response<String>? res;
     try {
       res = await client
-          .getUri<String>(url, options: Options(headers: {'User-Agent': _lrclibUa}))
+          .getUri<String>(
+            url,
+            options: Options(headers: {'User-Agent': _lrclibUa}),
+          )
           .timeout(const Duration(seconds: 30));
     } catch (_) {
       if (attempt >= _lrclibRetries) rethrow;
@@ -133,10 +136,10 @@ String normalizeLrc(String value) {
 /// both become "rampage", tolerating edition leftovers on either
 /// side of the comparison.
 String _baseTitle(String title) => normalizeLrc(
-      title
-          .replaceAll(RegExp(r'\([^)]*\)'), '')
-          .replaceAll(RegExp(r'\[[^\]]*\]'), ''),
-    );
+  title
+      .replaceAll(RegExp(r'\([^)]*\)'), '')
+      .replaceAll(RegExp(r'\[[^\]]*\]'), ''),
+);
 
 /// Space-separated tokens of an already-normalized string.
 Set<String> _tokens(String normalized) =>
@@ -151,10 +154,7 @@ String _primaryArtist(String artist) {
       caseSensitive: false,
     ),
   );
-  final first = parts.firstWhere(
-    (p) => p.trim().isNotEmpty,
-    orElse: () => '',
-  );
+  final first = parts.firstWhere((p) => p.trim().isNotEmpty, orElse: () => '');
   final t = first.trim();
   return t.isEmpty ? artist.trim() : t;
 }
@@ -245,10 +245,7 @@ Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
   try {
     Future<_Candidate?> tryGet(String url) async {
       try {
-        final res = await _getWithRetry(
-          client,
-          Uri.parse(url),
-        );
+        final res = await _getWithRetry(client, Uri.parse(url));
         return _candidateFrom(jsonDecode(res.data ?? ''));
       } catch (_) {
         return null;

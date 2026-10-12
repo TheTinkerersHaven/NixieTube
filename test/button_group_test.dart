@@ -47,8 +47,9 @@ void main() {
     expect(selected, 1);
   });
 
-  testWidgets('tapping the selected option emits null (deselect)',
-      (tester) async {
+  testWidgets('tapping the selected option emits null (deselect)', (
+    tester,
+  ) async {
     int? selected = 0;
     var calls = 0;
     await pumpGroup(
@@ -65,16 +66,15 @@ void main() {
     expect(selected, isNull);
   });
 
-  testWidgets('overall width is identical for either selection',
-      (tester) async {
+  testWidgets('overall width is identical for either selection', (
+    tester,
+  ) async {
     await pumpGroup(tester, selectedIndex: 0, onChanged: (_) {});
     await tester.pumpAndSettle();
-    final widthA =
-        tester.getSize(find.byType(M3EToggleButtonGroup)).width;
+    final widthA = tester.getSize(find.byType(M3EToggleButtonGroup)).width;
     await pumpGroup(tester, selectedIndex: 1, onChanged: (_) {});
     await tester.pumpAndSettle();
-    final widthB =
-        tester.getSize(find.byType(M3EToggleButtonGroup)).width;
+    final widthB = tester.getSize(find.byType(M3EToggleButtonGroup)).width;
     expect(widthA, greaterThan(0));
     expect(widthB, widthA);
   });

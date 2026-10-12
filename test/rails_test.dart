@@ -50,8 +50,9 @@ void main() {
     expect(controller.offset, 400);
   });
 
-  testWidgets('paging clamps at the end instead of overshooting',
-      (tester) async {
+  testWidgets('paging clamps at the end instead of overshooting', (
+    tester,
+  ) async {
     final controller = ScrollController();
     addTearDown(controller.dispose);
     await _pumpRail(tester, controller);

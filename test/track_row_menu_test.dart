@@ -51,19 +51,16 @@ class _QuietTube extends InnerTube {
   Future<List<Track>> enrichTracks(
     List<Track> tracks, {
     int concurrency = 8,
-  }) async =>
-      tracks;
+  }) async => tracks;
   @override
   Future<RatingStatus> rating(String videoId) async => RatingStatus.unknown;
   @override
   Future<Map<String, RatingStatus>> ratings(
     List<String> videoIds, {
     int concurrency = 8,
-  }) async =>
-      {};
+  }) async => {};
   @override
-  Future<List<Track>> upNext(String videoId, {String? playlistId}) async =>
-      [];
+  Future<List<Track>> upNext(String videoId, {String? playlistId}) async => [];
 }
 
 const _track = Track(videoId: 'v1', title: 'One', durationSec: 200);
@@ -103,11 +100,7 @@ Future<void> _pumpRow(WidgetTester tester, AppState state) {
       home: Scaffold(
         body: ChangeNotifierProvider.value(
           value: state,
-          child: TrackRow(
-            track: _track,
-            onPlay: () {},
-            showPlaylists: true,
-          ),
+          child: TrackRow(track: _track, onPlay: () {}, showPlaylists: true),
         ),
       ),
     ),
@@ -125,7 +118,8 @@ Future<void> drainLyrics(WidgetTester tester, AppState state) async {
   }
 }
 
-void main() {  testWidgets('overflow button opens the spring menu', (tester) async {
+void main() {
+  testWidgets('overflow button opens the spring menu', (tester) async {
     final state = await _boot();
     await _pumpRow(tester, state);
     await tester.tap(find.byTooltip('More actions'));
@@ -159,10 +153,10 @@ void main() {  testWidgets('overflow button opens the spring menu', (tester) asy
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(
-      state.player.state.queue.map((t) => t.videoId).toList(),
-      ['v0', 'v1'],
-    );
+    expect(state.player.state.queue.map((t) => t.videoId).toList(), [
+      'v0',
+      'v1',
+    ]);
     expect(find.text('Queued next'), findsOneWidget);
     // Playback fires a background lyrics fetch; drain it with pumps
     // (bare delays never advance the fake clock) so teardown never

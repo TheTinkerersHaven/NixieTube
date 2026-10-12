@@ -32,8 +32,9 @@ void main() {
   });
 
   group('PaletteBackdrop', () {
-    testWidgets('renders a static gradient, never an animated one',
-        (tester) async {
+    testWidgets('renders a static gradient, never an animated one', (
+      tester,
+    ) async {
       // The wash must snap: animating a fullscreen backdrop
       // repaints the whole layer every frame, which is pure
       // raster load.
@@ -56,9 +57,7 @@ void main() {
       expect(find.byType(AnimatedContainer), findsNothing);
     });
 
-    testWidgets('a white cover collapses to the background', (
-      tester,
-    ) async {
+    testWidgets('a white cover collapses to the background', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData.dark(),
@@ -116,17 +115,13 @@ void main() {
       expect(dist(stops.last), lessThan(dist(stops.first)));
     });
 
-    testWidgets('crossfades between palettes on a song change', (
-      tester,
-    ) async {
+    testWidgets('crossfades between palettes on a song change', (tester) async {
       const red = Color(0xFF5C0E0E);
       const green = Color(0xFF0E5C2A);
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData.dark(),
-          home: Scaffold(
-            body: PaletteBackdrop(palette: List.filled(25, red)),
-          ),
+          home: Scaffold(body: PaletteBackdrop(palette: List.filled(25, red))),
         ),
       );
       final start = _embeddedGradient(tester).colors.first;
@@ -152,9 +147,7 @@ void main() {
       expect(end.g, greaterThan(mid.g)); // settled past the halfway blend
     });
 
-    testWidgets('short palettes fall back to a plain surface', (
-      tester,
-    ) async {
+    testWidgets('short palettes fall back to a plain surface', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(body: PaletteBackdrop(palette: [])),
@@ -184,9 +177,15 @@ void main() {
 
 /// The gradient the embedded backdrop was built from.
 LinearGradient _embeddedGradient(WidgetTester tester) {
-  final box = find.descendant(
-    of: find.byType(PaletteBackdrop),
-    matching: find.byType(DecoratedBox),
-  ).evaluate().single.widget as DecoratedBox;
+  final box =
+      find
+              .descendant(
+                of: find.byType(PaletteBackdrop),
+                matching: find.byType(DecoratedBox),
+              )
+              .evaluate()
+              .single
+              .widget
+          as DecoratedBox;
   return (box.decoration as BoxDecoration).gradient as LinearGradient;
 }

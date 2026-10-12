@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
 import '../../core/models/models.dart';
+
 import 'package:m3e_core/m3e_core.dart';
 
 import '../app_state.dart';
@@ -208,12 +209,9 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
                         '${widget.tracks.length} songs'
                         '${totalSec > 0 ? ' • ${_fmtDur(totalSec)}' : ''}',
                         textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                       if (widget.description.trim().isNotEmpty) ...[
                         const SizedBox(height: 8),
@@ -270,52 +268,54 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
                 ),
                 child: SizedBox(
                   width: double.infinity,
-                  child: Builder(builder: (context) {
-                    final scheme = Theme.of(context).colorScheme;
-                    return M3EToggleButtonGroup(
-                      type: M3EButtonGroupType.connected,
-                      size: M3EButtonSize.sm,
-                      semanticLabel: 'Sort order',
-                      selectedIndex: _sort,
-                      onSelectedIndexChanged: (i) {
-                        // Selection-required: tapping the active sort
-                        // keeps it.
-                        if (i == null) return;
-                        setState(() => _sort = i);
-                      },
-                      actions: const [
-                        M3EToggleButtonGroupAction(
-                          label: Text(
-                            'Default',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                  child: Builder(
+                    builder: (context) {
+                      final scheme = Theme.of(context).colorScheme;
+                      return M3EToggleButtonGroup(
+                        type: M3EButtonGroupType.connected,
+                        size: M3EButtonSize.sm,
+                        semanticLabel: 'Sort order',
+                        selectedIndex: _sort,
+                        onSelectedIndexChanged: (i) {
+                          // Selection-required: tapping the active sort
+                          // keeps it.
+                          if (i == null) return;
+                          setState(() => _sort = i);
+                        },
+                        actions: const [
+                          M3EToggleButtonGroupAction(
+                            label: Text(
+                              'Default',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                        M3EToggleButtonGroupAction(
-                          label: Text(
-                            'Title',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          M3EToggleButtonGroupAction(
+                            label: Text(
+                              'Title',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                        M3EToggleButtonGroupAction(
-                          label: Text(
-                            'Artist',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          M3EToggleButtonGroupAction(
+                            label: Text(
+                              'Artist',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                        M3EToggleButtonGroupAction(
-                          label: Text(
-                            'Duration',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          M3EToggleButtonGroupAction(
+                            label: Text(
+                              'Duration',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                      ],
-                      decoration: toggleButtonGroupDecoration(scheme),
-                    );
-                  }),
+                        ],
+                        decoration: toggleButtonGroupDecoration(scheme),
+                      );
+                    },
+                  ),
                 ),
               ),
               Expanded(
@@ -578,4 +578,3 @@ class _OwnerRowState extends State<_OwnerRow> {
     );
   }
 }
-

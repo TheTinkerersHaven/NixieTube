@@ -804,10 +804,7 @@ class PlayerController implements PlayerEngineListener {
     }
     final track = data.queue[data.index];
     final catalogMs = track.durationSec * 1000;
-    final pos = data.positionMs.clamp(
-      0,
-      catalogMs > 0 ? catalogMs : (1 << 62),
-    );
+    final pos = data.positionMs.clamp(0, catalogMs > 0 ? catalogMs : (1 << 62));
     final volume = data.volume.clamp(0, 100);
     unawaited(_engine.setVolume(volume));
     _update(
@@ -1082,12 +1079,7 @@ class PlayerController implements PlayerEngineListener {
     final queue = _state.queue.map(update).toList();
     final fixedCurrent = current == null ? null : update(current);
     if (changed == 0) return 0;
-    _update(
-      _state.copyWith(
-        current: () => fixedCurrent,
-        queue: queue,
-      ),
-    );
+    _update(_state.copyWith(current: () => fixedCurrent, queue: queue));
     return changed;
   }
 
@@ -1359,8 +1351,7 @@ class PlayerController implements PlayerEngineListener {
       pause();
       return;
     }
-    if (_state.sleepTimerMode == SleepTimerMode.endOfQueue &&
-        _isQueueEnd()) {
+    if (_state.sleepTimerMode == SleepTimerMode.endOfQueue && _isQueueEnd()) {
       _clearSleepTimer();
       pause();
       return;
@@ -1401,9 +1392,11 @@ class PlayerController implements PlayerEngineListener {
   /// when the hold times out so a wedged engine never pins 0 forever.
   bool _isFreshEnginePosition(int pos) {
     final start = _freshHoldStart;
-    final timedOut = start != null &&
+    final timedOut =
+        start != null &&
         DateTime.now().difference(start) >= freshPositionTimeout;
-    final restarted = pos <= freshPositionThresholdMs ||
+    final restarted =
+        pos <= freshPositionThresholdMs ||
         (_lastRawEnginePos != null && pos != _lastRawEnginePos);
     if (timedOut || restarted) {
       _awaitingFreshPosition = false;

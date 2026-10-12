@@ -32,7 +32,8 @@ void _configureImageCache() {
   const defaultMobileCache = 32 * 1024 * 1024; // 32MB for mobile
   const defaultDesktopCache = 64 * 1024 * 1024; // 64MB for desktop
 
-  final int cacheSizeBytes = Platform.isLinux || Platform.isWindows || Platform.isMacOS
+  final int cacheSizeBytes =
+      Platform.isLinux || Platform.isWindows || Platform.isMacOS
       ? defaultDesktopCache
       : defaultMobileCache;
 
@@ -41,6 +42,9 @@ void _configureImageCache() {
   PaintingBinding.instance.imageCache.maximumSizeBytes = cacheSizeBytes;
 }
 
+/// App entrypoint: wires services (player, auth, tray, MPRIS,
+/// Discord, Last.fm), restores the session, and runs the app. All
+/// service startups are best-effort so none can break launch.
 void main(List<String> args) {
   // Webview title-bar subprocess entry point (vendored
   // desktop_webview_window); the main app continues below.
@@ -107,12 +111,7 @@ void main(List<String> args) {
   unawaited(state.loadAuth());
   unawaited(state.loadHome());
   runApp(
-    NixieTubeApp(
-      state: state,
-      mpris: mpris,
-      discord: discord,
-      lastfm: lastfm,
-    ),
+    NixieTubeApp(state: state, mpris: mpris, discord: discord, lastfm: lastfm),
   );
 }
 
@@ -171,6 +170,7 @@ ColorScheme? _publishScheme(BuildContext context, ColorScheme? scheme) {
   if (displayScheme.value != scheme) displayScheme.value = scheme;
   return scheme;
 }
+
 /// The [MaterialApp] itself. Selects the accessibility flags
 /// plus every theme setting, so the root rebuilds when any of
 /// them flips (theme + skeleton effect) and on nothing else —
@@ -241,10 +241,10 @@ class _ThemedMaterialApp extends StatelessWidget {
           effectResolver: (_) => reducedMotion
               ? const SolidColorEffect(color: Color(0xFF2C2C2E))
               : const ShimmerEffect(
-                baseColor: Color(0xFF2C2C2E),
-                highlightColor: Color(0xFF4B4B4F),
-                duration: Duration(milliseconds: 1400),
-              ),
+                  baseColor: Color(0xFF2C2C2E),
+                  highlightColor: Color(0xFF4B4B4F),
+                  duration: Duration(milliseconds: 1400),
+                ),
         ),
         child: const Scaffold(body: AppShell()),
       ),

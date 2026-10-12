@@ -33,21 +33,9 @@ void main() {
   group('buildYouTubeHeader', () {
     test('keeps only YouTube cookies, joined as a Cookie header', () {
       final header = BrowserCookies.buildYouTubeHeader([
-        {
-          'name': 'SAPISID',
-          'value': 'abc',
-          'domain': '.youtube.com',
-        },
-        {
-          'name': 'PREF',
-          'value': 'f4=400',
-          'domain': 'www.youtube.com',
-        },
-        {
-          'name': 'SID',
-          'value': 'zzz',
-          'domain': 'google.com',
-        },
+        {'name': 'SAPISID', 'value': 'abc', 'domain': '.youtube.com'},
+        {'name': 'PREF', 'value': 'f4=400', 'domain': 'www.youtube.com'},
+        {'name': 'SID', 'value': 'zzz', 'domain': 'google.com'},
       ]);
       expect(header, 'SAPISID=abc; PREF=f4=400');
     });
@@ -77,8 +65,7 @@ void main() {
       String name,
       String value, [
       String domain = '.youtube.com',
-    ]) =>
-        {'name': name, 'value': value, 'domain': domain};
+    ]) => {'name': name, 'value': value, 'domain': domain};
 
     test('true with a SAPISID value on a YouTube domain', () {
       expect(
@@ -127,8 +114,7 @@ void main() {
       addTearDown(() => root.deleteSync(recursive: true));
       final binDir = Directory('${root.path}/bin')..createSync();
       final chromeHome = Directory('${root.path}/home')..createSync();
-      File('${binDir.path}/google-chrome')
-          .writeAsStringSync('#!/bin/sh\n');
+      File('${binDir.path}/google-chrome').writeAsStringSync('#!/bin/sh\n');
       final cookies =
           '${chromeHome.path}/.config/google-chrome/Default/Cookies';
       File(cookies)
@@ -151,8 +137,7 @@ void main() {
       // Binary present but no Cookies store.
       final binDir = Directory('${root.path}/bin')..createSync();
       File('${binDir.path}/google-chrome').writeAsStringSync('');
-      final emptyHome = Directory('${root.path}/empty-home')
-        ..createSync();
+      final emptyHome = Directory('${root.path}/empty-home')..createSync();
       expect(
         BrowserCookies.detectProfiles(
           home: emptyHome.path,

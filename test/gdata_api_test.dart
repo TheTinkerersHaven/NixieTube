@@ -28,7 +28,7 @@ void main() {
                   'channelTitle': 'Me',
                   'channelId': 'UCme',
                   'thumbnails': {
-                    'medium': {'url': 'https://x/p1.jpg'}
+                    'medium': {'url': 'https://x/p1.jpg'},
                   },
                 },
                 'contentDetails': {'itemCount': 10},
@@ -52,16 +52,14 @@ void main() {
           ],
         });
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       // keepMusicPlaylists probes item videos; stub the probe to fail so
       // unclassifiable playlists stay visible.
       final pls = await api.playlists();
       expect(calls, greaterThanOrEqualTo(2));
       expect(pls.map((p) => p.id), containsAll(['PL1', 'PL2']));
       expect(pls.map((p) => p.id), isNot(contains('LLliked')));
-      expect(pls.firstWhere((p) => p.id == 'PL1').art,
-          'https://x/p1.jpg');
+      expect(pls.firstWhere((p) => p.id == 'PL1').art, 'https://x/p1.jpg');
       api.close();
     });
 
@@ -93,15 +91,14 @@ void main() {
                 'title': 'Singer - Hit Song',
                 'videoOwnerChannelTitle': 'Uploader',
                 'thumbnails': {
-                  'default': {'url': 'https://x/t.jpg'}
+                  'default': {'url': 'https://x/t.jpg'},
                 },
               },
             },
           ],
         });
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       final tracks = await api.playlistTracks('PL1');
       expect(tracks.length, 1);
       expect(tracks.first.videoId, 'V9');
@@ -145,8 +142,7 @@ void main() {
           ],
         });
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       final tracks = await api.playlistTracks('PL1');
       expect(tracks.length, 2);
       expect(tracks.first.durationSec, 210);
@@ -170,8 +166,7 @@ void main() {
           ],
         });
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       final tracks = await api.playlistTracks('PL1');
       expect(tracks.length, 1);
       // Durations stay 0 rather than failing the playlist.
@@ -192,7 +187,7 @@ void main() {
                 'channelTitle': 'Band - Topic',
                 'categoryId': '10',
                 'thumbnails': {
-                  'default': {'url': 'https://x/m1.jpg'}
+                  'default': {'url': 'https://x/m1.jpg'},
                 },
               },
               'contentDetails': {'duration': 'PT3M00S'},
@@ -200,10 +195,7 @@ void main() {
             },
             {
               'id': 'V1',
-              'snippet': {
-                'title': 'Daily Vlog #42',
-                'channelTitle': 'Vlogger',
-              },
+              'snippet': {'title': 'Daily Vlog #42', 'channelTitle': 'Vlogger'},
               'contentDetails': <String, dynamic>{},
               'topicDetails': {
                 'relevantTopicIds': ['/m/02jjt'],
@@ -212,8 +204,7 @@ void main() {
           ],
         });
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       final liked = await api.likedVideos();
       expect(liked.length, 1);
       expect(liked.first.videoId, 'M1');
@@ -236,7 +227,7 @@ void main() {
                 },
                 'contentDetails': {
                   'like': {
-                    'resourceId': {'videoId': 'A1'}
+                    'resourceId': {'videoId': 'A1'},
                   },
                 },
               },
@@ -251,17 +242,13 @@ void main() {
           'items': [
             {
               'id': 'A1',
-              'snippet': {
-                'channelTitle': 'Real Artist',
-                'channelId': 'UCART',
-              },
+              'snippet': {'channelTitle': 'Real Artist', 'channelId': 'UCART'},
               'contentDetails': {'duration': 'PT2M30S'},
             },
           ],
         });
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       final act = await api.recentActivity();
       expect(act.length, 1);
       expect(act.first.videoId, 'A1');
@@ -277,8 +264,7 @@ void main() {
       final client = mockDio((options) async {
         return (200, '');
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       expect(await api.rate('V1', true), isTrue);
       expect(await api.addToPlaylist('PL1', 'V1'), isTrue);
       expect(await api.subscribe('UC1'), isTrue);
@@ -296,7 +282,7 @@ void main() {
               {
                 'id': 'ITEM-no',
                 'snippet': {
-                  'resourceId': {'videoId': 'OTHER'}
+                  'resourceId': {'videoId': 'OTHER'},
                 },
               },
             ],
@@ -308,14 +294,13 @@ void main() {
             {
               'id': 'ITEM-yes',
               'snippet': {
-                'resourceId': {'videoId': 'WANT'}
+                'resourceId': {'videoId': 'WANT'},
               },
             },
           ],
         });
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       expect(await api.playlistItemId('PL1', 'WANT'), 'ITEM-yes');
       expect(await api.playlistItemId('PL1', 'MISSING'), isNull);
       api.close();
@@ -327,8 +312,7 @@ void main() {
         captured = options;
         return _ok({'id': 'PL-NEW'});
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       final id = await api.createPlaylist(title: 'Roadtrip');
       expect(id, 'PL-NEW');
       expect(captured!.method, 'POST');
@@ -342,8 +326,7 @@ void main() {
 
     test('createPlaylist returns null on failure', () async {
       final client = mockDio((options) async => (500, 'oops'));
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       expect(await api.createPlaylist(title: 'X'), isNull);
       api.close();
     });
@@ -354,8 +337,7 @@ void main() {
         captured = options;
         return (200, '');
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       expect(await api.renamePlaylist('PL1', 'New Name'), isTrue);
       expect(captured!.method, 'PUT');
       expect(captured!.uri.path, '/youtube/v3/playlists');
@@ -372,8 +354,7 @@ void main() {
         captured = options;
         return (200, '');
       });
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       expect(await api.deletePlaylist('PL1'), isTrue);
       expect(captured!.method, 'DELETE');
       expect(captured!.uri.path, '/youtube/v3/playlists');
@@ -383,8 +364,7 @@ void main() {
 
     test('rename/delete report failure', () async {
       final client = mockDio((options) async => (500, 'oops'));
-      final api = GDataApi(
-          tokenProvider: () async => 'tok', dio: client);
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
       expect(await api.renamePlaylist('PL1', 'X'), isFalse);
       expect(await api.deletePlaylist('PL1'), isFalse);
       api.close();

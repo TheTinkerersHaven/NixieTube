@@ -54,8 +54,7 @@ class _FakeTube extends InnerTube {
   Future<bool> rate(String videoId, RatingStatus rating) async => rateResult;
 
   @override
-  Future<RatingStatus> rating(String videoId) async =>
-      RatingStatus.indifferent;
+  Future<RatingStatus> rating(String videoId) async => RatingStatus.indifferent;
 
   @override
   Future<Track> enrichTrack(Track track) async => track;
@@ -131,8 +130,8 @@ Future<AppState> _boot(WidgetTester tester, _FakeTube tube) async {
 }
 
 Finder _likeButton() => find.byWidgetPredicate(
-      (w) => w is IconButton && (w.tooltip == 'Like' || w.tooltip == 'Remove like'),
-    );
+  (w) => w is IconButton && (w.tooltip == 'Like' || w.tooltip == 'Remove like'),
+);
 
 void main() {
   testWidgets('successful like stays highlighted', (tester) async {
@@ -144,10 +143,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(state.player.state.current?.rating, RatingStatus.like);
     expect(_likeButton(), findsOneWidget);
-    expect(
-      tester.widget<IconButton>(_likeButton()).tooltip,
-      'Remove like',
-    );
+    expect(tester.widget<IconButton>(_likeButton()).tooltip, 'Remove like');
     state.player.dispose();
     await tester.pump();
   });
@@ -160,19 +156,19 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     // Reverted to unliked…
     expect(state.player.state.current?.rating, RatingStatus.unknown);
-    expect(
-      tester.widget<IconButton>(_likeButton()).tooltip,
-      'Like',
-    );
+    expect(tester.widget<IconButton>(_likeButton()).tooltip, 'Like');
     // …with a failure notice.
-    expect(find.text("Couldn't save rating — check connection and sign-in."),
-        findsOneWidget);
+    expect(
+      find.text("Couldn't save rating — check connection and sign-in."),
+      findsOneWidget,
+    );
     state.player.dispose();
     await tester.pump();
   });
 
-  testWidgets('up next queue gets batch-stamped with like states',
-      (tester) async {
+  testWidgets('up next queue gets batch-stamped with like states', (
+    tester,
+  ) async {
     final tube = _QueueStampTube();
     // Non-anonymous session so the stamp pass runs.
     tube.auth = const AuthSession(cookie: 'c', sapisidHash: 'h');
@@ -194,9 +190,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets(
-      'like button shows spinner during write and ignores double-tap',
-      (tester) async {
+  testWidgets('like button shows spinner during write and ignores double-tap', (
+    tester,
+  ) async {
     final tube = _SlowTube();
     final state = await _boot(tester, tube);
     // Start unliked.
@@ -218,38 +214,33 @@ void main() {
     // Spinner gone, like persisted.
     expect(state.player.state.current?.rating, RatingStatus.like);
     expect(find.byIcon(Icons.thumb_up_rounded), findsOneWidget);
-    expect(
-      tester.widget<IconButton>(_likeButton()).tooltip,
-      'Remove like',
-    );
+    expect(tester.widget<IconButton>(_likeButton()).tooltip, 'Remove like');
     state.player.dispose();
     await tester.pump();
   });
 
   testWidgets(
-      'tapping like on an already-liked track sends indifferent (unlike)',
-      (tester) async {
-    final tube = _FakeTube()..rateResult = true;
-    final state = await _boot(tester, tube);
-    // Start with the track already liked.
-    state.player.updateTrackRating(
-      state.player.state.current!.videoId,
-      RatingStatus.like,
-    );
-    await tester.pump();
-    expect(state.player.state.current?.rating, RatingStatus.like);
-    // Tap like — should send indifferent (unlike).
-    await tester.tap(find.byIcon(Icons.thumb_up_rounded));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    // Rate should have been called with indifferent.
-    // The fake tube doesn't track the argument, but the button
-    // should now show "Like" (not "Remove like").
-    expect(
-      tester.widget<IconButton>(_likeButton()).tooltip,
-      'Like',
-    );
-    state.player.dispose();
-    await tester.pump();
-  });
+    'tapping like on an already-liked track sends indifferent (unlike)',
+    (tester) async {
+      final tube = _FakeTube()..rateResult = true;
+      final state = await _boot(tester, tube);
+      // Start with the track already liked.
+      state.player.updateTrackRating(
+        state.player.state.current!.videoId,
+        RatingStatus.like,
+      );
+      await tester.pump();
+      expect(state.player.state.current?.rating, RatingStatus.like);
+      // Tap like — should send indifferent (unlike).
+      await tester.tap(find.byIcon(Icons.thumb_up_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // Rate should have been called with indifferent.
+      // The fake tube doesn't track the argument, but the button
+      // should now show "Like" (not "Remove like").
+      expect(tester.widget<IconButton>(_likeButton()).tooltip, 'Like');
+      state.player.dispose();
+      await tester.pump();
+    },
+  );
 }

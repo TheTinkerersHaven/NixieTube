@@ -15,48 +15,90 @@ import 'package:m3e_core/m3e_core.dart';
 void main() {
   group('expressive scheme springs', () {
     test('spatial tokens', () {
-      _expectSpring(M3EMotion.expressiveSpatialFast,
-          stiffness: 800, dampingRatio: 0.6);
-      _expectSpring(M3EMotion.expressiveSpatialDefault,
-          stiffness: 380, dampingRatio: 0.8);
-      _expectSpring(M3EMotion.expressiveSpatialSlow,
-          stiffness: 200, dampingRatio: 0.8);
+      _expectSpring(
+        M3EMotion.expressiveSpatialFast,
+        stiffness: 800,
+        dampingRatio: 0.6,
+      );
+      _expectSpring(
+        M3EMotion.expressiveSpatialDefault,
+        stiffness: 380,
+        dampingRatio: 0.8,
+      );
+      _expectSpring(
+        M3EMotion.expressiveSpatialSlow,
+        stiffness: 200,
+        dampingRatio: 0.8,
+      );
     });
 
     test('effects tokens are critically damped', () {
-      _expectSpring(M3EMotion.expressiveEffectsFast,
-          stiffness: 3800, dampingRatio: 1.0);
-      _expectSpring(M3EMotion.expressiveEffectsDefault,
-          stiffness: 1600, dampingRatio: 1.0);
-      _expectSpring(M3EMotion.expressiveEffectsSlow,
-          stiffness: 800, dampingRatio: 1.0);
+      _expectSpring(
+        M3EMotion.expressiveEffectsFast,
+        stiffness: 3800,
+        dampingRatio: 1.0,
+      );
+      _expectSpring(
+        M3EMotion.expressiveEffectsDefault,
+        stiffness: 1600,
+        dampingRatio: 1.0,
+      );
+      _expectSpring(
+        M3EMotion.expressiveEffectsSlow,
+        stiffness: 800,
+        dampingRatio: 1.0,
+      );
     });
   });
 
   group('standard scheme springs', () {
     test('spatial tokens', () {
-      _expectSpring(M3EMotion.standardSpatialFast,
-          stiffness: 1400, dampingRatio: 0.9);
-      _expectSpring(M3EMotion.standardSpatialDefault,
-          stiffness: 700, dampingRatio: 0.9);
-      _expectSpring(M3EMotion.standardSpatialSlow,
-          stiffness: 300, dampingRatio: 0.9);
+      _expectSpring(
+        M3EMotion.standardSpatialFast,
+        stiffness: 1400,
+        dampingRatio: 0.9,
+      );
+      _expectSpring(
+        M3EMotion.standardSpatialDefault,
+        stiffness: 700,
+        dampingRatio: 0.9,
+      );
+      _expectSpring(
+        M3EMotion.standardSpatialSlow,
+        stiffness: 300,
+        dampingRatio: 0.9,
+      );
     });
 
     test('effects tokens match the expressive stiffnesses', () {
-      _expectSpring(M3EMotion.standardEffectsFast,
-          stiffness: 3800, dampingRatio: 1.0);
-      _expectSpring(M3EMotion.standardEffectsDefault,
-          stiffness: 1600, dampingRatio: 1.0);
-      _expectSpring(M3EMotion.standardEffectsSlow,
-          stiffness: 800, dampingRatio: 1.0);
+      _expectSpring(
+        M3EMotion.standardEffectsFast,
+        stiffness: 3800,
+        dampingRatio: 1.0,
+      );
+      _expectSpring(
+        M3EMotion.standardEffectsDefault,
+        stiffness: 1600,
+        dampingRatio: 1.0,
+      );
+      _expectSpring(
+        M3EMotion.standardEffectsSlow,
+        stiffness: 800,
+        dampingRatio: 1.0,
+      );
     });
 
     test('overflow and popup tokens', () {
-      _expectSpring(M3EMotion.standardOverflow,
-          stiffness: 1600, dampingRatio: 0.85);
-      _expectSpring(M3EMotion.standardPopup,
-          stiffness: 1000, dampingRatio: 0.6);
+      _expectSpring(
+        M3EMotion.standardOverflow,
+        stiffness: 1600,
+        dampingRatio: 0.85,
+      );
+      _expectSpring(
+        M3EMotion.standardPopup,
+        stiffness: 1000,
+        dampingRatio: 0.6,
+      );
     });
   });
 
@@ -96,8 +138,7 @@ void main() {
         M3EMotion.expressiveSpatialDefault,
       );
       expect(
-        M3EMotion.expressiveSpatialDefault ==
-            M3EMotion.expressiveSpatialFast,
+        M3EMotion.expressiveSpatialDefault == M3EMotion.expressiveSpatialFast,
         isFalse,
       );
       expect(

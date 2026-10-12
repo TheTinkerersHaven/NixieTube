@@ -282,6 +282,8 @@ class AppState extends ChangeNotifier {
   bool _lastNavForward = true;
   bool get lastNavForward => _lastNavForward;
 
+  /// Navigates forward, pushing the current screen for [goBack].
+  /// Detail screens kick off their load on arrival.
   void go(Screen screen, {BrowseItem? detail}) {
     _lastNavForward = true;
     _pushHistory();
@@ -293,6 +295,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Returns to the pushed screen, if any. Detail entries reload on
+  /// arrival so back navigation never shows a stale page.
   void goBack() {
     if (_history.isEmpty) return;
     _lastNavForward = false;
@@ -473,8 +477,7 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       return;
     }
-    final tracks =
-        pl?.tracks.where((t) => t.videoId.isNotEmpty).toList() ?? [];
+    final tracks = pl?.tracks.where((t) => t.videoId.isNotEmpty).toList() ?? [];
     if (tracks.isEmpty) return;
     playSongs(tracks, 0);
   }
@@ -490,10 +493,10 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       return;
     }
-    final upcoming =
-        mix.where((t) => t.videoId != seed.videoId).toList();
+    final upcoming = mix.where((t) => t.videoId != seed.videoId).toList();
     playSongs([seed, ...upcoming], 0);
   }
+
   int _searchGen = 0;
   int _detailGen = 0;
   int _homeGen = 0;
@@ -513,8 +516,7 @@ class AppState extends ChangeNotifier {
     home = home.copyWith(loading: true, error: null);
     notifyListeners();
     try {
-      final feed =
-          await _tube.home().timeout(const Duration(seconds: 60));
+      final feed = await _tube.home().timeout(const Duration(seconds: 60));
       if (gen != _homeGen) return;
       home = home.copyWith(
         shelves: _stampShelves(feed.shelves),
@@ -552,15 +554,17 @@ class AppState extends ChangeNotifier {
     final fixed = await fixReleaseCredits(songTracks);
     if (gen != _homeGen) return;
     final byId = {for (final t in fixed) t.videoId: t};
-    home = home.copyWith(shelves: [
-      for (final shelf in home.shelves)
-        Shelf(shelf.title, [
-          for (final item in shelf.items)
-            item is SongItem
-                ? SongItem(byId[item.track.videoId] ?? item.track)
-                : item,
-        ]),
-    ]);
+    home = home.copyWith(
+      shelves: [
+        for (final shelf in home.shelves)
+          Shelf(shelf.title, [
+            for (final item in shelf.items)
+              item is SongItem
+                  ? SongItem(byId[item.track.videoId] ?? item.track)
+                  : item,
+          ]),
+      ],
+    );
     final after = home.shelves
         .expand((s) => s.items)
         .whereType<SongItem>()
@@ -617,8 +621,7 @@ class AppState extends ChangeNotifier {
   void removeSearchHistory(String query) {
     final key = query.trim().toLowerCase();
     if (key.isEmpty) return;
-    final kept =
-        searchHistory.where((q) => q.toLowerCase() != key).toList();
+    final kept = searchHistory.where((q) => q.toLowerCase() != key).toList();
     if (kept.length == searchHistory.length) return;
     searchHistory = kept;
     try {
@@ -1533,10 +1536,7 @@ class AppState extends ChangeNotifier {
 
   /// Removes [track] from [playlistId] and updates the open playlist in
   /// place (no reload) if it is the one being viewed.
-  Future<bool> removeTrackFromPlaylist(
-    String playlistId,
-    Track track,
-  ) async {
+  Future<bool> removeTrackFromPlaylist(String playlistId, Track track) async {
     final api = _api;
     if (api == null) return false;
     final itemId = await api.playlistItemId(playlistId, track.videoId);
@@ -1545,8 +1545,9 @@ class AppState extends ChangeNotifier {
     if (ok) {
       final opened = _openPlaylist;
       if (opened != null && opened.playlist.id == playlistId) {
-        final remaining =
-            opened.tracks.where((t) => t.videoId != track.videoId).toList();
+        final remaining = opened.tracks
+            .where((t) => t.videoId != track.videoId)
+            .toList();
         _openPlaylist = OpenPlaylist(
           GPlaylist(
             id: opened.playlist.id,
@@ -1824,8 +1825,8 @@ class AppState extends ChangeNotifier {
     if (rating == RatingStatus.unknown) return false;
     final previous =
         _ratingCache[videoId] ?? _likedRating(videoId) ?? RatingStatus.unknown;
-    final wasLiked = _likedIds.contains(videoId) ||
-        _liked.any((t) => t.videoId == videoId);
+    final wasLiked =
+        _likedIds.contains(videoId) || _liked.any((t) => t.videoId == videoId);
 
     // Optimistic UI: the tapped button responds immediately.
     _applyRating(videoId, rating);
@@ -1865,9 +1866,7 @@ class AppState extends ChangeNotifier {
     if (rating == RatingStatus.like) {
       final track = _player.state.current?.videoId == videoId
           ? _player.state.current
-          : _player.state.queue
-              .where((t) => t.videoId == videoId)
-              .firstOrNull;
+          : _player.state.queue.where((t) => t.videoId == videoId).firstOrNull;
       if (track != null && !_liked.any((t) => t.videoId == videoId)) {
         _liked = [..._liked, track];
         _updateLikedPlaylistEntry();
@@ -2119,8 +2118,7 @@ class AppState extends ChangeNotifier {
       // from local knowledge without waiting for a queue change.
       final local = <String, RatingStatus>{};
       for (final t in _player.state.queue) {
-        if (_likedIds.contains(t.videoId) &&
-            t.rating != RatingStatus.like) {
+        if (_likedIds.contains(t.videoId) && t.rating != RatingStatus.like) {
           local[t.videoId] = RatingStatus.like;
         }
       }
@@ -2161,8 +2159,7 @@ class AppState extends ChangeNotifier {
   int _lyricsGen = 0;
 
   /// Selected lyrics provider, persisted. Defaults to LRCLIB.
-  LyricsSource get lyricsSource =>
-      LyricsSource.fromKey(_config.lyricsSource);
+  LyricsSource get lyricsSource => LyricsSource.fromKey(_config.lyricsSource);
 
   /// Switches the lyrics provider, refetching the current track from
   /// the newly selected source.
@@ -2395,8 +2392,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// The cached square cover URL for [videoId], or null (disk-backed).
-  String? cachedSquareCover(String videoId) =>
-      _tube.cachedSquareCover(videoId);
+  String? cachedSquareCover(String videoId) => _tube.cachedSquareCover(videoId);
 
   /// Artwork URL the player UI shows for [track]: the resolved square
   /// cover when cached, else the raw frame. Tiles and palette use the
@@ -2658,8 +2654,7 @@ class AppState extends ChangeNotifier {
 
   /// Chromium-family profiles on this device, for the
   /// one-click cookie import (see [loginFromBrowser]).
-  List<BrowserProfile> get browserProfiles =>
-      BrowserCookies.detectProfiles();
+  List<BrowserProfile> get browserProfiles => BrowserCookies.detectProfiles();
 
   /// Signs in by importing the YouTube cookie straight from a
   /// browser's own store (headless browser + DevTools protocol,
@@ -2674,7 +2669,8 @@ class AppState extends ChangeNotifier {
     final detected = BrowserCookies.detectProfiles();
     final source = profile ?? (detected.isEmpty ? null : detected.first);
     if (source == null) {
-      _loginDetail = 'No Chromium-family browser profile found on '
+      _loginDetail =
+          'No Chromium-family browser profile found on '
           'this device.';
       notifyListeners();
       return false;
@@ -2685,7 +2681,8 @@ class AppState extends ChangeNotifier {
     try {
       final header = await BrowserCookies.importYouTubeCookie(source);
       if (header == null || header.isEmpty) {
-        _loginDetail = 'No signed-in YouTube session found in ${source.label}.\n'
+        _loginDetail =
+            'No signed-in YouTube session found in ${source.label}.\n'
             'Log into music.youtube.com in that browser first.';
         return false;
       }
@@ -2857,6 +2854,8 @@ class AppState extends ChangeNotifier {
   bool _nowReady = false;
   bool get nowReady => _nowReady;
 
+  /// Opens the Now Playing overlay. Tabs stay out until the slide
+  /// completes ([nowReady]) to keep the transition cheap.
   void openNow() {
     _nowOpen = true;
     _nowReady = false;
@@ -2864,6 +2863,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Closes the overlay, also exiting full-screen lyrics so the next
+  /// open lands on the standard view.
   void closeNow() {
     _nowOpen = false;
     _nowReady = false;
@@ -2878,12 +2879,14 @@ class AppState extends ChangeNotifier {
   bool _lyricsFull = false;
   bool get lyricsFull => _lyricsFull;
 
+  /// Enters full-screen lyrics (no-op when already there).
   void expandLyrics() {
     if (_lyricsFull) return;
     _lyricsFull = true;
     notifyListeners();
   }
 
+  /// Leaves full-screen lyrics (no-op when not in it).
   void collapseLyrics() {
     if (!_lyricsFull) return;
     _lyricsFull = false;
@@ -3150,6 +3153,8 @@ class AppState extends ChangeNotifier {
   final Set<String> _subscribed = {};
   final Set<String> _subscribeBusy = {};
 
+  /// Locally-known subscription state for [channelId]. The set fills
+  /// from library loads; toggles update it optimistically.
   bool isSubscribed(String channelId) => _subscribed.contains(channelId);
 
   /// Resolves and toggles the subscription state for [channelId].

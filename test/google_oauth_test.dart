@@ -17,8 +17,7 @@ import 'package:nixietube/sys/google_oauth.dart';
 import 'mock_dio.dart';
 
 void main() {
-  test('loginBrowser keeps the callback server open for a delayed redirect',
-      () async {
+  test('loginBrowser keeps the callback server open for a delayed redirect', () async {
     final dir = Directory.systemTemp.createTempSync('nixietube-oauth-');
     final storePath = '${dir.path}/oauth.properties';
     // Longer than the ~1s after which the old poll gave up.
@@ -27,14 +26,16 @@ void main() {
     try {
       // Fake token endpoint: any POST returns a valid token set,
       // so no real network call is made during the exchange.
-      final client = mockDio((options) async => (
-            200,
-            jsonEncode({
-              'access_token': 'test-access-token',
-              'refresh_token': 'test-refresh-token',
-              'expires_in': 3600,
-            }),
-          ));
+      final client = mockDio(
+        (options) async => (
+          200,
+          jsonEncode({
+            'access_token': 'test-access-token',
+            'refresh_token': 'test-refresh-token',
+            'expires_in': 3600,
+          }),
+        ),
+      );
       final oauth = GoogleOAuth(dio: client, storePath: storePath);
 
       final ok = await oauth.loginBrowser(
@@ -51,10 +52,9 @@ void main() {
             try {
               final browser = HttpClient();
               try {
-                final target = redirectUri.replace(queryParameters: {
-                  'code': 'auth-code',
-                  'state': state,
-                });
+                final target = redirectUri.replace(
+                  queryParameters: {'code': 'auth-code', 'state': state},
+                );
                 final req = await browser.getUrl(target);
                 final resp = await req.close();
                 await resp.transform(utf8.decoder).join();
@@ -81,9 +81,9 @@ void main() {
         reason: 'the exchanged token must be persisted',
       );
       expect(
-        File(storePath).readAsStringSync().contains(
-              'access_token=test-access-token',
-            ),
+        File(storePath)
+            .readAsStringSync()
+            .contains('access_token=test-access-token'),
         isTrue,
       );
     } finally {

@@ -45,10 +45,10 @@ class TrayMenuKey {
   });
 
   factory TrayMenuKey.of(PlayerState s) => TrayMenuKey(
-        playing: s.playing,
-        videoId: s.current?.videoId,
-        title: s.current?.title,
-      );
+    playing: s.playing,
+    videoId: s.current?.videoId,
+    title: s.current?.title,
+  );
 
   final bool playing;
   final String? videoId;
@@ -65,6 +65,10 @@ class TrayMenuKey {
   int get hashCode => Object.hash(playing, videoId, title);
 }
 
+/// System tray integration: transport menu, show/hide and quit,
+/// driven by player states. Construct, then [start]; [dispose]
+/// tears everything down. All native calls are best-effort so the
+/// tray can never break startup.
 class TrayService with WindowListener {
   TrayService({
     required PlayerController controller,
@@ -109,9 +113,7 @@ class TrayService with WindowListener {
         foreground: scheme.onPrimary,
         size: 256,
       );
-      final file = File(
-        '${Directory.systemTemp.path}/nixietube/tray-icon.png',
-      );
+      final file = File('${Directory.systemTemp.path}/nixietube/tray-icon.png');
       await file.parent.create(recursive: true);
       await file.writeAsBytes(bytes, flush: true);
       final art = Image.fromFile(file.path);
@@ -122,8 +124,7 @@ class TrayService with WindowListener {
 
   /// Current scheme, falling back to the built-in one before the
   /// themed shell publishes (matches MaterialApp's own fallback).
-  ColorScheme get _effectiveScheme =>
-      _scheme.value ?? buildTheme().colorScheme;
+  ColorScheme get _effectiveScheme => _scheme.value ?? buildTheme().colorScheme;
 
   Future<void> start() async {
     if (_started) return;

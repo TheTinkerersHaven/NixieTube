@@ -79,7 +79,8 @@ const placeholderLyrics = <LyricLine>[
 
 /// Placeholder browsables (6) for skeleton rails: no artwork URLs,
 /// so the cards render full bones under the skeleton scope.
-const placeholderBrowseItems = <BrowseItem>[  BrowseItem(
+const placeholderBrowseItems = <BrowseItem>[
+  BrowseItem(
     title: 'Midnight reverie',
     subtitle: 'Album • 2024',
     browseId: 'skeleton-browse-0',
@@ -117,9 +118,9 @@ const placeholderBrowseItems = <BrowseItem>[  BrowseItem(
   ),
 ];
 
-/// Placeholder artist for the skeleton artist view: the loaded
-/// [_ArtistDetailView] layout renders under an enabled Skeletonizer,
-/// so banner, buttons, top songs, rails and bio reveal in place.
+/// Placeholder artist for the skeleton artist view: the loaded artist
+/// detail layout renders under an enabled Skeletonizer, so banner,
+/// buttons, top songs, rails and bio reveal in place.
 /// No artwork URLs: tiles render full bones without touching the
 /// artwork store.
 const placeholderArtist = ArtistDetail(
@@ -140,11 +141,7 @@ const placeholderArtist = ArtistDetail(
 const placeholderMixes = <HomeMix>[
   HomeMix(title: 'Midnight reverie', subtitle: 'Mix', thumbnails: []),
   HomeMix(title: 'Glass', subtitle: 'Mix', thumbnails: []),
-  HomeMix(
-    title: 'Paper lanterns in the rain',
-    subtitle: 'Mix',
-    thumbnails: [],
-  ),
+  HomeMix(title: 'Paper lanterns in the rain', subtitle: 'Mix', thumbnails: []),
   HomeMix(title: 'Ultraviolet daydream', subtitle: 'Mix', thumbnails: []),
   HomeMix(title: 'Low orbit', subtitle: 'Mix', thumbnails: []),
   HomeMix(title: 'Neon dust', subtitle: 'Mix', thumbnails: []),

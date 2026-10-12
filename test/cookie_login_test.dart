@@ -130,8 +130,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('sign-out is per-session and hidden when signed out',
-      (tester) async {
+  testWidgets('sign-out is per-session and hidden when signed out', (
+    tester,
+  ) async {
     final env = await _pumpSettings(tester);
     // Fresh state: neither session connected, so neither card offers
     // sign-out (Last.fm is disconnected too).
@@ -154,8 +155,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('embedded login degrades without native webview',
-      (tester) async {
+  testWidgets('embedded login degrades without native webview', (tester) async {
     final env = await _pumpSettings(tester);
     final loginButton = find.text('Log in with browser');
     await tester.ensureVisible(loginButton);
@@ -164,18 +164,22 @@ void main() {
     await tester.pump();
     // Native calls hang without the platform side: pump until the
     // capped waits fire into the error state.
-    for (var i = 0;
-        i < 30 &&
-            find.text('Could not open the login window.').evaluate().isEmpty;
-        i++) {
+    for (
+      var i = 0;
+      i < 30 &&
+          find.text('Could not open the login window.').evaluate().isEmpty;
+      i++
+    ) {
       await tester.pump(const Duration(seconds: 1));
     }
     expect(find.text('Could not open the login window.'), findsOneWidget);
     await tester.tapAt(tester.getCenter(find.text('Cancel')));
-    for (var i = 0;
-        i < 10 &&
-            find.text('Could not open the login window.').evaluate().isNotEmpty;
-        i++) {
+    for (
+      var i = 0;
+      i < 10 &&
+          find.text('Could not open the login window.').evaluate().isNotEmpty;
+      i++
+    ) {
       await tester.pump(const Duration(seconds: 1));
     }
     expect(find.text('Could not open the login window.'), findsNothing);
@@ -183,8 +187,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('logoutCookie clears only the cookie session',
-      (tester) async {
+  testWidgets('logoutCookie clears only the cookie session', (tester) async {
     final env = await _pumpSettings(tester);
     env.state.tube.auth = const AuthSession(
       cookie: 'SAPISID=abc',
@@ -212,11 +215,8 @@ void main() {
   });
 
   testWidgets('played tracks move to the head of activity', (tester) async {
-    Track track(String id) => Track(
-          videoId: id,
-          title: 'Title $id',
-          artists: const [],
-        );
+    Track track(String id) =>
+        Track(videoId: id, title: 'Title $id', artists: const []);
     final env = await _pumpSettings(
       tester,
       resolveStream: (id) async =>
@@ -226,10 +226,7 @@ void main() {
     env.state.player.playTracks([track('v1')]);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(
-      env.state.activity.map((t) => t.videoId).toList(),
-      ['v1'],
-    );
+    expect(env.state.activity.map((t) => t.videoId).toList(), ['v1']);
     // A second track jumps ahead; replaying dedups to the front.
     env.state.player.playTracks([track('v2')]);
     await tester.pump();
@@ -237,24 +234,21 @@ void main() {
     env.state.player.playTracks([track('v1')]);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(
-      env.state.activity.map((t) => t.videoId).toList(),
-      ['v1', 'v2'],
-    );
+    expect(env.state.activity.map((t) => t.videoId).toList(), ['v1', 'v2']);
     env.state.player.dispose();
     await tester.pump();
   });
 
   testWidgets('pins toggle, persist as snapshots, and reload', (tester) async {
     ShelfItem song(String id) => ShelfItem.song(
-          Track(videoId: id, title: 'Title $id', artists: const []),
-        );
+      Track(videoId: id, title: 'Title $id', artists: const []),
+    );
     ShelfItem album(String id) => ShelfItem.browse(
-          title: 'Album $id',
-          subtitle: 'Album',
-          browseId: id,
-          thumbnails: const [],
-        );
+      title: 'Album $id',
+      subtitle: 'Album',
+      browseId: id,
+      thumbnails: const [],
+    );
     final env = await _pumpSettings(tester);
     expect(env.state.pinnedPicks, isEmpty);
     // Pinning stores a snapshot; unpinning removes by id.
@@ -263,27 +257,14 @@ void main() {
     expect(env.state.pinnedPicks.length, 2);
     expect(env.state.isPinned(song('v1')), isTrue);
     env.state.togglePin(song('v1'));
-    expect(
-      env.state.pinnedPicks.map(AppState.pickKeyOf),
-      ['b:MPRE1'],
-    );
+    expect(env.state.pinnedPicks.map(AppState.pickKeyOf), ['b:MPRE1']);
     // Codec round-trips both kinds, and drops junk.
-    final songBack = AppState.pinFromJson(
-      AppState.pinToJson(song('v9')),
-    );
+    final songBack = AppState.pinFromJson(AppState.pinToJson(song('v9')));
     expect(songBack, isA<SongItem>());
-    expect(
-      (songBack as SongItem).track.videoId,
-      'v9',
-    );
-    final albumBack = AppState.pinFromJson(
-      AppState.pinToJson(album('MPRE9')),
-    );
+    expect((songBack as SongItem).track.videoId, 'v9');
+    final albumBack = AppState.pinFromJson(AppState.pinToJson(album('MPRE9')));
     expect(albumBack, isA<BrowseItem>());
-    expect(
-      (albumBack as BrowseItem).browseId,
-      'MPRE9',
-    );
+    expect((albumBack as BrowseItem).browseId, 'MPRE9');
     expect(AppState.pinFromJson({'k': 'zzz'}), isNull);
     expect(AppState.pinFromJson('junk'), isNull);
     // Persisted synchronously: a fresh AppState on this config reloads
@@ -305,13 +286,11 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('session plays survive restart ahead of stale history',
-      (tester) async {
-    Track track(String id) => Track(
-          videoId: id,
-          title: 'Title $id',
-          artists: const [],
-        );
+  testWidgets('session plays survive restart ahead of stale history', (
+    tester,
+  ) async {
+    Track track(String id) =>
+        Track(videoId: id, title: 'Title $id', artists: const []);
     Future<ResolvedStream?> resolve(String id) async =>
         ResolvedStream(url: 'https://x/$id', bitrate: 128000);
     final dir = Directory.systemTemp.createTempSync('nt-restart');
@@ -326,10 +305,7 @@ void main() {
     env.state.player.playTracks([track('v1')]);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(
-      env.state.activity.map((t) => t.videoId).toList(),
-      ['v1'],
-    );
+    expect(env.state.activity.map((t) => t.videoId).toList(), ['v1']);
     env.state.player.dispose();
     await tester.pump();
     // Session 2 (restart): the server still returns the stale list,
@@ -344,20 +320,17 @@ void main() {
     env.state.apiOverride = _StaleGData();
     await env.state.loadLibrary();
     await tester.pump();
-    expect(
-      env.state.activity.map((t) => t.videoId).toList(),
-      ['v1', 'ten-toes'],
-    );
+    expect(env.state.activity.map((t) => t.videoId).toList(), [
+      'v1',
+      'ten-toes',
+    ]);
     env.state.player.dispose();
     await tester.pump();
   });
 }
 
-Track _restartTrack(String id) => Track(
-      videoId: id,
-      title: 'Title $id',
-      artists: const [],
-    );
+Track _restartTrack(String id) =>
+    Track(videoId: id, title: 'Title $id', artists: const []);
 
 /// Server frozen on old history, like a lagging watchtime backend.
 class _StaleGData extends GDataApi {
@@ -367,8 +340,9 @@ class _StaleGData extends GDataApi {
   Future<List<GPlaylist>> playlists() async => const [];
 
   @override
-  Future<List<Track>> recentActivity({int max = 30}) async =>
-      [_restartTrack('ten-toes')];
+  Future<List<Track>> recentActivity({int max = 30}) async => [
+    _restartTrack('ten-toes'),
+  ];
 
   @override
   Future<List<ShelfItem>> subscriptions({int max = 50}) async => const [];
@@ -386,8 +360,7 @@ class _StaleGData extends GDataApi {
 /// Tube with no network: enrichment is identity, radio is empty.
 class _StaleTube extends InnerTube {
   @override
-  Future<List<Track>> upNext(String videoId, {String? playlistId}) async =>
-      [];
+  Future<List<Track>> upNext(String videoId, {String? playlistId}) async => [];
 
   @override
   Future<Track> enrichTrack(Track track) async => track;

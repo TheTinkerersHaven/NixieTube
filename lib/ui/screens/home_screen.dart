@@ -33,21 +33,26 @@ class HomeScreen extends StatelessWidget {
     final home = context.select<AppState, HomeUiState>((s) => s.home);
     final account = context.select<AppState, String?>((s) => s.account);
     final activity = context.select<AppState, List<Track>>((s) => s.activity);
-    final recentArtists =
-        context.select<AppState, List<BrowseItem>>((s) => s.recentArtists);
-    final artists =
-        context.select<AppState, List<BrowseItem>>((s) => s.artists);
-    final playlists =
-        context.select<AppState, List<GPlaylist>>((s) => s.playlists);
+    final recentArtists = context.select<AppState, List<BrowseItem>>(
+      (s) => s.recentArtists,
+    );
+    final artists = context.select<AppState, List<BrowseItem>>(
+      (s) => s.artists,
+    );
+    final playlists = context.select<AppState, List<GPlaylist>>(
+      (s) => s.playlists,
+    );
     final discover = context.select<AppState, List<Track>>((s) => s.discover);
     final liked = context.select<AppState, List<Track>>((s) => s.liked);
     final pins = context.select<AppState, List<ShelfItem>>(
       (s) => s.pinnedPicks,
     );
-    final accountAvatar =
-        context.select<AppState, String?>((s) => s.accountAvatar);
-    final libraryLoading =
-        context.select<AppState, bool>((s) => s.libraryLoading);
+    final accountAvatar = context.select<AppState, String?>(
+      (s) => s.accountAvatar,
+    );
+    final libraryLoading = context.select<AppState, bool>(
+      (s) => s.libraryLoading,
+    );
     final state = context.read<AppState>();
     final loading = home.loading && home.shelves.isEmpty;
     if (home.error != null && home.shelves.isEmpty) {
@@ -190,14 +195,17 @@ class HomeScreen extends StatelessWidget {
       final a = t.album;
       if (a == null || a.browseId == null || a.browseId!.isEmpty) continue;
       if (isSingleRelease(t)) continue;
-      addBrowse(a.browseId, () => ShelfItem.browse(
-            title: a.name,
-            subtitle: 'Album',
-            browseId: a.browseId!,
-            thumbnails: t.thumbnails.isNotEmpty
-                ? t.thumbnails
-                : const <Thumbnail>[],
-          ));
+      addBrowse(
+        a.browseId,
+        () => ShelfItem.browse(
+          title: a.name,
+          subtitle: 'Album',
+          browseId: a.browseId!,
+          thumbnails: t.thumbnails.isNotEmpty
+              ? t.thumbnails
+              : const <Thumbnail>[],
+        ),
+      );
     }
 
     for (final b in [...recentArtists, ...artists]) {
@@ -258,19 +266,19 @@ class HomeScreen extends StatelessWidget {
   /// by content popping in. Replaced by the real shelves once loaded.
   List<Shelf> _placeholderShelves() {
     SongItem song(int i) => SongItem(
-          Track(
-            videoId: 'skeleton-$i',
-            title: 'Song title',
-            artists: const [],
-            thumbnails: const [],
-          ),
-        );
+      Track(
+        videoId: 'skeleton-$i',
+        title: 'Song title',
+        artists: const [],
+        thumbnails: const [],
+      ),
+    );
     ShelfItem browse(int i) => ShelfItem.browse(
-          title: 'Album title',
-          subtitle: 'Artist name',
-          browseId: 'skeleton-b$i',
-          thumbnails: const [],
-        );
+      title: 'Album title',
+      subtitle: 'Artist name',
+      browseId: 'skeleton-b$i',
+      thumbnails: const [],
+    );
     return [
       // A vertical track-list shelf and two horizontal tile rails give a
       // realistic skeleton of a typical feed.
@@ -377,8 +385,9 @@ class HomeScreen extends StatelessWidget {
   /// seeds) lifted into one tap-to-play rail. Skeleton placeholders
   /// while loading so the section never pops the layout.
   Widget _mixes(BuildContext context, AppState state, bool loading) {
-    final items =
-        loading ? placeholderMixes : AppState.mixesOfShelves(state.home.shelves);
+    final items = loading
+        ? placeholderMixes
+        : AppState.mixesOfShelves(state.home.shelves);
     if (items.isEmpty) return const SizedBox.shrink();
     return Column(
       children: [
@@ -406,11 +415,7 @@ class HomeScreen extends StatelessWidget {
   Widget _personal(
     BuildContext context,
     AppState state,
-    ({
-      List<ShelfItem> songs,
-      List<ShelfItem> nonSongs,
-    })
-    pools, {
+    ({List<ShelfItem> songs, List<ShelfItem> nonSongs}) pools, {
     List<ShelfItem> pins = const [],
   }) {
     return LayoutBuilder(
@@ -548,8 +553,14 @@ List<ShelfItem> buildQuickPickItems({
   if (out.length >= slots) return out;
   out.addAll(
     fillQuickPicks(
-      [for (final s in songs) if (fresh(s)) s],
-      [for (final n in nonSongs) if (fresh(n)) n],
+      [
+        for (final s in songs)
+          if (fresh(s)) s,
+      ],
+      [
+        for (final n in nonSongs)
+          if (fresh(n)) n,
+      ],
       slots - out.length,
       rng: rng,
     ),
@@ -626,8 +637,10 @@ class _QuickPicksGrid extends StatelessWidget {
     final playingId = context.select<AppState, String?>(
       (s) => s.playerState.current?.videoId,
     );
-    final gridSongs =
-        pools.songs.whereType<SongItem>().map((e) => e.track).toList();
+    final gridSongs = pools.songs
+        .whereType<SongItem>()
+        .map((e) => e.track)
+        .toList();
     void open(ShelfItem item) {
       if (item is SongItem) {
         var idx = gridSongs.indexWhere((t) => t.videoId == item.track.videoId);
@@ -730,8 +743,7 @@ class _QuickPicksGrid extends StatelessWidget {
         const SizedBox(height: 8),
         LayoutBuilder(
           builder: (context, constraints) {
-            final sourceCount =
-                pools.songs.length + pools.nonSongs.length;
+            final sourceCount = pools.songs.length + pools.nonSongs.length;
             final m = quickPickMetrics(constraints.maxWidth, sourceCount);
             // Fill every available cell: pins first, then the pools.
             // The per-launch nonce rotates the grid every app start;
@@ -742,8 +754,7 @@ class _QuickPicksGrid extends StatelessWidget {
               nonSongs: pools.nonSongs,
               slots: m.shown,
               rng: Random(
-                _picksSeed(pools.songs, pools.nonSongs) ^
-                    state.quickPicksNonce,
+                _picksSeed(pools.songs, pools.nonSongs) ^ state.quickPicksNonce,
               ),
             );
             // Fixed height from the column count so the grid stays lazy:
@@ -757,8 +768,7 @@ class _QuickPicksGrid extends StatelessWidget {
                 ),
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: picks.length,
-                itemBuilder: (context, i) =>
-                    pickTile(picks[i]),
+                itemBuilder: (context, i) => pickTile(picks[i]),
               ),
             );
           },
@@ -834,7 +844,8 @@ void _playShelfSong(AppState state, List<Track> songs, int index) {
 
 /// One home shelf: song-only shelves as a track column, mixed shelves as
 /// a browse rail.
-class _ShelfSection extends StatelessWidget {  const _ShelfSection({required this.shelf});
+class _ShelfSection extends StatelessWidget {
+  const _ShelfSection({required this.shelf});
 
   final Shelf shelf;
   @override

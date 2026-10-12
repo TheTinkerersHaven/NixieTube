@@ -17,10 +17,7 @@ void main() {
     expect(bounds.width, greaterThan(200));
     expect(bounds.height, greaterThan(200));
     // Roughly square viewBox, roughly centered on itself.
-    expect(
-      (bounds.width - bounds.height).abs(),
-      lessThan(bounds.width * 0.1),
-    );
+    expect((bounds.width - bounds.height).abs(), lessThan(bounds.width * 0.1));
     expect(bounds.left, greaterThan(0));
     expect(bounds.top, greaterThan(0));
   });
@@ -34,8 +31,7 @@ void main() {
     expect(bounds.height, 20);
   });
 
-  testWidgets('rendered icon is a valid PNG in theme colors',
-      (tester) async {
+  testWidgets('rendered icon is a valid PNG in theme colors', (tester) async {
     final bytes = await tester.runAsync(
       () => renderTrayIcon(
         background: const Color(0xFFE7BDB7),
