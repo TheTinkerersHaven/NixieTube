@@ -99,9 +99,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Flat, explicit: pattern + path + merge-multiple means the file
+      # lands at dist/<name>.AppImage no matter how the extractor
+      # nests it (v8 without `path` left the glob below empty, which
+      # is how v0.1.0 shipped an AppImage-less release).
       - uses: actions/download-artifact@v8
+        with:
+          pattern: appimage
+          path: dist
+          merge-multiple: true
+      - name: List staged files
+        run: |
+          ls -laR dist
+          test -n "$(find dist -name '*.AppImage' -print -quit)"
+      # Recursive glob: matches dist/x.AppImage and dist/appimage/x.AppImage.
+      # fail_on_unmatched_files: an empty release must fail, never ship.
       - uses: softprops/action-gh-release@v3
         with:
           files: |
-            appimage/*.AppImage
+            dist/**/*.AppImage
+          fail_on_unmatched_files: true
           generate_release_notes: true
