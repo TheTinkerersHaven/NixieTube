@@ -66,6 +66,8 @@ class StreamResolver {
   /// Maximum age of a cached visitor id before it is re-fetched.
   static const visitorTtl = Duration(minutes: 30);
 
+  /// Releases the HTTP client. Call once at shutdown; in-flight
+  /// requests fail fast instead of hanging on dispose.
   void close() => _dio.close();
 
   /// Drops all HTTP-side stream state the way an app restart would:
@@ -105,8 +107,7 @@ class StreamResolver {
             options: Options(headers: {'User-Agent': _visionosUserAgent}),
           )
           .timeout(const Duration(seconds: 30));
-      final m = RegExp(r'"VISITOR_DATA":"([^"]+)"')
-          .firstMatch(res.data ?? '');
+      final m = RegExp(r'"VISITOR_DATA":"([^"]+)"').firstMatch(res.data ?? '');
       final visitor = m?.group(1);
       if (visitor == null || visitor.isEmpty) return _visitor;
       _visitor = visitor;

@@ -137,8 +137,11 @@ class Track {
   /// Public dislike count, or -1 when unknown.
   final int dislikeCount;
 
+  /// Comma-joined artist names for display rows.
   String artistNames() => artists.map((a) => a.name).join(', ');
 
+  /// Largest thumbnail by width, regardless of shape. Banners, MPRIS
+  /// and Discord use this; square tiles prefer [displayArtwork].
   String? get bestArtwork {
     if (thumbnails.isEmpty) return null;
     var best = thumbnails.first;

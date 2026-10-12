@@ -131,83 +131,83 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                             ],
                           ),
                         ),
-                      // Controls stay mounted while a track
-                      // loads, only disabled: the row never
-                      // collapses, so the bar keeps its height.
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.skip_previous_rounded,
-                              size: 28,
+                        // Controls stay mounted while a track
+                        // loads, only disabled: the row never
+                        // collapses, so the bar keeps its height.
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.skip_previous_rounded,
+                                size: 28,
+                              ),
+                              tooltip: 'Previous',
+                              onPressed: track == null || loading
+                                  ? null
+                                  : () => state.player.previous(),
                             ),
-                            tooltip: 'Previous',
-                            onPressed: track == null || loading
-                                ? null
-                                : () => state.player.previous(),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              playing
-                                  ? Icons.pause_rounded
-                                  : Icons.play_arrow_rounded,
-                              size: 28,
+                            IconButton(
+                              icon: Icon(
+                                playing
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                size: 28,
+                              ),
+                              tooltip: 'Play/pause',
+                              onPressed: track == null || loading
+                                  ? null
+                                  : () => state.player.togglePlayPause(),
                             ),
-                            tooltip: 'Play/pause',
-                            onPressed: track == null || loading
-                                ? null
-                                : () => state.player.togglePlayPause(),
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.skip_next_rounded,
-                              size: 28,
+                            IconButton(
+                              icon: const Icon(
+                                Icons.skip_next_rounded,
+                                size: 28,
+                              ),
+                              tooltip: 'Next',
+                              onPressed: track == null || loading
+                                  ? null
+                                  : () => state.player.next(),
                             ),
-                            tooltip: 'Next',
-                            onPressed: track == null || loading
-                                ? null
-                                : () => state.player.next(),
-                          ),
                             SingleMotionBuilder(
-                            motion:
-                                M3EMotion.expressiveEffectsDefault.toMotion(),
-                            value: _volumeOpen ? 1.0 : 0.0,
-                            builder: (context, value, _) {
-                              return Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.volume_up_rounded,
-                                      size: 28,
+                              motion: M3EMotion.expressiveEffectsDefault
+                                  .toMotion(),
+                              value: _volumeOpen ? 1.0 : 0.0,
+                              builder: (context, value, _) {
+                                return Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.volume_up_rounded,
+                                        size: 28,
+                                      ),
+                                      tooltip: 'Volume',
+                                      color: _volumeOpen
+                                          ? scheme.primary
+                                          : null,
+                                      onPressed: () => setState(
+                                        () => _volumeOpen = !_volumeOpen,
+                                      ),
                                     ),
-                                    tooltip: 'Volume',
-                                    color: _volumeOpen
-                                        ? scheme.primary
-                                        : null,
-                                    onPressed: () => setState(
-                                      () => _volumeOpen = !_volumeOpen,
+                                    const SizedBox(width: 4),
+                                    SizedBox(
+                                      width: 120.0 * value,
+                                      child: VolumeSlider(
+                                        state: state,
+                                        trackHeight: 12,
+                                        thumbHeight: 18,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  SizedBox(
-                                    width: 120.0 * value,
-                                    child: VolumeSlider(
-                                      state: state,
-                                      trackHeight: 12,
-                                      thumbHeight: 18,
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
+                                  ],
+                                );
+                              },
+                            ),
                           ],
                         ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
                   // Volume pop-out removed; volume control lives inline
                   // in the transport row (see below).
                   if (error != null)
@@ -262,7 +262,10 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                     height: 24,
                     child: loading
                         ? const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 7, horizontal: 16),
+                            padding: EdgeInsets.symmetric(
+                              vertical: 7,
+                              horizontal: 16,
+                            ),
                             child: M3ELinearWavyProgressIndicator(),
                           )
                         : Padding(

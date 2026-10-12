@@ -352,6 +352,8 @@ class ArtworkStore {
   final _ArtPool _bannerPool;
   final _ArtPool _cropPool;
 
+  /// Shuts down the HTTP client and the worker pools. In-flight jobs
+  /// fail fast; call once at app/test teardown.
   void close() {
     _dio.close();
     _squarePool.dispose();
@@ -390,9 +392,11 @@ class ArtworkStore {
   // black bars, e.g. in playlist collages) must not be reused.
   String _rawFile(String url) => '$_dirPath/${_sha1Hex(url)}.img3';
   String _sourceFile(String url) => '$_dirPath/${_sha1Hex(url)}.source3.img';
+
+  /// On-disk path of the finished square crop for [url]. Stable
+  /// across launches (content hash), so tiles, player and MPRIS share
+  /// one render instead of each decoding.
   String croppedFilePath(String url) => '$_dirPath/${_sha1Hex(url)}.crop5.png';
-
-
 
   void _noteFailure(Map<String, int> failures, String url) {
     failures[url] = (failures[url] ?? 0) + 1;
@@ -610,7 +614,8 @@ class ArtworkStore {
 
   /// Cropped file only if already rendered on disk.
   /// Uses async file check to prevent UI thread blocking.
-  Future<File?> cachedFile(String url) async {    if (url.trim().isEmpty) return null;
+  Future<File?> cachedFile(String url) async {
+    if (url.trim().isEmpty) return null;
     try {
       final target = File(croppedFilePath(url));
       if (await target.exists() && await target.length() > 0) return target;

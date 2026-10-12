@@ -15,8 +15,12 @@ class PlaylistPickerDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final track = context.select<AppState, Track?>((s) => s.playlistDialogTrack);
-    final playlists = context.select<AppState, List<GPlaylist>>((s) => s.playlists);
+    final track = context.select<AppState, Track?>(
+      (s) => s.playlistDialogTrack,
+    );
+    final playlists = context.select<AppState, List<GPlaylist>>(
+      (s) => s.playlists,
+    );
     // Render state, not just data: the loading flag flips
     // and the membership map is replaced when the
     // per-playlist checks land, while the track and the
@@ -92,10 +96,7 @@ class PlaylistPickerDialog extends StatelessWidget {
                   // M3E loading shapes; tight 32x32 keeps the
                   // slot the spinner used to occupy.
                   child: M3ELoadingIndicator(
-                    constraints: BoxConstraints.tightFor(
-                      width: 32,
-                      height: 32,
-                    ),
+                    constraints: BoxConstraints.tightFor(width: 32, height: 32),
                   ),
                 ),
               )

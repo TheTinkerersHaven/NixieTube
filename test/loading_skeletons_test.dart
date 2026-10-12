@@ -108,11 +108,7 @@ Future<({AppState state, T tube})> _boot<T extends InnerTube>(
   return (state: state, tube: tube);
 }
 
-Future<void> _pumpUnder(
-  WidgetTester tester,
-  AppState state,
-  Widget child,
-) {
+Future<void> _pumpUnder(WidgetTester tester, AppState state, Widget child) {
   return tester.pumpWidget(
     MaterialApp(
       theme: buildTheme(),
@@ -125,13 +121,13 @@ Future<void> _pumpUnder(
 
 /// Enabled skeleton scopes only (tiles also wrap themselves in
 /// disabled scopes while settled).
-Finder _enabledSkeletons() => find.byWidgetPredicate(
-      (w) => w is Skeletonizer && w.enabled,
-    );
+Finder _enabledSkeletons() =>
+    find.byWidgetPredicate((w) => w is Skeletonizer && w.enabled);
 
 void main() {
-  testWidgets('open-playlist list loading shimmers skeleton rows',
-      (tester) async {
+  testWidgets('open-playlist list loading shimmers skeleton rows', (
+    tester,
+  ) async {
     // Tall viewport: ListView.builder only mounts visible
     // rows, and all 8 placeholders must exist to count them.
     tester.view.physicalSize = const Size(800, 2400);
@@ -161,8 +157,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('album detail loading shimmers, then reveals in place',
-      (tester) async {
+  testWidgets('album detail loading shimmers, then reveals in place', (
+    tester,
+  ) async {
     // Tall viewport: see above.
     tester.view.physicalSize = const Size(800, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -202,8 +199,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('artist detail loading shimmers, then reveals in place',
-      (tester) async {
+  testWidgets('artist detail loading shimmers, then reveals in place', (
+    tester,
+  ) async {
     // Tall viewport: see above.
     tester.view.physicalSize = const Size(800, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -270,8 +268,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('failed lyrics fetch settles on "No lyrics found"',
-      (tester) async {
+  testWidgets('failed lyrics fetch settles on "No lyrics found"', (
+    tester,
+  ) async {
     final env = await _boot(tester, _QuietTube());
     await _pumpUnder(tester, env.state, const NowPlayingScreen());
     env.state.player.playTracks([

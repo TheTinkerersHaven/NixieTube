@@ -81,12 +81,7 @@ Future<AppState> _bootShell(WidgetTester tester) async {
   final lastfm = LastFmService(config: config);
 
   await tester.pumpWidget(
-    NixieTubeApp(
-      state: state,
-      mpris: mpris,
-      discord: discord,
-      lastfm: lastfm,
-    ),
+    NixieTubeApp(state: state, mpris: mpris, discord: discord, lastfm: lastfm),
   );
   // Bounded pumps only: the loading home shimmers forever, so the
   // tree never settles while skeletons show.
@@ -139,10 +134,7 @@ void main() {
     state.go(Screen.search);
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.byType(SearchScreen), findsOneWidget);
-    expect(
-      _slideDy(tester, SearchScreen).any((dy) => dy > 0),
-      isTrue,
-    );
+    expect(_slideDy(tester, SearchScreen).any((dy) => dy > 0), isTrue);
     await tester.pump(const Duration(milliseconds: 300));
     state.player.dispose();
     await tester.pump();
@@ -156,10 +148,7 @@ void main() {
     state.goBack();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.byType(HomeScreen), findsOneWidget);
-    expect(
-      _slideDy(tester, HomeScreen).any((dy) => dy < 0),
-      isTrue,
-    );
+    expect(_slideDy(tester, HomeScreen).any((dy) => dy < 0), isTrue);
     await tester.pump(const Duration(milliseconds: 300));
     state.player.dispose();
     await tester.pump();
@@ -177,10 +166,7 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 50));
-    expect(
-      _slideDy(tester, DetailScreen).any((dy) => dy > 0),
-      isTrue,
-    );
+    expect(_slideDy(tester, DetailScreen).any((dy) => dy > 0), isTrue);
     await tester.pump(const Duration(milliseconds: 300));
     state.player.dispose();
     await tester.pump();

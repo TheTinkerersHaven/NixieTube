@@ -53,10 +53,7 @@ class _MixTube extends InnerTube {
   List<Track> radio = [];
 
   @override
-  Future<PlaylistDetail?> playlist(
-    String browseId, {
-    String? params,
-  }) async =>
+  Future<PlaylistDetail?> playlist(String browseId, {String? params}) async =>
       mix;
 
   @override
@@ -65,26 +62,26 @@ class _MixTube extends InnerTube {
 }
 
 BrowseItem _browse(String id, String title) => BrowseItem(
-      title: title,
-      subtitle: 'Mix',
-      browseId: id,
-      thumbnails: const [],
-    );
+  title: title,
+  subtitle: 'Mix',
+  browseId: id,
+  thumbnails: const [],
+);
 
 Track _track(String id) => Track(
-      videoId: id,
-      title: 'Title $id',
-      artists: [ArtistRef('Artist $id')],
-      durationSec: 200,
-    );
+  videoId: id,
+  title: 'Title $id',
+  artists: [ArtistRef('Artist $id')],
+  durationSec: 200,
+);
 
 Track _seed(String id, String playlistId) => Track(
-      videoId: id,
-      title: 'My Mix 1',
-      artists: [ArtistRef('Somebody')],
-      durationSec: 200,
-      playlistId: playlistId,
-    );
+  videoId: id,
+  title: 'My Mix 1',
+  artists: [ArtistRef('Somebody')],
+  durationSec: 200,
+  playlistId: playlistId,
+);
 
 void main() {
   group('mixesOfShelves', () {
@@ -104,10 +101,11 @@ void main() {
         ]),
       ];
       final mixes = AppState.mixesOfShelves(shelves);
-      expect(
-        mixes.map((m) => m.browseId).toList(),
-        ['VLRDmix1', 'VLRDEMseed1', 'VLRDmix2'],
-      );
+      expect(mixes.map((m) => m.browseId).toList(), [
+        'VLRDmix1',
+        'VLRDEMseed1',
+        'VLRDmix2',
+      ]);
       expect(mixes[1].seed?.videoId, 'v9');
       expect(mixes[0].seed, isNull);
     });
@@ -193,10 +191,10 @@ void main() {
         ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(
-        state.player.state.queue.map((t) => t.videoId).toList(),
-        ['m1', 'm2'],
-      );
+      expect(state.player.state.queue.map((t) => t.videoId).toList(), [
+        'm1',
+        'm2',
+      ]);
       expect(state.player.state.current?.videoId, 'm1');
       await drainLyrics(state);
     });
@@ -206,10 +204,11 @@ void main() {
       final state = await boot(tube);
       await state.playMixSeed(_seed('v9', 'RDEMseed1'));
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(
-        state.player.state.queue.map((t) => t.videoId).toList(),
-        ['v9', 'r1', 'r2'],
-      );
+      expect(state.player.state.queue.map((t) => t.videoId).toList(), [
+        'v9',
+        'r1',
+        'r2',
+      ]);
       expect(state.player.state.current?.videoId, 'v9');
       await drainLyrics(state);
     });
@@ -218,10 +217,7 @@ void main() {
       final state = await boot(_MixTube());
       await state.playMixSeed(_seed('v9', 'RDEMnope'));
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(
-        state.player.state.queue.map((t) => t.videoId).toList(),
-        ['v9'],
-      );
+      expect(state.player.state.queue.map((t) => t.videoId).toList(), ['v9']);
       await drainLyrics(state);
     });
 

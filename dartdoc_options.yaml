@@ -1,0 +1,24 @@
+# dartdoc configuration for NixieTube, see
+# https://github.com/dart-lang/dartdoc#dartdoc_optionsyaml
+# and https://dart.dev/tools/dart-doc#configure-generation
+#
+# NOTE: `dart doc` with the bundled SDK currently crashes inside
+# dartdoc itself (dart-lang/dartdoc#4180: RangeError in
+# _stripDocImports on Flutter framework comments; our tree has no
+# @docImport). Until the SDK-side fix lands, generate with the last
+# good release instead:
+#   dart pub global activate dartdoc 9.0.0
+#   dart pub global run dartdoc --output doc/api .
+
+dartdoc:
+  # Dangling [references] fail the build instead of rotting quietly.
+  # `flutter analyze` (comment_references) enforces the same rule.
+  errors:
+    - unresolved-doc-reference
+
+# "View source" links, kept at top level per the dartdoc README
+# (unlike the options above). %r% is intentionally the default
+# branch; pin a tag per release if exactness matters.
+linkToSource:
+  root: '.'
+  uriTemplate: 'https://github.com/TheTinkerersHaven/NixieTube/blob/main/%f%#L%l%'

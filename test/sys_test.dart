@@ -13,8 +13,7 @@ import 'mock_dio.dart';
 void main() {
   group('SysConfig', () {
     test('round-trips values with defaults', () async {
-      final dir =
-          await Directory.systemTemp.createTemp('nt-sysconfig-test');
+      final dir = await Directory.systemTemp.createTemp('nt-sysconfig-test');
       addTearDown(() => dir.delete(recursive: true));
       final config = SysConfig(configPath: '${dir.path}/config.properties');
       expect(config.mprisEnabled, isTrue);
@@ -32,43 +31,40 @@ void main() {
     });
 
     test('readProperties decodes \\uXXXX Java escapes', () async {
-      final dir =
-          await Directory.systemTemp.createTemp('nt-props-unicode');
+      final dir = await Directory.systemTemp.createTemp('nt-props-unicode');
       addTearDown(() => dir.delete(recursive: true));
       final file = File('${dir.path}/auth.properties');
       // Java Properties escapes = as \u003d, exactly as Kotlin writes it.
       await file.writeAsString(
-          'cookie=LOGIN_INFO=abc\\u003d123;sid=x\n'
-          'sapisidHash=1_abc\n'
-          'sessionToken=QUZZT1\\u003dtoken\\u003dmore\n');
+        'cookie=LOGIN_INFO=abc\\u003d123;sid=x\n'
+        'sapisidHash=1_abc\n'
+        'sessionToken=QUZZT1\\u003dtoken\\u003dmore\n',
+      );
       final props = readProperties(file);
       expect(props['cookie'], 'LOGIN_INFO=abc=123;sid=x');
       expect(props['sapisidHash'], '1_abc');
       expect(props['sessionToken'], 'QUZZT1=token=more');
     });
 
-    test('readProperties repairs double-escaped \\uXXXX corruption',
-        () async {
-      final dir =
-          await Directory.systemTemp.createTemp('nt-props-corrupt');
+    test('readProperties repairs double-escaped \\uXXXX corruption', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-props-corrupt');
       addTearDown(() => dir.delete(recursive: true));
       final file = File('${dir.path}/auth.properties');
       // Earlier versions re-escaped the backslash in \u003d on
       // save, producing \\u003d in the file. The repair collapses
       // it back so the token decodes to the original = padding.
       await file.writeAsString(
-          'sessionToken=QUZZT1\\\\u003dtoken\\\\u003dmore\n');
+        'sessionToken=QUZZT1\\\\u003dtoken\\\\u003dmore\n',
+      );
       final props = readProperties(file);
       expect(props['sessionToken'], 'QUZZT1=token=more');
     });
 
     test('readProperties handles backslash escapes', () async {
-      final dir =
-          await Directory.systemTemp.createTemp('nt-props-esc');
+      final dir = await Directory.systemTemp.createTemp('nt-props-esc');
       addTearDown(() => dir.delete(recursive: true));
       final file = File('${dir.path}/test.properties');
-      await file.writeAsString(
-          'a=hello\\nworld\\t!\\\\done\\u003dend');
+      await file.writeAsString('a=hello\\nworld\\t!\\\\done\\u003dend');
       final props = readProperties(file);
       expect(props['a'], 'hello\nworld\t!\\done=end');
     });
@@ -77,8 +73,10 @@ void main() {
   group('PKCE', () {
     test('RFC 7636 challenge vector', () {
       const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
-      expect(codeChallenge(verifier),
-          'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+      expect(
+        codeChallenge(verifier),
+        'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+      );
     });
 
     test('verifier and state are url-safe', () {
@@ -92,8 +90,7 @@ void main() {
 
   group('GoogleOAuth tokens', () {
     test('valid session without refresh when fresh', () async {
-      final dir =
-          await Directory.systemTemp.createTemp('nt-oauth-test');
+      final dir = await Directory.systemTemp.createTemp('nt-oauth-test');
       addTearDown(() => dir.delete(recursive: true));
       var calls = 0;
       final client = mockDio((options) async {
@@ -113,8 +110,9 @@ void main() {
       // Seed fresh tokens directly through the file format.
       final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
       await File('${dir.path}/oauth.properties').writeAsString(
-          'client_id=id\naccess_token=AAA\nrefresh_token=RRR\n'
-          'expires_at=$future\n');
+        'client_id=id\naccess_token=AAA\nrefresh_token=RRR\n'
+        'expires_at=$future\n',
+      );
       final session = await oauth.validSession();
       expect(session?.accessToken, 'AAA');
       expect(calls, 0);
@@ -122,17 +120,10 @@ void main() {
     });
 
     test('expired token refreshes and preserves refresh token', () async {
-      final dir =
-          await Directory.systemTemp.createTemp('nt-oauth-refresh');
+      final dir = await Directory.systemTemp.createTemp('nt-oauth-refresh');
       addTearDown(() => dir.delete(recursive: true));
       final client = mockDio((options) async {
-        return (
-          200,
-          jsonEncode({
-            'access_token': 'NEW',
-            'expires_in': 3600,
-          }),
-        );
+        return (200, jsonEncode({'access_token': 'NEW', 'expires_in': 3600}));
       });
       final config = SysConfig(configPath: '${dir.path}/config.properties');
       config.set('google.clientId', 'id');
@@ -145,8 +136,9 @@ void main() {
       addTearDown(oauth.close);
       final past = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 10;
       await File('${dir.path}/oauth.properties').writeAsString(
-          'client_id=id\naccess_token=OLD\nrefresh_token=RRR\n'
-          'expires_at=$past\n');
+        'client_id=id\naccess_token=OLD\nrefresh_token=RRR\n'
+        'expires_at=$past\n',
+      );
       final session = await oauth.validSession();
       expect(session?.accessToken, 'NEW');
       // Refresh token preserved and persisted.
@@ -155,8 +147,7 @@ void main() {
     });
 
     test('logout deletes the store', () async {
-      final dir =
-          await Directory.systemTemp.createTemp('nt-oauth-logout');
+      final dir = await Directory.systemTemp.createTemp('nt-oauth-logout');
       addTearDown(() => dir.delete(recursive: true));
       final config = SysConfig(configPath: '${dir.path}/config.properties');
       final oauth = GoogleOAuth(

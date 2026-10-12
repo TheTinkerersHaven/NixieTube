@@ -10,13 +10,8 @@ void main() {
     test('flattens domain-grouped maps', () {
       expect(
         normalizeWebviewCookies({
-          '.youtube.com': {
-            'SAPISID': 'abc',
-            'PREF': 'f4',
-          },
-          '.music.youtube.com': {
-            'LOGIN_INFO': 'xyz',
-          },
+          '.youtube.com': {'SAPISID': 'abc', 'PREF': 'f4'},
+          '.music.youtube.com': {'LOGIN_INFO': 'xyz'},
         }),
         [
           {'domain': '.youtube.com', 'name': 'SAPISID', 'value': 'abc'},
@@ -24,7 +19,7 @@ void main() {
           {
             'domain': '.music.youtube.com',
             'name': 'LOGIN_INFO',
-            'value': 'xyz'
+            'value': 'xyz',
           },
         ],
       );
@@ -46,10 +41,7 @@ void main() {
     test('drops nameless entries, keeps empty values for the header', () {
       expect(
         normalizeWebviewCookies({
-          '.youtube.com': {
-            '': 'x',
-            'SAPISID': '',
-          },
+          '.youtube.com': {'': 'x', 'SAPISID': ''},
         }),
         [
           {'domain': '.youtube.com', 'name': 'SAPISID', 'value': ''},
@@ -83,18 +75,11 @@ void main() {
 
   group('parseDocumentCookie', () {
     test('splits document.cookie pairs', () {
-      expect(
-        parseDocumentCookie('SAPISID=abc; PREF=f4; LOGIN_INFO=xyz'),
-        [
-          {'domain': '.youtube.com', 'name': 'SAPISID', 'value': 'abc'},
-          {'domain': '.youtube.com', 'name': 'PREF', 'value': 'f4'},
-          {
-            'domain': '.youtube.com',
-            'name': 'LOGIN_INFO',
-            'value': 'xyz'
-          },
-        ],
-      );
+      expect(parseDocumentCookie('SAPISID=abc; PREF=f4; LOGIN_INFO=xyz'), [
+        {'domain': '.youtube.com', 'name': 'SAPISID', 'value': 'abc'},
+        {'domain': '.youtube.com', 'name': 'PREF', 'value': 'f4'},
+        {'domain': '.youtube.com', 'name': 'LOGIN_INFO', 'value': 'xyz'},
+      ]);
     });
 
     test('drops malformed segments, empty is empty', () {
@@ -104,15 +89,10 @@ void main() {
 
     test('feeds youTubeCookieHeader for a signed-in session', () {
       expect(
-        youTubeCookieHeader(
-          parseDocumentCookie('SAPISID=abc; PREF=f4'),
-        ),
+        youTubeCookieHeader(parseDocumentCookie('SAPISID=abc; PREF=f4')),
         'SAPISID=abc; PREF=f4',
       );
-      expect(
-        youTubeCookieHeader(parseDocumentCookie('PREF=f4')),
-        isNull,
-      );
+      expect(youTubeCookieHeader(parseDocumentCookie('PREF=f4')), isNull);
     });
   });
 }

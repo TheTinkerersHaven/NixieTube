@@ -20,19 +20,19 @@ import 'package:nixietube/ui/screens/home_screen.dart'
         quickPicksHeight;
 
 List<ShelfItem> _songs(int n) => [
-      for (var i = 0; i < n; i++)
-        ShelfItem.song(Track(videoId: 'v$i', title: 's$i')),
-    ];
+  for (var i = 0; i < n; i++)
+    ShelfItem.song(Track(videoId: 'v$i', title: 's$i')),
+];
 
 List<ShelfItem> _browse(int n, String prefix) => [
-      for (var i = 0; i < n; i++)
-        ShelfItem.browse(
-          title: '$prefix$i',
-          subtitle: '',
-          browseId: '$prefix$i',
-          thumbnails: const [],
-        ),
-    ];
+  for (var i = 0; i < n; i++)
+    ShelfItem.browse(
+      title: '$prefix$i',
+      subtitle: '',
+      browseId: '$prefix$i',
+      thumbnails: const [],
+    ),
+];
 
 void main() {
   group('quickPickMetrics', () {
@@ -67,13 +67,23 @@ void main() {
   group('fillQuickPicks', () {
     test('fills up to the requested slots, never more than sources', () {
       // 14 distinct sources, 18 slots requested -> exactly 14, no repeats.
-      final out = fillQuickPicks(_songs(8), _browse(6, 'b'), 18, rng: Random(1));
+      final out = fillQuickPicks(
+        _songs(8),
+        _browse(6, 'b'),
+        18,
+        rng: Random(1),
+      );
       expect(out.length, 14);
       expect(out.toSet().length, out.length); // all distinct
     });
 
     test('never repeats an item', () {
-      final out = fillQuickPicks(_songs(6), _browse(5, 'b'), 11, rng: Random(3));
+      final out = fillQuickPicks(
+        _songs(6),
+        _browse(5, 'b'),
+        11,
+        rng: Random(3),
+      );
       expect(out.toSet().length, out.length);
     });
 
@@ -88,8 +98,11 @@ void main() {
         for (var i = 1; i < out.length; i++) {
           final adjacentNonSongs =
               out[i - 1] is BrowseItem && out[i] is BrowseItem;
-          expect(adjacentNonSongs, isFalse,
-              reason: 'seed $seed: adjacent non-songs at $i');
+          expect(
+            adjacentNonSongs,
+            isFalse,
+            reason: 'seed $seed: adjacent non-songs at $i',
+          );
         }
       }
     });
@@ -106,7 +119,12 @@ void main() {
     });
 
     test('includes both songs and browsable entries', () {
-      final out = fillQuickPicks(_songs(6), _browse(5, 'b'), 11, rng: Random(9));
+      final out = fillQuickPicks(
+        _songs(6),
+        _browse(5, 'b'),
+        11,
+        rng: Random(9),
+      );
       expect(out.any((e) => e is SongItem), isTrue);
       expect(out.any((e) => e is BrowseItem), isTrue);
     });
@@ -168,18 +186,21 @@ void main() {
   });
 
   group('isSingleRelease', () {
-    Track song(String id, String title, {AlbumRef? album}) => Track(
-          videoId: id,
-          title: title,
-          album: album,
-        );
+    Track song(String id, String title, {AlbumRef? album}) =>
+        Track(videoId: id, title: title, album: album);
 
     test('explicit Single kind counts', () {
       expect(
         isSingleRelease(
-          song('v1', 'Some Song',
-              album: const AlbumRef('Some Song',
-                  browseId: 'MPRE1', kind: ReleaseKind.single)),
+          song(
+            'v1',
+            'Some Song',
+            album: const AlbumRef(
+              'Some Song',
+              browseId: 'MPRE1',
+              kind: ReleaseKind.single,
+            ),
+          ),
         ),
         isTrue,
       );
@@ -194,8 +215,11 @@ void main() {
       ]) {
         expect(
           isSingleRelease(
-            song('v1', 'Neon Sky',
-                album: AlbumRef('Neon Sky', browseId: 'MPRE1', kind: kind)),
+            song(
+              'v1',
+              'Neon Sky',
+              album: AlbumRef('Neon Sky', browseId: 'MPRE1', kind: kind),
+            ),
           ),
           isFalse,
           reason: 'kind $kind',

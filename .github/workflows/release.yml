@@ -1,0 +1,59 @@
+name: Release
+
+# Creates a git tag from pubspec.yaml's version on manual dispatch.
+# No secrets required: the tag is pushed with the default GITHUB_TOKEN,
+# then build.yml is triggered explicitly via workflow_dispatch (which
+# GITHUB_TOKEN *is* allowed to trigger — unlike push events).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write  # needed to trigger build.yml via workflow_dispatch
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from pubspec.yaml
+        id: version
+        run: |
+          LINE=$(grep -E '^version:[[:space:]]*' pubspec.yaml)
+          RAW=${LINE#*:}
+          # strip leading/trailing whitespace
+          RAW=$(echo "$RAW" | xargs)
+          VERSION=$(printf '%s' "$RAW" | cut -d+ -f1)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          echo "Creating tag: ${TAG}"
+
+          # Guard: never clobber an existing tag
+          if git ls-remote --exit-code --tags origin "${TAG}" 2>/dev/null; then
+            echo "ERROR: tag ${TAG} already exists on remote"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Trigger Build workflow
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${VERSION}"
+          echo "Triggering build.yml for tag ${TAG}"
+          # GITHUB_TOKEN CAN trigger workflow_dispatch (unlike push events)
+          gh workflow run build.yml --ref "${TAG}" --repo "${{ github.repository }}"

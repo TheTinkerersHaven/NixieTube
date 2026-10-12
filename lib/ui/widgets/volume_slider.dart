@@ -12,6 +12,8 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app_state.dart';
 
+/// Volume slider bound to the player volume (throttled writes, own
+/// tick listener so drags never rebuild the surrounding transport).
 class VolumeSlider extends StatefulWidget {
   const VolumeSlider({
     super.key,

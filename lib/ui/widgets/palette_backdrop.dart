@@ -15,6 +15,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../a11y.dart';
+
 /// Relative luminance of an opaque color, 0 (black) to 1 (white).
 double luminance(Color c) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
 

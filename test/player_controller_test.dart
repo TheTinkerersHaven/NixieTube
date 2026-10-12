@@ -37,8 +37,7 @@ class FakeEngine implements PlayerEngine {
     if (playHook != null) return playHook!(url);
     lastUrl = url;
     playedUrls.add(url);
-    final ok =
-        playScript.isNotEmpty ? playScript.removeAt(0) : playResult;
+    final ok = playScript.isNotEmpty ? playScript.removeAt(0) : playResult;
     if (ok) playing = true;
     return ok;
   }
@@ -111,11 +110,11 @@ class FakeTube extends InnerTube {
 }
 
 Track _track(String id, {int secs = 200, String artist = 'A'}) => Track(
-      videoId: id,
-      title: 'Title $id',
-      artists: [ArtistRef(artist)],
-      durationSec: secs,
-    );
+  videoId: id,
+  title: 'Title $id',
+  artists: [ArtistRef(artist)],
+  durationSec: secs,
+);
 
 PlayerController _controller(
   FakeEngine engine, {
@@ -141,8 +140,8 @@ PlayerController _controller(
         : () async {
             onRefresh();
           },
-    configDirPath: configDir ??
-        Directory.systemTemp.createTempSync('nt-player-test').path,
+    configDirPath:
+        configDir ?? Directory.systemTemp.createTempSync('nt-player-test').path,
   );
   addTearDown(c.dispose);
   return c;
@@ -193,21 +192,23 @@ void main() {
         resolveStream: (id) async {
           resolves++;
           return ResolvedStream(
-              url: 'https://x/$id#$resolves', bitrate: 128000);
+            url: 'https://x/$id#$resolves',
+            bitrate: 128000,
+          );
         },
         refreshStream: () async {
           refreshes++;
         },
-        configDirPath:
-            Directory.systemTemp.createTempSync('nt-player-test').path,
+        configDirPath: Directory.systemTemp
+            .createTempSync('nt-player-test')
+            .path,
       );
       addTearDown(c.dispose);
       c.playTracks([_track('v1')]);
       await _settle();
       // One forced refresh, then the retry plays the re-resolved URL.
       expect(refreshes, 1);
-      expect(engine.playedUrls,
-          ['https://x/v1#1', 'https://x/v1#2']);
+      expect(engine.playedUrls, ['https://x/v1#1', 'https://x/v1#2']);
       expect(c.state.playing, isTrue);
       expect(c.state.error, isNull);
     });
@@ -224,8 +225,9 @@ void main() {
         refreshStream: () async {
           refreshes++;
         },
-        configDirPath:
-            Directory.systemTemp.createTempSync('nt-player-test').path,
+        configDirPath: Directory.systemTemp
+            .createTempSync('nt-player-test')
+            .path,
       );
       addTearDown(c.dispose);
       c.playTracks([_track('v1')]);
@@ -478,7 +480,7 @@ void main() {
       final engine = FakeEngine();
       final c = _controller(engine);
       c.playTracks([
-        const Track(videoId: 'v1', title: 'T', artists: [ArtistRef('Release')])
+        const Track(videoId: 'v1', title: 'T', artists: [ArtistRef('Release')]),
       ]);
       await _settle();
       c.updateTrackMetadata(
@@ -498,11 +500,7 @@ void main() {
       final engine = FakeEngine();
       final c = _controller(engine);
       c.playTracks([
-        const Track(
-          videoId: 'v1',
-          title: 'T',
-          album: AlbumRef('Kept'),
-        ),
+        const Track(videoId: 'v1', title: 'T', album: AlbumRef('Kept')),
       ]);
       await _settle();
       c.updateTrackMetadata(
@@ -546,10 +544,7 @@ void main() {
       final plays = engine.playedUrls.length;
       final queued = c.replaceUpcoming([_track('cur'), _track('n1')]);
       expect(queued, 1);
-      expect(
-        c.state.queue.map((t) => t.videoId),
-        ['h0', 'cur', 'n1'],
-      );
+      expect(c.state.queue.map((t) => t.videoId), ['h0', 'cur', 'n1']);
       expect(c.state.index, 1);
       expect(c.state.current?.videoId, 'cur');
       expect(engine.playedUrls.length, plays);
@@ -563,10 +558,7 @@ void main() {
       await _settle();
       // Mix of only already-played tracks: nothing to swap in.
       expect(c.replaceUpcoming([_track('a'), _track('b')]), 0);
-      expect(
-        c.state.queue.map((t) => t.videoId),
-        ['a', 'b'],
-      );
+      expect(c.state.queue.map((t) => t.videoId), ['a', 'b']);
       expect(c.state.index, 1);
     });
   });
@@ -574,12 +566,7 @@ void main() {
   group('backend restart recovery', () {
     /// Controller with a failing first engine, a factory minting fresh
     /// engines, and counted resolve/reset hooks.
-    (
-      PlayerController,
-      FakeEngine,
-      List<FakeEngine>,
-      Map<String, int>,
-    ) build({
+    (PlayerController, FakeEngine, List<FakeEngine>, Map<String, int>) build({
       required FakeEngine first,
       bool failFresh = false,
       Future<ResolvedStream?> Function(String id)? resolve,
@@ -595,7 +582,9 @@ void main() {
           resolves++;
           if (resolve != null) return resolve(id);
           return ResolvedStream(
-              url: 'https://x/$id#$resolves', bitrate: 128000);
+            url: 'https://x/$id#$resolves',
+            bitrate: 128000,
+          );
         },
         resetStream: () async {
           calls['reset'] = (calls['reset'] ?? 0) + 1;
@@ -605,8 +594,9 @@ void main() {
           made.add(e);
           return e;
         },
-        configDirPath:
-            Directory.systemTemp.createTempSync('nt-restart-test').path,
+        configDirPath: Directory.systemTemp
+            .createTempSync('nt-restart-test')
+            .path,
       );
       addTearDown(c.dispose);
       return (c, first, made, calls);
@@ -636,33 +626,37 @@ void main() {
       expect(made.single.playedUrls, ['https://x/v1#fresh']);
     });
 
-    test('dead engine opens recycle once, then play on the new handle',
-        () async {
-      final first = FakeEngine()..playResult = false;
-      final (c, _, made, _) = build(first: first);
-      c.playTracks([_track('v1')]);
-      await _settle();
-      await _settle();
-      expect(c.state.playing, isTrue);
-      expect(made, hasLength(1));
-      // Initial open + same-handle retry both failed; the new handle
-      // played exactly once.
-      expect(first.playedUrls, hasLength(2));
-      expect(made.single.playedUrls, hasLength(1));
-    });
+    test(
+      'dead engine opens recycle once, then play on the new handle',
+      () async {
+        final first = FakeEngine()..playResult = false;
+        final (c, _, made, _) = build(first: first);
+        c.playTracks([_track('v1')]);
+        await _settle();
+        await _settle();
+        expect(c.state.playing, isTrue);
+        expect(made, hasLength(1));
+        // Initial open + same-handle retry both failed; the new handle
+        // played exactly once.
+        expect(first.playedUrls, hasLength(2));
+        expect(made.single.playedUrls, hasLength(1));
+      },
+    );
 
-    test('a recycled backend that still fails surfaces the error once',
-        () async {
-      final first = FakeEngine()..playResult = false;
-      final (c, _, made, _) = build(first: first, failFresh: true);
-      c.playTracks([_track('v1')]);
-      await _settle();
-      await _settle();
-      expect(c.state.playing, isFalse);
-      expect(c.state.error, contains('Playback failed to start'));
-      // One restart per episode: no recycle loop on a hopeless track.
-      expect(made, hasLength(1));
-    });
+    test(
+      'a recycled backend that still fails surfaces the error once',
+      () async {
+        final first = FakeEngine()..playResult = false;
+        final (c, _, made, _) = build(first: first, failFresh: true);
+        c.playTracks([_track('v1')]);
+        await _settle();
+        await _settle();
+        expect(c.state.playing, isFalse);
+        expect(c.state.error, contains('Playback failed to start'));
+        // One restart per episode: no recycle loop on a hopeless track.
+        expect(made, hasLength(1));
+      },
+    );
 
     test('mid-stream failure resumes on the new handle', () async {
       final first = FakeEngine();
@@ -683,18 +677,15 @@ void main() {
       expect(made.single.pos, 42000);
     });
 
-    test('hung engine open times out instead of wedging the track',
-        () async {
-      final first = FakeEngine()
-        ..playHook = (_) => Completer<bool>().future;
+    test('hung engine open times out instead of wedging the track', () async {
+      final first = FakeEngine()..playHook = (_) => Completer<bool>().future;
       final c = PlayerController(
         engine: first,
         tube: FakeTube(),
         resolveStream: (id) async =>
             ResolvedStream(url: 'https://x/$id', bitrate: 128000),
         playTimeout: const Duration(milliseconds: 200),
-        configDirPath:
-            Directory.systemTemp.createTempSync('nt-hang-test').path,
+        configDirPath: Directory.systemTemp.createTempSync('nt-hang-test').path,
       );
       addTearDown(c.dispose);
       c.playTracks([_track('v1')]);
@@ -770,8 +761,7 @@ void main() {
       expect(c.state.current?.videoId, 'v3');
     });
 
-    test('removeAt on the current song advances to what lands there',
-        () async {
+    test('removeAt on the current song advances to what lands there', () async {
       final engine = FakeEngine();
       final c = await playingQueue(engine, ['v1', 'v2', 'v3']);
       expect(c.removeAt(0), isTrue);
@@ -841,7 +831,10 @@ void main() {
   });
 
   group('sleep timer', () {
-    Future<PlayerController> playing(FakeEngine engine, List<String> ids) async {
+    Future<PlayerController> playing(
+      FakeEngine engine,
+      List<String> ids,
+    ) async {
       final c = _controller(engine);
       c.playTracks(ids.map(_track).toList());
       await _settle();

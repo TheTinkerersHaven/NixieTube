@@ -11,7 +11,8 @@ import 'package:nixietube/core/innertube/lyrics.dart';
 import 'mock_dio.dart';
 
 /// One LRCLIB entry as the API returns it.
-const _entry = '{"id":1,"trackName":"Swerve It","artistName":"Bou",'
+const _entry =
+    '{"id":1,"trackName":"Swerve It","artistName":"Bou",'
     '"albumName":"Swerve it","duration":167.0,'
     '"plainLyrics":"line one\\nline two"}';
 
@@ -26,7 +27,8 @@ void main() {
 
   group('parseLrc', () {
     test('parses timed lines, skips blanks', () {
-      const lrc = '[00:12.34]Hello\n[01:02.5]World\n[02:00]No frac\n'
+      const lrc =
+          '[00:12.34]Hello\n[01:02.5]World\n[02:00]No frac\n'
           '[bad] Skip\n[03:04.5678]Trimmed   \n[04:05.00]\n';
       final lines = parseLrc(lrc);
       expect(lines.length, 4);
@@ -141,11 +143,13 @@ void main() {
     // A plain-only direct hit keeps searching for a synced cut
     // of the same song instead of settling for static lines.
     test('plain direct hit upgrades to a synced search hit', () async {
-      const plain = '{"id":17373366,'
+      const plain =
+          '{"id":17373366,'
           '"trackName":"buttons!","artistName":"Knock2",'
           '"albumName":"buttons!","duration":239.098776,'
           '"plainLyrics":"push my buttons"}';
-      const synced = '{"id":20564332,'
+      const synced =
+          '{"id":20564332,'
           '"trackName":"buttons!","artistName":"knock2/dillon francis",'
           '"albumName":"buttons!","duration":194.0,'
           '"plainLyrics":"push\\nbuttons",'
@@ -170,7 +174,8 @@ void main() {
     // server-side, but the normalized fallback finds the entry —
     // whose fewer credited artists still match.
     test('normalized fallback query finds remix/feat credits', () async {
-      const nuttah = '{"id":32575872,'
+      const nuttah =
+          '{"id":32575872,'
           '"trackName":"Original Nuttah 25 [Chase & Status Remix] '
           '(feat. IRAH)",'
           '"artistName":"UK Apache","albumName":"Original Nuttah 25",'
@@ -183,8 +188,9 @@ void main() {
         searches++;
         // Verbatim query (still carries the feat credit) finds
         // nothing; the normalized one hits.
-        if ((options.uri.queryParameters['track_name'] ?? '')
-            .contains('feat')) {
+        if ((options.uri.queryParameters['track_name'] ?? '').contains(
+          'feat',
+        )) {
           return (200, '[]');
         }
         return (200, '[$nuttah]');
@@ -208,12 +214,14 @@ void main() {
     // tokenize as two artists, and the synced 194s cut must win
     // over the plain-only one on duration.
     test('slash artists match and duration picks the right cut', () async {
-      const slash = '{"id":20564332,'
+      const slash =
+          '{"id":20564332,'
           '"trackName":"buttons!","artistName":"knock2/dillon francis",'
           '"albumName":"buttons!","duration":194.0,'
           '"plainLyrics":"push\\nbuttons",'
           '"syncedLyrics":"[00:01.00]push\\n[00:05.00]buttons"}';
-      const plain = '{"id":17373366,'
+      const plain =
+          '{"id":17373366,'
           '"trackName":"buttons!","artistName":"Knock2",'
           '"albumName":"buttons!","duration":239.098776,'
           '"plainLyrics":"push my buttons"}';
@@ -240,15 +248,17 @@ void main() {
     // "rampage (extended) (feat. DJ SS)" by "venbee": the stored
     // "rampage" matches once parenthesized editions are ignored.
     test('parenthesized editions match the bare title', () async {
-      const rampage = '{"id":19333603,'
+      const rampage =
+          '{"id":19333603,'
           '"trackName":"rampage","artistName":"venbee",'
           '"albumName":"rampage","duration":210.0,'
           '"plainLyrics":"rampage\\nagain",'
           '"syncedLyrics":"[00:01.00]rampage\\n[00:05.00]again"}';
       final client = mockDio((options) async {
         if (options.uri.path == '/api/get') return (404, 'not found');
-        if ((options.uri.queryParameters['track_name'] ?? '')
-            .contains('feat')) {
+        if ((options.uri.queryParameters['track_name'] ?? '').contains(
+          'feat',
+        )) {
           return (200, '[]');
         }
         return (200, '[$rampage]');
@@ -265,7 +275,8 @@ void main() {
     });
 
     test('same title with a disjoint artist stays rejected', () async {
-      const wrong = '{"id":9,'
+      const wrong =
+          '{"id":9,'
           '"trackName":"buttons!","artistName":"Dillon Francis",'
           '"albumName":"buttons!","duration":239.0,'
           '"plainLyrics":"nope"}';
@@ -296,31 +307,31 @@ void main() {
 
   group('ytmLyricsBrowseId', () {
     Map<String, dynamic> tabsResponse(List<Map<String, dynamic>> tabs) => {
-          'contents': {
-            'singleColumnMusicWatchNextResultsRenderer': {
-              'tabbedRenderer': {
-                'watchNextTabbedResultsRenderer': {'tabs': tabs},
-              },
-            },
+      'contents': {
+        'singleColumnMusicWatchNextResultsRenderer': {
+          'tabbedRenderer': {
+            'watchNextTabbedResultsRenderer': {'tabs': tabs},
           },
-        };
+        },
+      },
+    };
 
     Map<String, dynamic> lyricsTab(String browseId, {bool? unselectable}) => {
-          'tabRenderer': {
-            if (unselectable case final bool u) 'unselectable': u,
-            'endpoint': {
-              'browseEndpoint': {
-                'browseId': browseId,
-                'browseEndpointContextSupportedConfigs': {
-                  'browseEndpointContextMusicConfig': {
-                    'pageType': 'MUSIC_PAGE_TYPE_TRACK_LYRICS',
-                  },
-                },
+      'tabRenderer': {
+        if (unselectable case final bool u) 'unselectable': u,
+        'endpoint': {
+          'browseEndpoint': {
+            'browseId': browseId,
+            'browseEndpointContextSupportedConfigs': {
+              'browseEndpointContextMusicConfig': {
+                'pageType': 'MUSIC_PAGE_TYPE_TRACK_LYRICS',
               },
             },
-            'title': 'Lyrics',
           },
-        };
+        },
+        'title': 'Lyrics',
+      },
+    };
 
     test('finds the lyrics tab by page type', () {
       final res = tabsResponse([
@@ -335,7 +346,9 @@ void main() {
     test('skips unselectable tabs and tolerates missing shapes', () {
       final res = tabsResponse([
         lyricsTab('MPLYt_nope-1', unselectable: true),
-        {'tabRenderer': {'title': 'Related'}},
+        {
+          'tabRenderer': {'title': 'Related'},
+        },
       ]);
       expect(ytmLyricsBrowseId(res), isNull);
       expect(ytmLyricsBrowseId({}), isNull);
@@ -408,8 +421,7 @@ void main() {
                                 'browseId': 'MPLYt_tab-1',
                                 'browseEndpointContextSupportedConfigs': {
                                   'browseEndpointContextMusicConfig': {
-                                    'pageType':
-                                        'MUSIC_PAGE_TYPE_TRACK_LYRICS',
+                                    'pageType': 'MUSIC_PAGE_TYPE_TRACK_LYRICS',
                                   },
                                 },
                               },

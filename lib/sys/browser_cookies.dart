@@ -54,31 +54,30 @@ class _BrowserKind {
 }
 
 const _browserKinds = [
-  _BrowserKind(
-    'Chrome',
-    ['google-chrome', 'google-chrome-stable'],
-    '.config/google-chrome',
-  ),
-  _BrowserKind(
-    'Chromium',
-    ['chromium', 'chromium-browser'],
-    '.config/chromium',
-  ),
-  _BrowserKind(
-    'Brave',
-    ['brave', 'brave-browser', 'brave-browser-stable'],
-    '.config/BraveSoftware/Brave-Browser',
-  ),
-  _BrowserKind(
-    'Edge',
-    ['microsoft-edge', 'microsoft-edge-stable'],
-    '.config/microsoft-edge',
-  ),
+  _BrowserKind('Chrome', [
+    'google-chrome',
+    'google-chrome-stable',
+  ], '.config/google-chrome'),
+  _BrowserKind('Chromium', [
+    'chromium',
+    'chromium-browser',
+  ], '.config/chromium'),
+  _BrowserKind('Brave', [
+    'brave',
+    'brave-browser',
+    'brave-browser-stable',
+  ], '.config/BraveSoftware/Brave-Browser'),
+  _BrowserKind('Edge', [
+    'microsoft-edge',
+    'microsoft-edge-stable',
+  ], '.config/microsoft-edge'),
 ];
 
 /// Timeout for the whole import (launch + protocol + cleanup margin).
 const browserImportTimeout = Duration(seconds: 75);
 
+/// One-click cookie import from Chromium-family browsers. All state
+/// is passed in per call; there is nothing to construct.
 class BrowserCookies {
   BrowserCookies._();
 
@@ -89,11 +88,9 @@ class BrowserCookies {
     List<String>? pathDirs,
   }) {
     if (!Platform.isLinux && home == null) return [];
-    final homeDir =
-        home ?? Platform.environment['HOME'] ?? '';
+    final homeDir = home ?? Platform.environment['HOME'] ?? '';
     if (homeDir.isEmpty) return [];
-    final dirs = pathDirs ??
-        (Platform.environment['PATH'] ?? '').split(':');
+    final dirs = pathDirs ?? (Platform.environment['PATH'] ?? '').split(':');
     final out = <BrowserProfile>[];
     for (final kind in _browserKinds) {
       String? binary;
@@ -116,11 +113,7 @@ class BrowserCookies {
         try {
           if (File(db).existsSync()) {
             out.add(
-              BrowserProfile(
-                label: kind.label,
-                binary: binary,
-                cookiesDb: db,
-              ),
+              BrowserProfile(label: kind.label, binary: binary, cookiesDb: db),
             );
           }
         } catch (_) {}
@@ -179,9 +172,7 @@ class BrowserCookies {
   /// Reads the profile's YouTube cookies via headless Chrome + CDP and
   /// returns a `Cookie` header, or null when anything fails. Never
   /// throws: every failure mode degrades to "paste it manually".
-  static Future<String?> importYouTubeCookie(
-    BrowserProfile profile,
-  ) async {
+  static Future<String?> importYouTubeCookie(BrowserProfile profile) async {
     try {
       return await _import(profile).timeout(browserImportTimeout);
     } catch (_) {
@@ -194,8 +185,7 @@ class BrowserCookies {
         !File(profile.cookiesDb).existsSync()) {
       return null;
     }
-    final workdir =
-        Directory.systemTemp.createTempSync('nixietube-browser-');
+    final workdir = Directory.systemTemp.createTempSync('nixietube-browser-');
     Process? proc;
     try {
       final target = Directory('${workdir.path}/Default')..createSync();
@@ -250,19 +240,21 @@ class BrowserCookies {
     final buf = StringBuffer();
     final found = Completer<int?>();
     late final StreamSubscription<String> sub;
-    sub = proc.stderr.transform(utf8.decoder).listen(
-      (chunk) {
-        buf.write(chunk);
-        final m = pattern.firstMatch(buf.toString());
-        if (m != null && !found.isCompleted) {
-          found.complete(int.tryParse(m.group(1) ?? ''));
-        }
-      },
-      onError: (_) {},
-      onDone: () {
-        if (!found.isCompleted) found.complete(null);
-      },
-    );
+    sub = proc.stderr
+        .transform(utf8.decoder)
+        .listen(
+          (chunk) {
+            buf.write(chunk);
+            final m = pattern.firstMatch(buf.toString());
+            if (m != null && !found.isCompleted) {
+              found.complete(int.tryParse(m.group(1) ?? ''));
+            }
+          },
+          onError: (_) {},
+          onDone: () {
+            if (!found.isCompleted) found.complete(null);
+          },
+        );
     try {
       return await found.future.timeout(const Duration(seconds: 25));
     } catch (_) {
@@ -286,28 +278,21 @@ class BrowserCookies {
             .join()
             .timeout(const Duration(seconds: 10)),
       );
-      final wsUrl = version is Map
-          ? version['webSocketDebuggerUrl']
-          : null;
+      final wsUrl = version is Map ? version['webSocketDebuggerUrl'] : null;
       if (wsUrl is! String || wsUrl.isEmpty) return null;
-      ws = await WebSocket.connect(wsUrl)
-          .timeout(const Duration(seconds: 10));
+      ws = await WebSocket.connect(wsUrl).timeout(const Duration(seconds: 10));
       final answer = Completer<Map>();
-      final sub = ws.listen(
-        (msg) {
-          try {
-            final m = jsonDecode(msg as String);
-            if (m is Map && m['id'] == 1 && !answer.isCompleted) {
-              answer.complete(m);
-            }
-          } catch (_) {}
-        },
-        onError: (_) {},
-      );
+      final sub = ws.listen((msg) {
+        try {
+          final m = jsonDecode(msg as String);
+          if (m is Map && m['id'] == 1 && !answer.isCompleted) {
+            answer.complete(m);
+          }
+        } catch (_) {}
+      }, onError: (_) {});
       try {
         ws.add(jsonEncode({'id': 1, 'method': 'Storage.getCookies'}));
-        final resp =
-            await answer.future.timeout(const Duration(seconds: 15));
+        final resp = await answer.future.timeout(const Duration(seconds: 15));
         final result = resp['result'];
         if (result is Map && result['cookies'] is List) {
           return (result['cookies'] as List).toList();

@@ -13,91 +13,89 @@ import 'mock_dio.dart';
 
 /// Transport-level failure, the only kind cover fetches retry.
 DioException _blip() => DioException(
-      requestOptions: RequestOptions(path: 'https://x/'),
-      type: DioExceptionType.connectionError,
-    );
+  requestOptions: RequestOptions(path: 'https://x/'),
+  type: DioExceptionType.connectionError,
+);
 
 Map<String, dynamic> _panelRow(
   String videoId,
   List<Map<String, dynamic>> thumbs,
 ) => {
-      'playlistPanelVideoRenderer': {
-        'title': {
-          'runs': [
-            {'text': 'Title $videoId'}
-          ]
-        },
-        'navigationEndpoint': {
-          'watchEndpoint': {'videoId': videoId}
-        },
-        'thumbnail': {'thumbnails': thumbs},
-      },
-    };
+  'playlistPanelVideoRenderer': {
+    'title': {
+      'runs': [
+        {'text': 'Title $videoId'},
+      ],
+    },
+    'navigationEndpoint': {
+      'watchEndpoint': {'videoId': videoId},
+    },
+    'thumbnail': {'thumbnails': thumbs},
+  },
+};
 
-Map<String, dynamic> _watchResponse(
-  List<Map<String, dynamic>> rows,
-) => {
-      'contents': {
-        'singleColumnMusicWatchNextResultsRenderer': {
-          'tabbedRenderer': {
-            'watchNextTabbedResultsRenderer': {
-              'tabs': [
-                {
-                  'tabRenderer': {
+Map<String, dynamic> _watchResponse(List<Map<String, dynamic>> rows) => {
+  'contents': {
+    'singleColumnMusicWatchNextResultsRenderer': {
+      'tabbedRenderer': {
+        'watchNextTabbedResultsRenderer': {
+          'tabs': [
+            {
+              'tabRenderer': {
+                'content': {
+                  'musicQueueRenderer': {
                     'content': {
-                      'musicQueueRenderer': {
-                        'content': {
-                          'playlistPanelRenderer': {'contents': rows}
-                        }
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-          }
-        }
-      }
-    };
+                      'playlistPanelRenderer': {'contents': rows},
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
+};
 
 Map<String, dynamic> _albumResponse() => {
-      'musicDetailHeaderRenderer': {
-        'title': {
-          'runs': [
-            {'text': 'Album'}
-          ]
-        },
-        'subtitle': {
-          'runs': [
-            {'text': 'Artist'}
-          ]
-        },
-        'thumbnails': [
-          {'url': 'https://x/album.jpg', 'width': 544, 'height': 544}
-        ],
-      },
-      'musicShelfRenderer': {'contents': []},
-    };
+  'musicDetailHeaderRenderer': {
+    'title': {
+      'runs': [
+        {'text': 'Album'},
+      ],
+    },
+    'subtitle': {
+      'runs': [
+        {'text': 'Artist'},
+      ],
+    },
+    'thumbnails': [
+      {'url': 'https://x/album.jpg', 'width': 544, 'height': 544},
+    ],
+  },
+  'musicShelfRenderer': {'contents': []},
+};
 
 /// Album page whose header art is 16:9 (no true square available).
 Map<String, dynamic> _wideAlbumResponse() => {
-      'musicDetailHeaderRenderer': {
-        'title': {
-          'runs': [
-            {'text': 'Album'}
-          ]
-        },
-        'subtitle': {
-          'runs': [
-            {'text': 'Artist'}
-          ]
-        },
-        'thumbnails': [
-          {'url': 'https://x/wide.jpg', 'width': 544, 'height': 306}
-        ],
-      },
-      'musicShelfRenderer': {'contents': []},
-    };
+  'musicDetailHeaderRenderer': {
+    'title': {
+      'runs': [
+        {'text': 'Album'},
+      ],
+    },
+    'subtitle': {
+      'runs': [
+        {'text': 'Artist'},
+      ],
+    },
+    'thumbnails': [
+      {'url': 'https://x/wide.jpg', 'width': 544, 'height': 306},
+    ],
+  },
+  'musicShelfRenderer': {'contents': []},
+};
 
 Future<InnerTube> _tube(
   Map<String, dynamic> watch,
@@ -203,10 +201,7 @@ void main() {
   test('one album browse serves every track off it', () async {
     final paths = <String>[];
     final tube = await _tube(
-      _watchResponse([
-        _panelRow('v1', _frame),
-        _panelRow('v2', _frame),
-      ]),
+      _watchResponse([_panelRow('v1', _frame), _panelRow('v2', _frame)]),
       _albumResponse(),
       paths,
     );
@@ -284,14 +279,7 @@ void main() {
         if (browseCalls == 1) throw _blip();
         return (200, jsonEncode(_albumResponse()));
       }
-      return (
-        200,
-        jsonEncode(
-          _watchResponse([
-            _panelRow('v1', _frame),
-          ]),
-        ),
-      );
+      return (200, jsonEncode(_watchResponse([_panelRow('v1', _frame)])));
     });
     expect(
       await tube.squareCoverOf('v1', albumId: 'MPRE1'),

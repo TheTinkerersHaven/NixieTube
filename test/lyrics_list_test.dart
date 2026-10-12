@@ -73,18 +73,18 @@ void main() {
     final ctrl = ScrollController();
     addTearDown(ctrl.dispose);
     Widget buildAt(int positionMs) => ChangeNotifierProvider.value(
-          value: state,
-          child: MaterialApp(
-            home: Scaffold(
-              body: LyricsList(
-                ctrl: ctrl,
-                lyrics: lines,
-                positionMs: positionMs,
-                state: state,
-              ),
-            ),
+      value: state,
+      child: MaterialApp(
+        home: Scaffold(
+          body: LyricsList(
+            ctrl: ctrl,
+            lyrics: lines,
+            positionMs: positionMs,
+            state: state,
           ),
-        );
+        ),
+      ),
+    );
 
     await tester.pumpWidget(buildAt(0));
     final second = tester.element(find.text('second line'));
@@ -98,11 +98,13 @@ void main() {
     // The highlight itself moved to the second line (nearest
     // AnimatedDefaultTextStyle ancestor carries the row style).
     AnimatedDefaultTextStyle styleOf(String text) => tester.widget(
-          find.ancestor(
+      find
+          .ancestor(
             of: find.text(text),
             matching: find.byType(AnimatedDefaultTextStyle),
-          ).first,
-        );
+          )
+          .first,
+    );
     expect(
       styleOf('second line').style.fontSize,
       isNot(styleOf('third line').style.fontSize),
@@ -111,8 +113,9 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('nothing highlights before the first line is sung',
-      (tester) async {
+  testWidgets('nothing highlights before the first line is sung', (
+    tester,
+  ) async {
     final dir = Directory.systemTemp.createTempSync('nt-lyrics-test');
     addTearDown(() => dir.deleteSync(recursive: true));
     final tube = InnerTube();
@@ -139,24 +142,26 @@ void main() {
     final ctrl = ScrollController();
     addTearDown(ctrl.dispose);
     Widget buildAt(int positionMs) => ChangeNotifierProvider.value(
-          value: state,
-          child: MaterialApp(
-            home: Scaffold(
-              body: LyricsList(
-                ctrl: ctrl,
-                lyrics: lines,
-                positionMs: positionMs,
-                state: state,
-              ),
-            ),
+      value: state,
+      child: MaterialApp(
+        home: Scaffold(
+          body: LyricsList(
+            ctrl: ctrl,
+            lyrics: lines,
+            positionMs: positionMs,
+            state: state,
           ),
-        );
+        ),
+      ),
+    );
     AnimatedDefaultTextStyle styleOf(String text) => tester.widget(
-          find.ancestor(
+      find
+          .ancestor(
             of: find.text(text),
             matching: find.byType(AnimatedDefaultTextStyle),
-          ).first,
-        );
+          )
+          .first,
+    );
 
     // Intro: both rows share the inactive style.
     await tester.pumpWidget(buildAt(0));

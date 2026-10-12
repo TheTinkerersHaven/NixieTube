@@ -144,12 +144,16 @@ const _hcScheme = ColorScheme(
   outlineVariant: Color(0xFF5E524F),
 );
 
+/// Builds the app [ThemeData]: the dynamic/system/custom scheme by
+/// default, high-contrast palette when [highContrast], or [scheme]
+/// verbatim when the caller already resolved one.
 ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
   final effective = scheme ?? (highContrast ? _hcScheme : _defaultScheme);
   final base = ThemeData(
     colorScheme: effective,
-    scaffoldBackgroundColor:
-        scheme == null ? const Color(0xFF0B0B0C) : effective.surface,
+    scaffoldBackgroundColor: scheme == null
+        ? const Color(0xFF0B0B0C)
+        : effective.surface,
     useMaterial3: true,
     fontFamily: GoogleFonts.googleSansFlex().fontFamily,
   );
@@ -250,6 +254,7 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
     ),
   );
 }
+
 /// Resolves the effective dark scheme for the theme settings,
 /// or null to keep the built-in hand-tuned scheme exactly:
 /// system source without platform colors, or custom source
@@ -305,13 +310,15 @@ Color get ytmRed => _ytmRed;
 /// group for checked buttons) drives both colors.
 M3EToggleButtonDecoration toggleButtonGroupDecoration(ColorScheme scheme) {
   return M3EToggleButtonDecoration(
-    backgroundColor: WidgetStateProperty.resolveWith((states) =>
-        states.contains(WidgetState.selected)
-            ? scheme.primary
-            : scheme.secondaryContainer),
-    foregroundColor: WidgetStateProperty.resolveWith((states) =>
-        states.contains(WidgetState.selected)
-            ? scheme.onPrimary
-            : scheme.onSecondaryContainer),
+    backgroundColor: WidgetStateProperty.resolveWith(
+      (states) => states.contains(WidgetState.selected)
+          ? scheme.primary
+          : scheme.secondaryContainer,
+    ),
+    foregroundColor: WidgetStateProperty.resolveWith(
+      (states) => states.contains(WidgetState.selected)
+          ? scheme.onPrimary
+          : scheme.onSecondaryContainer,
+    ),
   );
 }

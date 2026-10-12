@@ -71,21 +71,21 @@ class _FakeGData extends GDataApi {
 
   @override
   Future<List<GPlaylist>> playlists() async => const [
-        GPlaylist(
-          id: 'pl1',
-          title: 'Road Trip',
-          itemCount: 12,
-          art: 'https://x/a.jpg',
-          arts: ['https://x/a.jpg'],
-        ),
-        GPlaylist(
-          id: 'pl2',
-          title: 'Gym',
-          itemCount: 3,
-          art: 'https://x/b.jpg',
-          arts: ['https://x/b.jpg'],
-        ),
-      ];
+    GPlaylist(
+      id: 'pl1',
+      title: 'Road Trip',
+      itemCount: 12,
+      art: 'https://x/a.jpg',
+      arts: ['https://x/a.jpg'],
+    ),
+    GPlaylist(
+      id: 'pl2',
+      title: 'Gym',
+      itemCount: 3,
+      art: 'https://x/b.jpg',
+      arts: ['https://x/b.jpg'],
+    ),
+  ];
 
   @override
   Future<List<Track>> recentActivity({int max = 30}) async => [];
@@ -121,8 +121,9 @@ class _FakeGData extends GDataApi {
 const _track = Track(videoId: 'v9', title: 'Nine', durationSec: 200);
 
 void main() {
-  testWidgets('membership load resolves the spinner into playlist rows',
-      (tester) async {
+  testWidgets('membership load resolves the spinner into playlist rows', (
+    tester,
+  ) async {
     final dir = Directory.systemTemp.createTempSync('nt-pldialog-test');
     addTearDown(() => dir.deleteSync(recursive: true));
     final tube = _FakeTube();
@@ -155,17 +156,12 @@ void main() {
     state.testAccount = 'Tester';
 
     await state.loadLibrary();
-    expect(
-      state.playlists.where((p) => p.id != '__liked'),
-      hasLength(2),
-    );
+    expect(state.playlists.where((p) => p.id != '__liked'), hasLength(2));
 
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
-        child: const MaterialApp(
-          home: Scaffold(body: PlaylistPickerDialog()),
-        ),
+        child: const MaterialApp(home: Scaffold(body: PlaylistPickerDialog())),
       ),
     );
     expect(find.byType(M3ELoadingIndicator), findsNothing);
@@ -187,8 +183,7 @@ void main() {
     expect(find.byType(M3ELoadingIndicator), findsNothing);
     expect(find.text('Road Trip'), findsOneWidget);
     expect(find.text('Gym'), findsOneWidget);
-    final boxes =
-        tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
+    final boxes = tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
     expect(boxes, hasLength(2));
     expect(boxes[0].value, isTrue);
     expect(boxes[1].value, isFalse);

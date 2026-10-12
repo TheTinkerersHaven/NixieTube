@@ -98,9 +98,11 @@ class _LyricsListState extends State<LyricsList> {
           // the next build cycle will have a valid context for
           // ensureVisible.
           final estimatedHeight = widget.large ? 64.0 : 44.0;
-          final target = (currentIndex * estimatedHeight
-                  - (widget.large ? 32 : 24))
-              .clamp(0.0, ctrl.position.maxScrollExtent);
+          final target =
+              (currentIndex * estimatedHeight - (widget.large ? 32 : 24)).clamp(
+                0.0,
+                ctrl.position.maxScrollExtent,
+              );
           ctrl.animateTo(
             target,
             duration: readMotionDuration(
@@ -119,10 +121,7 @@ class _LyricsListState extends State<LyricsList> {
     // Resolve the swell duration once, above the list: `select`
     // may not run inside `itemBuilder` (it would rebuild the
     // whole sliver instead of the row that cares).
-    final swell = motionDuration(
-      context,
-      const Duration(milliseconds: 150),
-    );
+    final swell = motionDuration(context, const Duration(milliseconds: 150));
     // No scrollbar: the list follows playback on its own and a thumb
     // flashing twice a second is visual noise.
     return ScrollConfiguration(
@@ -164,24 +163,23 @@ class _LyricsListState extends State<LyricsList> {
                       style:
                           (active
                                   ? (widget.large
-                                      ? Theme.of(context)
-                                          .textTheme
-                                          .headlineMedium
-                                      : Theme.of(context)
-                                          .textTheme
-                                          .titleLarge)
+                                        ? Theme.of(context)
+                                              .textTheme
+                                              .headlineMedium
+                                        : Theme.of(context)
+                                              .textTheme
+                                              .titleLarge)
                                   : (widget.large
-                                      ? Theme.of(context)
-                                          .textTheme
-                                          .titleLarge
-                                      : Theme.of(context)
-                                          .textTheme
-                                          .bodyLarge))
+                                        ? Theme.of(context).textTheme.titleLarge
+                                        : Theme.of(context)
+                                              .textTheme
+                                              .bodyLarge))
                               ?.copyWith(
                                 color: active
                                     ? scheme.primary
-                                    : scheme.onSurfaceVariant
-                                        .withValues(alpha: 0.55),
+                                    : scheme.onSurfaceVariant.withValues(
+                                        alpha: 0.55,
+                                      ),
                               ) ??
                           DefaultTextStyle.of(context).style,
                       child: Text(line.text),

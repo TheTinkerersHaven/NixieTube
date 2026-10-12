@@ -96,9 +96,7 @@ img.Image _solid(int w, int h, int r, int g, int b) {
 ({AppState state, InnerTube tube}) _harness({ArtworkStore? art}) {
   final dir = Directory.systemTemp.createTempSync('nt-tile-test');
   addTearDown(() => dir.deleteSync(recursive: true));
-  final tube = InnerTube(
-    squareCoversPath: '${dir.path}/square-covers.json',
-  );
+  final tube = InnerTube(squareCoversPath: '${dir.path}/square-covers.json');
   addTearDown(tube.close);
   final player = PlayerController(
     engine: _FakeEngine(),
@@ -120,11 +118,7 @@ img.Image _solid(int w, int h, int r, int g, int b) {
   return (state: state, tube: tube);
 }
 
-Future<void> _pumpTile(
-  WidgetTester tester,
-  AppState state,
-  Widget tile,
-) async {
+Future<void> _pumpTile(WidgetTester tester, AppState state, Widget tile) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildTheme(),
@@ -138,22 +132,19 @@ Future<void> _pumpTile(
   );
 }
 
-Finder _bones() =>
-    find.byWidgetPredicate((w) => w is Bone);
+Finder _bones() => find.byWidgetPredicate((w) => w is Bone);
 
 void main() {
   group('tile skeleton bones', () {
-    testWidgets('url-less tile under a loading scope bones the full tile',
-        (tester) async {
+    testWidgets('url-less tile under a loading scope bones the full tile', (
+      tester,
+    ) async {
       final env = _harness();
       final state = env.state;
       await _pumpTile(
         tester,
         state,
-        const Skeletonizer(
-          enabled: true,
-          child: ArtworkImage(null, size: 48),
-        ),
+        const Skeletonizer(enabled: true, child: ArtworkImage(null, size: 48)),
       );
       await tester.pump();
       // One bone for the whole tile — never the flat box with a
@@ -170,8 +161,9 @@ void main() {
       expect(_bones(), findsNothing);
     });
 
-    testWidgets('tile waiting for its bytes bones the full tile',
-        (tester) async {
+    testWidgets('tile waiting for its bytes bones the full tile', (
+      tester,
+    ) async {
       final state = _harness().state;
       await _pumpTile(
         tester,
@@ -186,8 +178,9 @@ void main() {
   });
 
   group('square cover reuse on play', () {
-    testWidgets('player tile resolves the cached square cover, not the frame',
-        (tester) async {
+    testWidgets('player tile resolves the cached square cover, not the frame', (
+      tester,
+    ) async {
       const vid = 'v-sq';
       const rawUrl = 'https://art.invalid/frame.jpg';
       const squareUrl = 'https://sq.invalid/cover.jpg';
@@ -225,8 +218,9 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
     });
 
-    testWidgets('enrichment frame swap keeps the shown square cover',
-        (tester) async {
+    testWidgets('enrichment frame swap keeps the shown square cover', (
+      tester,
+    ) async {
       const vid = 'v-sq2';
       const rawA = 'https://art.invalid/frame-a.jpg';
       const rawB = 'https://art.invalid/frame-b.jpg';
@@ -268,8 +262,9 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
     });
 
-    testWidgets('tap palette comes from the square cover with no refetch',
-        (tester) async {
+    testWidgets('tap palette comes from the square cover with no refetch', (
+      tester,
+    ) async {
       const vid = 'v-red';
       const rawUrl = 'https://art.invalid/frame.jpg';
       const squareUrl = 'https://sq.invalid/cover.jpg';
@@ -336,8 +331,9 @@ void main() {
       expect(top.r, greaterThan(top.b));
       // And no artwork URL was ever fetched over HTTP.
       expect(
-        httpCalls
-            .where((u) => u.contains('art.invalid') || u.contains('sq.invalid')),
+        httpCalls.where(
+          (u) => u.contains('art.invalid') || u.contains('sq.invalid'),
+        ),
         isEmpty,
       );
       // Drain one-shot timers (square-cover save, lyrics backoff)

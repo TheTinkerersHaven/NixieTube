@@ -236,8 +236,7 @@ class _M3EFabMenuDownState extends State<M3EFabMenuDown>
     _staggerTimers.add(
       Timer(
         Duration(
-          milliseconds:
-              (count - 1) * _dec.expandStaggerMs + _closeSettleMs,
+          milliseconds: (count - 1) * _dec.expandStaggerMs + _closeSettleMs,
         ),
         () {
           if (!mounted || gen != _closeGen) return;

@@ -112,8 +112,9 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
-  testWidgets('appearance card switches source and picks seed colors',
-      (tester) async {
+  testWidgets('appearance card switches source and picks seed colors', (
+    tester,
+  ) async {
     final (:state, :configPath) = await _pumpSettings(tester);
     await _scrollTo(tester, find.text('Appearance'));
 
@@ -139,14 +140,12 @@ void main() {
     await tester.tap(seedBlue);
     await tester.pumpAndSettle();
     expect(state.config.themeSeedColor, 0xff2196f3);
-    expect(
-      SysConfig(configPath: configPath).themeSeedColor,
-      0xff2196f3,
-    );
+    expect(SysConfig(configPath: configPath).themeSeedColor, 0xff2196f3);
   });
 
-  testWidgets('manual overrides apply per role and reset to Auto',
-      (tester) async {
+  testWidgets('manual overrides apply per role and reset to Auto', (
+    tester,
+  ) async {
     final (:state, :configPath) = await _pumpSettings(tester);
     await _scrollTo(tester, find.text('Manual overrides'));
     expect(state.config.themePrimaryOverride, isNull);
@@ -162,9 +161,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('theme-primary-auto')));
     await tester.pumpAndSettle();
     expect(state.config.themePrimaryOverride, isNull);
-    expect(
-      SysConfig(configPath: configPath).themePrimaryOverride,
-      isNull,
-    );
+    expect(SysConfig(configPath: configPath).themePrimaryOverride, isNull);
   });
 }

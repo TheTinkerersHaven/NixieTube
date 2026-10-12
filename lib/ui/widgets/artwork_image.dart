@@ -78,8 +78,7 @@ class _ArtworkImageState extends State<ArtworkImage> {
   @override
   void didUpdateWidget(ArtworkImage old) {
     super.didUpdateWidget(old);
-    if (old.url != widget.url ||
-        old.squareCoverKey != widget.squareCoverKey) {
+    if (old.url != widget.url || old.squareCoverKey != widget.squareCoverKey) {
       _retried = false;
       _retryTimer?.cancel();
       _retryTimer = null;

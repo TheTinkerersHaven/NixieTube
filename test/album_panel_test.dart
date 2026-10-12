@@ -78,10 +78,8 @@ void main() {
   });
 
   group('sort control', () {
-    testWidgets('keeps a fixed width across selection',
-        (tester) async {
-      final dir =
-          Directory.systemTemp.createTempSync('nt-sort-test');
+    testWidgets('keeps a fixed width across selection', (tester) async {
+      final dir = Directory.systemTemp.createTempSync('nt-sort-test');
       addTearDown(() => dir.delete(recursive: true));
       final tube = InnerTube();
       addTearDown(tube.close);
@@ -91,8 +89,7 @@ void main() {
         configDirPath: dir.path,
       );
       addTearDown(player.dispose);
-      final oauth =
-          GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+      final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
       addTearDown(oauth.close);
       final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
       addTearDown(art.close);
@@ -231,11 +228,7 @@ void main() {
                     durationSec: 100,
                     views: '1.8M plays',
                   ),
-                  Track(
-                    videoId: 'v2',
-                    title: 'Two',
-                    durationSec: 200,
-                  ),
+                  Track(videoId: 'v2', title: 'Two', durationSec: 200),
                 ],
                 numbered: true,
                 showViews: showViews,

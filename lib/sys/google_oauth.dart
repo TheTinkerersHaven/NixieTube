@@ -62,6 +62,10 @@ String newOAuthState([Random? random]) {
   return base64Url.encode(bytes).replaceAll('=', '');
 }
 
+/// Google OAuth for Desktop-type clients (loopback redirect),
+/// ported from Kotlin `GoogleOAuth`. Tokens persist to the app config
+/// directory and refresh automatically; [loginBrowser] drives the
+/// guided system-browser flow used by Settings.
 class GoogleOAuth {
   GoogleOAuth({SysConfig? config, Dio? dio, String? storePath})
     : _config = config ?? SysConfig(),
@@ -72,6 +76,7 @@ class GoogleOAuth {
   final Dio _dio;
   final String _storePath;
 
+  /// Releases the HTTP client.
   void close() => _dio.close();
 
   /// Returns the stored OAuth client id/secret pair, or null when either

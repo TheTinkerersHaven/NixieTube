@@ -130,27 +130,26 @@ void main() {
   group('upgradeArt', () {
     test('rewrites size params preserving the source ratio', () {
       // Square source stays square (kept as-is downstream).
-      expect(upgradeArt('https://x/y=w120-h120-p-l90-rj'),
-          'https://x/y=w540-h540-p-l90-rj');
+      expect(
+        upgradeArt('https://x/y=w120-h120-p-l90-rj'),
+        'https://x/y=w540-h540-p-l90-rj',
+      );
       // Non-square source keeps its ratio: the server must not
       // pre-crop it to a square, the client center-square does that.
-      expect(upgradeArt('https://x/y=w976-h549-l90-rj'),
-          'https://x/y=w540-h304-l90-rj');
-      expect(upgradeArt('https://x/y=w600-h300'),
-          'https://x/y=w540-h270');
       expect(
-          upgradeArt('https://x/plain.jpg'), 'https://x/plain.jpg');
-      expect(upscaleArtworkUrl('https://x/y=w60', 1920),
-          'https://x/y=w1920');
-      expect(upscaleArtworkUrl('https://x/y=w2000', 1920),
-          'https://x/y=w2000');
+        upgradeArt('https://x/y=w976-h549-l90-rj'),
+        'https://x/y=w540-h304-l90-rj',
+      );
+      expect(upgradeArt('https://x/y=w600-h300'), 'https://x/y=w540-h270');
+      expect(upgradeArt('https://x/plain.jpg'), 'https://x/plain.jpg');
+      expect(upscaleArtworkUrl('https://x/y=w60', 1920), 'https://x/y=w1920');
+      expect(upscaleArtworkUrl('https://x/y=w2000', 1920), 'https://x/y=w2000');
     });
   });
 
   group('store disk path', () {
     test('seeded raw bytes decode to a square crop', () async {
-      final dir = await Directory.systemTemp
-          .createTemp('nt-artwork-test');
+      final dir = await Directory.systemTemp.createTemp('nt-artwork-test');
       addTearDown(() => dir.delete(recursive: true));
       final raw = _solid(200, 100, 255, 255, 255);
       final jpeg = img.encodeJpg(raw);
@@ -159,8 +158,7 @@ void main() {
       addTearDown(store.close);
       const url = 'https://artwork.invalid/cover.jpg';
       final hex = _shaForTest(url);
-      await File('${dir.path}/$hex.img3')
-          .writeAsBytes(jpeg);
+      await File('${dir.path}/$hex.img3').writeAsBytes(jpeg);
       final image = await store.image(url);
       expect(image, isNotNull);
       expect(image!.width, image.height);
@@ -186,18 +184,14 @@ void main() {
       addTearDown(() => dir.delete(recursive: true));
       final store = ArtworkStore(cacheDirPath: dir.path);
       addTearDown(store.close);
-      final urls = [
-        for (var i = 0; i < 6; i++) 'https://pool.invalid/$i.jpg',
-      ];
+      final urls = [for (var i = 0; i < 6; i++) 'https://pool.invalid/$i.jpg'];
       for (var i = 0; i < urls.length; i++) {
         // Distinct solid color per URL; PNG keeps it lossless.
         final raw = _solid(64 + i, 64 + i, 30 * (i + 1), 20, 10);
         final hex = _shaForTest(urls[i]);
         await File('${dir.path}/$hex.img3').writeAsBytes(img.encodePng(raw));
       }
-      final squares = await Future.wait([
-        for (final u in urls) store.image(u),
-      ]);
+      final squares = await Future.wait([for (final u in urls) store.image(u)]);
       for (var i = 0; i < squares.length; i++) {
         expect(squares[i], isNotNull, reason: 'square decode $i');
         expect(squares[i]!.width, squares[i]!.height);
@@ -274,8 +268,7 @@ void main() {
       expect(requests, greaterThan(afterSkips));
     });
 
-    test('clearCache drops the banner memo so banners re-render',
-        () async {
+    test('clearCache drops the banner memo so banners re-render', () async {
       final dir = await Directory.systemTemp.createTemp('nt-art-banner');
       addTearDown(() => dir.delete(recursive: true));
       var requests = 0;
@@ -356,7 +349,10 @@ void main() {
       }
       // Nine entries in an eight-slot memo: the first was evicted.
       expect(
-        identical(store.bannerPng('http://127.0.0.1:${server.port}/0.png'), first),
+        identical(
+          store.bannerPng('http://127.0.0.1:${server.port}/0.png'),
+          first,
+        ),
         isFalse,
       );
     });
@@ -456,5 +452,4 @@ void main() {
   });
 }
 
-String _shaForTest(String url) =>
-    sha1.convert(utf8.encode(url)).toString();
+String _shaForTest(String url) => sha1.convert(utf8.encode(url)).toString();

@@ -14,20 +14,14 @@ import 'package:dio/dio.dart';
 import 'package:nixietube/sys/http_client.dart';
 
 /// A Dio whose requests are answered by [onRequest].
-Dio mockDio(
-  Future<(int, Object)> Function(RequestOptions options) onRequest,
-) {
+Dio mockDio(Future<(int, Object)> Function(RequestOptions options) onRequest) {
   final dio = newHttpClient();
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) async {
         final (status, data) = await onRequest(options);
         handler.resolve(
-          Response(
-            requestOptions: options,
-            statusCode: status,
-            data: data,
-          ),
+          Response(requestOptions: options, statusCode: status, data: data),
         );
       },
     ),

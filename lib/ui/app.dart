@@ -85,11 +85,7 @@ class AppShell extends StatelessWidget {
                     Expanded(
                       child: Stack(
                         children: [
-                          Column(
-                            children: [
-                              Expanded(child: _Body()),
-                            ],
-                          ),
+                          Column(children: [Expanded(child: _Body())]),
                           Positioned(
                             top: 0,
                             left: 0,
@@ -155,20 +151,16 @@ class _Body extends StatelessWidget {
       transitionBuilder: (child, animation) => FadeTransition(
         opacity: animation,
         child: SlideTransition(
-          position:
-              Tween(
-                begin: Offset(0, forward ? 0.05 : -0.04),
-                end: Offset.zero,
-              ).animate(animation),
+          position: Tween(
+            begin: Offset(0, forward ? 0.05 : -0.04),
+            end: Offset.zero,
+          ).animate(animation),
           child: child,
         ),
       ),
       layoutBuilder: (currentChild, previousChildren) =>
           Stack(children: [?currentChild]),
-      child: KeyedSubtree(
-        key: ValueKey(screen),
-        child: _screenFor(screen),
-      ),
+      child: KeyedSubtree(key: ValueKey(screen), child: _screenFor(screen)),
     );
   }
 
@@ -308,8 +300,7 @@ class _NowPlayingOverlayState extends State<_NowPlayingOverlay>
         _controller.reverse();
       }
     }
-    final parked =
-        !open && _controller.status == AnimationStatus.dismissed;
+    final parked = !open && _controller.status == AnimationStatus.dismissed;
     // Slide only, no fade: fading a fullscreen tree forces an offscreen
     // compositing layer for the whole transition, which is exactly the
     // raster work Impeller's OpenGL path is slowest at. A plain slide
@@ -385,8 +376,7 @@ class _ErrorWatcherState extends State<_ErrorWatcher> {
 
   @override
   Widget build(BuildContext context) {
-    final error =
-        context.select<AppState, String?>((s) => s.playerState.error);
+    final error = context.select<AppState, String?>((s) => s.playerState.error);
     if (error != _shownFor) {
       _shownFor = error;
       // The engine reports MPV's benign file-cache notice as an error;

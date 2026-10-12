@@ -12,12 +12,17 @@ void main() {
       const body = '{"a": 1, "b": [true, "x"]}';
       expect(body.length, lessThan(isolateJsonThreshold));
       final decoded = await decodeJsonResponse(body);
-      expect(decoded, {'a': 1, 'b': [true, 'x']});
+      expect(decoded, {
+        'a': 1,
+        'b': [true, 'x'],
+      });
     });
 
     test('large payload decodes on isolate identically', () async {
       final items = List.generate(
-          4000, (i) => {'id': 'v$i', 'title': 'Song number $i' * 4});
+        4000,
+        (i) => {'id': 'v$i', 'title': 'Song number $i' * 4},
+      );
       final body = jsonEncode({'items': items});
       expect(body.length, greaterThanOrEqualTo(isolateJsonThreshold));
       final decoded = await decodeJsonResponse(body);

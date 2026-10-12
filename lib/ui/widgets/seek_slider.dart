@@ -42,8 +42,7 @@ class SeekSlider extends StatefulWidget {
   State<SeekSlider> createState() => _SeekSliderState();
 }
 
-class _SeekSliderState extends State<SeekSlider>
-    with TickerProviderStateMixin {
+class _SeekSliderState extends State<SeekSlider> with TickerProviderStateMixin {
   // Drag value (ms) while the finger is down.
   double? _dragValue;
 
@@ -129,9 +128,11 @@ class _SeekSliderState extends State<SeekSlider>
       _sweepCtrl
         ..stop()
         ..value = 0.0
-        ..animateTo(1.0,
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeInOut);
+        ..animateTo(
+          1.0,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+        );
     }
     _lastFraction = fraction;
   }
@@ -146,9 +147,11 @@ class _SeekSliderState extends State<SeekSlider>
     _slideCtrl
       ..stop()
       ..value = 0.0
-      ..animateTo(1.0,
-          duration: Duration(milliseconds: (90 + 300 * dist).round()),
-          curve: Curves.fastOutSlowIn);
+      ..animateTo(
+        1.0,
+        duration: Duration(milliseconds: (90 + 300 * dist).round()),
+        curve: Curves.fastOutSlowIn,
+      );
   }
 
   void _cancelSlide() {
@@ -185,39 +188,39 @@ class _SeekSliderState extends State<SeekSlider>
             enabled: widget.enabled,
             onChangeStart: widget.enabled
                 ? (_) {
-                  _changesThisGesture = 0;
-                  _gestureValue = null;
-                  _cancelSlide();
-                }
+                    _changesThisGesture = 0;
+                    _gestureValue = null;
+                    _cancelSlide();
+                  }
                 : null,
             onChanged: widget.enabled
                 ? (v) {
-                  _gestureValue = v;
-                  _changesThisGesture++;
-                  if (_changesThisGesture == 1) {
-                    // First change of the gesture: a tap
-                    // (or the first drag frame) — glide to
-                    // the point. A real drag cancels this
-                    // on its next update.
-                    _startSlide(v / max);
-                  } else {
-                    _cancelSlide();
-                    setState(() => _dragValue = v);
+                    _gestureValue = v;
+                    _changesThisGesture++;
+                    if (_changesThisGesture == 1) {
+                      // First change of the gesture: a tap
+                      // (or the first drag frame) — glide to
+                      // the point. A real drag cancels this
+                      // on its next update.
+                      _startSlide(v / max);
+                    } else {
+                      _cancelSlide();
+                      setState(() => _dragValue = v);
+                    }
                   }
-                }
                 : null,
             onChangeEnd: widget.enabled
                 ? (v) {
-                  // The gesture target, not the (possibly
-                  // stale) reported value: the glide still
-                  // owns the displayed value here.
-                  final target = _gestureValue ?? v;
-                  // Remember the target so the sweep never
-                  // misreads the user's own backward seek.
-                  _lastFraction = target / max;
-                  _dragValue = null;
-                  widget.state.player.seekTo(target.toInt());
-                }
+                    // The gesture target, not the (possibly
+                    // stale) reported value: the glide still
+                    // owns the displayed value here.
+                    final target = _gestureValue ?? v;
+                    // Remember the target so the sweep never
+                    // misreads the user's own backward seek.
+                    _lastFraction = target / max;
+                    _dragValue = null;
+                    widget.state.player.seekTo(target.toInt());
+                  }
                 : null,
           ),
         );

@@ -78,7 +78,8 @@ class SettingsScreen extends StatelessWidget {
         _SettingsCard(
           child: _ToggleRow(
             title: 'Report listening history',
-            subtitle: 'Send watchtime beacons so plays appear in your '
+            subtitle:
+                'Send watchtime beacons so plays appear in your '
                 'YouTube history.',
             value: reportPlayback,
             onChanged: (v) {
@@ -100,7 +101,8 @@ class SettingsScreen extends StatelessWidget {
             children: [
               _ToggleRow(
                 title: 'High contrast',
-                subtitle: 'Brighter text, stronger borders and more '
+                subtitle:
+                    'Brighter text, stronger borders and more '
                     'distinct surfaces.',
                 value: highContrast,
                 onChanged: (v) {
@@ -111,7 +113,8 @@ class SettingsScreen extends StatelessWidget {
               const Divider(),
               _ToggleRow(
                 title: 'Reduce motion',
-                subtitle: 'Freezes the shimmer, crossfades and slide '
+                subtitle:
+                    'Freezes the shimmer, crossfades and slide '
                     'transitions.',
                 value: reducedMotion,
                 onChanged: (v) {
@@ -134,12 +137,14 @@ class SettingsScreen extends StatelessWidget {
         const _SectionTitle('Debug'),
         const SizedBox(height: 8),
         _SettingsCard(
-          child: _DebugCard(onClearArtwork: () {
-            state.clearArtworkCache();
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Artwork cache cleared.')),
-            );
-          }),
+          child: _DebugCard(
+            onClearArtwork: () {
+              state.clearArtworkCache();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Artwork cache cleared.')),
+              );
+            },
+          ),
         ),
         const SizedBox(height: 24),
         Text(
@@ -175,10 +180,7 @@ class _SettingsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: child,
-      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: child),
     );
   }
 }
@@ -225,10 +227,7 @@ class _ToggleRow extends StatelessWidget {
             ],
           ),
         ),
-        Switch(
-          value: value,
-          onChanged: enabled ? onChanged : null,
-        ),
+        Switch(value: value, onChanged: enabled ? onChanged : null),
       ],
     );
   }
@@ -246,9 +245,7 @@ class _ThemeCard extends StatelessWidget {
     final source = context.select<AppState, ThemeSource>(
       (s) => ThemeSource.fromKey(s.config.themeSource),
     );
-    final seed = context.select<AppState, int>(
-      (s) => s.config.themeSeedColor,
-    );
+    final seed = context.select<AppState, int>((s) => s.config.themeSeedColor);
     final primary = context.select<AppState, int?>(
       (s) => s.config.themePrimaryOverride,
     );
@@ -504,9 +501,7 @@ class _DebugCard extends StatelessWidget {
           'reset failed-download skips, and drop decoded images from '
           'memory, so all artwork re-fetches and re-renders from '
           'scratch on the next display.',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
+          style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 12),
@@ -559,7 +554,8 @@ class _IntegrationsCardState extends State<_IntegrationsCard> {
       children: [
         _ToggleRow(
           title: 'MPRIS (media keys, playerctl)',
-          subtitle: mpris.lastError ??
+          subtitle:
+              mpris.lastError ??
               (!Platform.isLinux
                   ? 'Linux only'
                   : mpris.active
@@ -654,7 +650,9 @@ class _GoogleSignInCardState extends State<_GoogleSignInCard> {
 
   @override
   Widget build(BuildContext context) {
-    final oauthSignedIn = context.select<AppState, bool>((s) => s.oauthSignedIn);
+    final oauthSignedIn = context.select<AppState, bool>(
+      (s) => s.oauthSignedIn,
+    );
     final scheme = Theme.of(context).colorScheme;
     final state = context.read<AppState>();
     return Column(
@@ -824,11 +822,12 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
 
   @override
   Widget build(BuildContext context) {
-    final hasCookieSession = context.select<AppState, bool>((s) => s.hasCookieSession);
+    final hasCookieSession = context.select<AppState, bool>(
+      (s) => s.hasCookieSession,
+    );
     final loginValid = context.select<AppState, bool>((s) => s.loginValid);
     final loginBusy = context.select<AppState, bool>((s) => s.loginBusy);
-    final loginDetail =
-        context.select<AppState, String?>((s) => s.loginDetail);
+    final loginDetail = context.select<AppState, String?>((s) => s.loginDetail);
     final scheme = Theme.of(context).colorScheme;
     final state = context.read<AppState>();
     final connected = hasCookieSession && loginValid;
@@ -887,8 +886,7 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
           M3EFilledButton.icon(
             onPressed: loginBusy ? null : _loginWithBrowserWindow,
             icon: const Icon(Icons.login_rounded),
-            label: Text(
-                loginBusy ? 'Verifying…' : 'Log in with browser'),
+            label: Text(loginBusy ? 'Verifying…' : 'Log in with browser'),
           ),
           const SizedBox(height: 10),
           Text(
@@ -896,9 +894,7 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
             'and the session is picked up when you confirm. '
             'Prefer your own browser? Open it below, sign in, '
             'then import.',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
+            style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
@@ -912,30 +908,24 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
             M3EFilledButton.icon(
               onPressed: loginBusy
                   ? null
-                  : () => _importFromBrowser(
-                      state.browserProfiles,
-                    ),
+                  : () => _importFromBrowser(state.browserProfiles),
               icon: const Icon(Icons.download_rounded),
-              label: Text(loginBusy
-                  ? 'Reading cookies…'
-                  : "I've signed in — import now"),
+              label: Text(
+                loginBusy ? 'Reading cookies…' : "I've signed in — import now",
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               'Reads the fresh session from your system '
               'browser directly — no DevTools needed.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
+              style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ] else ...[
             Text(
               'No Chromium-family browser profile found on this '
               'device — use the manual paste below.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
+              style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
@@ -967,9 +957,7 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
           ],
           const SizedBox(height: 8),
           M3EFilledButton(
-            onPressed: loginBusy
-                ? null
-                : () => state.login(_cookie.text),
+            onPressed: loginBusy ? null : () => state.login(_cookie.text),
             child: Text(loginBusy ? 'Verifying…' : 'Sign in'),
           ),
         ],
@@ -1145,9 +1133,8 @@ class _LastFmCardState extends State<_LastFmCard> {
         Text(
           'Scrobbles tracks over 30 seconds once half played or '
           '4 minutes pass; now-playing shows on track start.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: scheme.onSurfaceVariant),
         ),
       ],
     );
@@ -1223,9 +1210,8 @@ class _LastFmAuthActions extends StatelessWidget {
       children: [
         Text(
           'Approve NixieTube in the browser tab, then continue here.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 8),
         Row(
@@ -1236,11 +1222,9 @@ class _LastFmAuthActions extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             M3ETextButton(
-              onPressed: () => context
-                  .read<AppState>()
-                  .openUrl(
-                    context.read<LastFmService>().authorizeUrl(token!),
-                  ),
+              onPressed: () => context.read<AppState>().openUrl(
+                context.read<LastFmService>().authorizeUrl(token!),
+              ),
               child: const Text('Reopen browser'),
             ),
           ],

@@ -89,20 +89,20 @@ class _FakeCreditTube extends InnerTube {
 }
 
 Track _releaseTrack(String id, String title) => Track(
-      videoId: id,
-      title: title,
-      artists: [ArtistRef('Release')],
-      durationSec: 200,
-      radioPlaylistId: 'RDAMVM$id',
-    );
+  videoId: id,
+  title: title,
+  artists: [ArtistRef('Release')],
+  durationSec: 200,
+  radioPlaylistId: 'RDAMVM$id',
+);
 
 Track _goodTrack(String id) => Track(
-      videoId: id,
-      title: 'Title $id',
-      artists: [ArtistRef('Some Artist', browseId: 'UC$id')],
-      durationSec: 200,
-      radioPlaylistId: 'RDAMVM$id',
-    );
+  videoId: id,
+  title: 'Title $id',
+  artists: [ArtistRef('Some Artist', browseId: 'UC$id')],
+  durationSec: 200,
+  radioPlaylistId: 'RDAMVM$id',
+);
 
 ({AppState state, _FakeEngine engine, _FakeCreditTube tube}) _app({
   bool playback = false,
@@ -150,9 +150,10 @@ void main() {
       final env = _app();
       env.tube.credits['v1'] = [ArtistRef('Boom Kitty', browseId: 'UCBK')];
 
-      final out = await env.state.fixReleaseCredits(
-        [_releaseTrack('v1', 'Obelisk'), _goodTrack('v2')],
-      );
+      final out = await env.state.fixReleaseCredits([
+        _releaseTrack('v1', 'Obelisk'),
+        _goodTrack('v2'),
+      ]);
       expect(out.map((t) => t.artistNames()), ['Boom Kitty', 'Some Artist']);
       expect(out.first.artists.single.browseId, 'UCBK');
       expect(out[1].artistNames(), 'Some Artist');
@@ -162,9 +163,9 @@ void main() {
       final env = _app();
       env.tube.throwOnEnrich.add('v9');
 
-      final out = await env.state.fixReleaseCredits(
-        [_releaseTrack('v9', 'Unknown')],
-      );
+      final out = await env.state.fixReleaseCredits([
+        _releaseTrack('v9', 'Unknown'),
+      ]);
       expect(out.single.artistNames(), 'Release');
     });
 
@@ -179,8 +180,7 @@ void main() {
   });
 
   group('enrichLikedArtists', () {
-    test('"Obelisk" by "Release" becomes "Obelisk" by "Boom Kitty"',
-        () async {
+    test('"Obelisk" by "Release" becomes "Obelisk" by "Boom Kitty"', () async {
       final env = _app(playback: true);
       // Like the placeholder track so it lands in the liked list,
       // the way a real library load would have put it there. The
@@ -194,10 +194,7 @@ void main() {
       await env.state.openPlaylist(
         const GPlaylist(id: '__liked', title: 'Liked songs', itemCount: 1),
       );
-      expect(
-        env.state.openedPlaylist!.tracks.single.artistNames(),
-        'Release',
-      );
+      expect(env.state.openedPlaylist!.tracks.single.artistNames(), 'Release');
 
       env.tube.credits['v1'] = [ArtistRef('Boom Kitty', browseId: 'UCBK')];
       await env.state.enrichLikedArtists();

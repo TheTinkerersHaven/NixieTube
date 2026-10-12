@@ -94,10 +94,10 @@ Future<AppState> _boot(WidgetTester tester) async {
 }
 
 Finder _clockButton() => find.byWidgetPredicate(
-      (w) =>
-          w is IconButton &&
-          (w.tooltip == 'Sleep timer' || w.tooltip == 'Sleep timer on'),
-    );
+  (w) =>
+      w is IconButton &&
+      (w.tooltip == 'Sleep timer' || w.tooltip == 'Sleep timer on'),
+);
 
 Future<void> _openSheet(WidgetTester tester) async {
   await tester.tap(_clockButton());
@@ -131,15 +131,14 @@ void main() {
     await tester.tap(find.text('In 15 minutes'));
     await tester.pump();
     await tester.pump();
-    expect(
-      state.player.state.sleepTimerMode,
-      SleepTimerMode.duration,
-    );
+    expect(state.player.state.sleepTimerMode, SleepTimerMode.duration);
     // Active clock indicator; exact remaining time in the menu.
     expect(find.byTooltip('Sleep timer on'), findsOneWidget);
     await _openHeaderMenu(tester);
-    expect(find.textContaining(RegExp(r'Sleep timer \(\d+:\d\d left\)')),
-        findsOneWidget);
+    expect(
+      find.textContaining(RegExp(r'Sleep timer \(\d+:\d\d left\)')),
+      findsOneWidget,
+    );
     state.player.cancelSleepTimer();
     await tester.pump();
     state.player.dispose();
@@ -160,10 +159,7 @@ void main() {
     await tester.tap(find.text('End of track'));
     await tester.pump();
     await tester.pump();
-    expect(
-      state.player.state.sleepTimerMode,
-      SleepTimerMode.endOfTrack,
-    );
+    expect(state.player.state.sleepTimerMode, SleepTimerMode.endOfTrack);
     expect(find.byTooltip('Sleep timer on'), findsOneWidget);
     await _openHeaderMenu(tester);
     expect(find.text('Sleep timer (end of track)'), findsOneWidget);
@@ -183,10 +179,7 @@ void main() {
     await tester.tap(find.text('Cancel timer'));
     await tester.pump();
     await tester.pump();
-    expect(
-      state.player.state.sleepTimerMode,
-      SleepTimerMode.off,
-    );
+    expect(state.player.state.sleepTimerMode, SleepTimerMode.off);
     expect(find.byTooltip('Sleep timer'), findsOneWidget);
     state.player.dispose();
     await tester.pump();

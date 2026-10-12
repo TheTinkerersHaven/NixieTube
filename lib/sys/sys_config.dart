@@ -120,16 +120,19 @@ class SysConfig {
   final File _file;
   final Map<String, String> _values;
 
+  /// Reads a raw string setting, returning [defaultValue] when absent.
   String get(String key, [String defaultValue = '']) {
     final v = _values[key];
     return v ?? defaultValue;
   }
 
+  /// Writes a raw string setting through to disk immediately.
   void set(String key, String value) {
     _values[key] = value;
     writeProperties(_file, _values);
   }
 
+  /// Reads a bool setting, accepting true/1/yes (and the false forms).
   bool getBool(String key, [bool defaultValue = false]) {
     final v = _values[key]?.trim().toLowerCase();
     if (v == null) return defaultValue;
@@ -138,6 +141,7 @@ class SysConfig {
     return defaultValue;
   }
 
+  /// Writes a bool setting through to disk immediately.
   void setBool(String key, bool value) => set(key, value ? 'true' : 'false');
 
   /// Drops [key] entirely (used for nullable settings where an
@@ -146,15 +150,29 @@ class SysConfig {
     if (_values.remove(key) != null) writeProperties(_file, _values);
   }
 
-  // Typed accessors mirroring Kotlin `SysConfig`.
+  /// Typed accessors mirroring Kotlin `SysConfig`. Getters read with
+  /// per-key defaults; setters write through to disk. Groups below
+  /// follow the Settings screen sections.
+  ///
+  /// Discord Rich Presence: custom app id (empty means built-in),
+  /// master toggle and activity text mode.
   String get discordAppId => get('discord.appId');
   String get discordAppIdOrDefault =>
       discordAppId.trim().isEmpty ? defaultDiscordAppId : discordAppId.trim();
   bool get discordEnabled => getBool('discord.enabled');
   String get discordStatusText => get('discord.statusText', 'app');
+
+  /// MPRIS media-keys integration (Linux only, on by default).
   bool get mprisEnabled => getBool('mpris.enabled', true);
+
+  /// Google OAuth client credentials (Desktop-type client), typed in
+  /// Settings; without them the Data API login refuses to start.
   String get googleClientId => get('google.clientId');
   String get googleClientSecret => get('google.clientSecret');
+
+  /// Last.fm scrobbling credentials and session. Key/secret identify
+  /// the API application; session key and username arrive at the end
+  /// of the browser-approval flow.
   bool get lastfmEnabled => getBool('lastfm.enabled');
   String get lastfmApiKey => get('lastfm.apiKey');
   String get lastfmSecret => get('lastfm.secret');
@@ -167,33 +185,35 @@ class SysConfig {
   set lastfmSessionKey(String v) => set('lastfm.sessionKey', v);
   set lastfmUsername(String v) => set('lastfm.username', v);
 
+  /// Whether plays report watchtime beacons to YouTube history.
   bool get reportPlayback => getBool('reportPlayback');
 
-  // Lyrics provider key (`LyricsSource.name`, defaults to LRCLIB).
+  /// Lyrics provider key (`LyricsSource.name`, defaults to LRCLIB).
   String get lyricsSource => get('lyrics.source', 'lrclib');
   set lyricsSource(String v) => set('lyrics.source', v);
 
-  // Accessibility (a11y). Both default to off so the app keeps its
-  // full-fidelity look until the user opts in.
+  /// Accessibility (a11y). Both default to off so the app keeps its
+  /// full-fidelity look until the user opts in.
   bool get highContrast => getBool('a11y.highContrast');
   bool get reducedMotion => getBool('a11y.reducedMotion');
 
   set highContrast(bool v) => setBool('a11y.highContrast', v);
   set reducedMotion(bool v) => setBool('a11y.reducedMotion', v);
 
-  // Theme (appearance). `theme.source` is `system` (desktop accent
-  // via dynamic_color, when the platform reports one) or `custom`
-  // (seed color below). Anything else falls back to custom so the
-  // app keeps its YTM-red look out of the box.
+  /// Theme (appearance). `theme.source` is `system` (desktop accent
+  /// via dynamic_color, when the platform reports one) or `custom`
+  /// (seed color below). Anything else falls back to custom so the
+  /// app keeps its YTM-red look out of the box.
   String get themeSource => get('theme.source', 'custom');
   set themeSource(String v) => set('theme.source', v);
 
   /// Seed color for the custom source, as 32-bit ARGB.
   int get themeSeedColor =>
-      int.tryParse(get('theme.seedColor', 'ffff0000'), radix: 16) ??
-      0xffff0000;
-  set themeSeedColor(int v) =>
-      set('theme.seedColor', (v & 0xffffffff).toRadixString(16).padLeft(8, '0'));
+      int.tryParse(get('theme.seedColor', 'ffff0000'), radix: 16) ?? 0xffff0000;
+  set themeSeedColor(int v) => set(
+    'theme.seedColor',
+    (v & 0xffffffff).toRadixString(16).padLeft(8, '0'),
+  );
 
   /// Manual role overrides, applied on top of either source.
   /// Null (absent key) means "follow the scheme".

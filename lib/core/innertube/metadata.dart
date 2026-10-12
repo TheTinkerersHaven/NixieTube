@@ -32,6 +32,9 @@ bool _isFourDigitYear(String v) =>
     (v.startsWith('19') || v.startsWith('20')) &&
     int.tryParse(v) != null;
 
+/// True when a subtitle token is release metadata rather than a
+/// credit ("Single", "EP", "2024", "Official Audio"). Used to keep
+/// type/year tags out of artist names.
 bool isReleaseNoise(String value) {
   const noise = {
     'release',
@@ -52,16 +55,22 @@ bool isReleaseNoise(String value) {
   return _isFourDigitYear(v);
 }
 
+/// True for auto-generated distributor channels ("Release",
+/// "Release - Topic") as opposed to real artist channels.
 bool isGenericReleaseOwner(String owner) {
   final t = owner.trim().toLowerCase();
   return t == 'release' || t == 'release - topic';
 }
 
+/// True for a bare release-type token ("album", "single", "EP").
 bool isReleaseTypeTag(String value) {
   const tags = {'album', 'single', 'compilation', 'mixtape', 'ep'};
   return tags.contains(canonical(value));
 }
 
+/// True when a subtitle mentions a release type anywhere, including
+/// the spellings the token check misses ("E.P.", "eptrack"). Broader
+/// than [isReleaseTypeTag] for free-form subtitles.
 bool hasReleaseType(String value) {
   final compact = value.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
   final tokens = canonical(value).split(' ');
@@ -222,6 +231,9 @@ String? albumFromTags(
   return null;
 }
 
+/// Release kind for distributor uploads, which carry no kind in
+/// their tags. A same-named album on a generic channel is a single
+/// by construction; otherwise the album title plus tags decide.
 ReleaseKind? albumKindFromTags(
   String title,
   String? album,

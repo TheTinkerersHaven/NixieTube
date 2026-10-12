@@ -101,11 +101,13 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
-        child: Builder(builder: (context) {
-          context.watch<AppState>();
-          builds++;
-          return const SizedBox.shrink();
-        }),
+        child: Builder(
+          builder: (context) {
+            context.watch<AppState>();
+            builds++;
+            return const SizedBox.shrink();
+          },
+        ),
       ),
     );
     expect(builds, 1);
@@ -120,8 +122,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
     }
     expect(ticks, greaterThanOrEqualTo(5));
-    expect(builds, afterPlay,
-        reason: 'position ticks must not rebuild watchers');
+    expect(
+      builds,
+      afterPlay,
+      reason: 'position ticks must not rebuild watchers',
+    );
 
     // A real change (pause) rebuilds exactly.
     state.player.togglePlayPause();
@@ -132,8 +137,10 @@ void main() {
   });
 
   group('selective rebuilds', () {
-    ({AppState state, PlayerController player, _QuietTube tube})
-    buildApp({ArtworkStore? art, Future<ResolvedStream> Function(String)? resolveStream}) {
+    ({AppState state, PlayerController player, _QuietTube tube}) buildApp({
+      ArtworkStore? art,
+      Future<ResolvedStream> Function(String)? resolveStream,
+    }) {
       final dir = Directory.systemTemp.createTempSync('nt-select-test');
       addTearDown(() => dir.deleteSync(recursive: true));
       final tube = _QuietTube();
@@ -166,9 +173,7 @@ void main() {
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: env.state,
-          child: const MaterialApp(
-            home: Scaffold(body: PlayerBar()),
-          ),
+          child: const MaterialApp(home: Scaffold(body: PlayerBar())),
         ),
       );
       env.player.playTracks([
@@ -192,8 +197,9 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('player bar keeps its height swapping loader and slider',
-        (tester) async {
+    testWidgets('player bar keeps its height swapping loader and slider', (
+      tester,
+    ) async {
       // Hold the stream resolve so the track sits in the
       // loading state with the wavy indicator in the seek slot.
       final gate = Completer<ResolvedStream>();
@@ -201,9 +207,7 @@ void main() {
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: env.state,
-          child: const MaterialApp(
-            home: Scaffold(body: PlayerBar()),
-          ),
+          child: const MaterialApp(home: Scaffold(body: PlayerBar())),
         ),
       );
       env.player.playTracks([
@@ -228,13 +232,16 @@ void main() {
       tester
           .element(find.byType(M3ELinearWavyProgressIndicator))
           .visitAncestorElements((e) {
-        final w = e.widget;
-        if (w is SizedBox && w.height == 24) {
-          expect(indRect.center.dy, tester.getRect(find.byWidget(w)).center.dy);
-          return false;
-        }
-        return true;
-      });
+            final w = e.widget;
+            if (w is SizedBox && w.height == 24) {
+              expect(
+                indRect.center.dy,
+                tester.getRect(find.byWidget(w)).center.dy,
+              );
+              return false;
+            }
+            return true;
+          });
 
       // Resolved: the seek slider takes the same fixed slot,
       // so the bar must not move.
@@ -257,8 +264,9 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('non-tappable bar ignores surface taps, keeps controls',
-        (tester) async {
+    testWidgets('non-tappable bar ignores surface taps, keeps controls', (
+      tester,
+    ) async {
       final env = buildApp();
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
@@ -289,21 +297,17 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('player bar follows track, merges and transport state',
-        (tester) async {
+    testWidgets('player bar follows track, merges and transport state', (
+      tester,
+    ) async {
       final env = buildApp();
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: env.state,
-          child: const MaterialApp(
-            home: Scaffold(body: PlayerBar()),
-          ),
+          child: const MaterialApp(home: Scaffold(body: PlayerBar())),
         ),
       );
-      expect(
-        find.text('Search for music to start playing'),
-        findsOneWidget,
-      );
+      expect(find.text('Search for music to start playing'), findsOneWidget);
 
       // Hold the background metadata merge back so the assertions
       // below run against a deterministic queue state.
@@ -344,20 +348,88 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('artwork resolves once per url across parent rebuilds',
-        (tester) async {
+    testWidgets('artwork resolves once per url across parent rebuilds', (
+      tester,
+    ) async {
       final dir = Directory.systemTemp.createTempSync('nt-art-test');
       addTearDown(() => dir.deleteSync(recursive: true));
       // Minimal valid PNG so Image.file takes the loaded path.
       const png = [
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0,
-        0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73,
-        68, 65, 84, 120, 156, 99, 96, 24, 5, 163, 96, 20, 140, 2, 0, 0,
-        118, 0, 1, 147, 243, 233, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174,
-        66, 96, 130,
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10,
+        0,
+        0,
+        0,
+        13,
+        73,
+        72,
+        68,
+        82,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        8,
+        6,
+        0,
+        0,
+        0,
+        31,
+        21,
+        196,
+        137,
+        0,
+        0,
+        0,
+        13,
+        73,
+        68,
+        65,
+        84,
+        120,
+        156,
+        99,
+        96,
+        24,
+        5,
+        163,
+        96,
+        20,
+        140,
+        2,
+        0,
+        0,
+        118,
+        0,
+        1,
+        147,
+        243,
+        233,
+        240,
+        0,
+        0,
+        0,
+        0,
+        73,
+        69,
+        78,
+        68,
+        174,
+        66,
+        96,
+        130,
       ];
-      final file = File('${dir.path}/a.png')
-        ..writeAsBytesSync(png);
+      final file = File('${dir.path}/a.png')..writeAsBytesSync(png);
       final store = _CountingStore(
         cacheDirPath: '${dir.path}/art',
         result: file,
@@ -404,8 +476,9 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('missing artwork shows a placeholder without refetching',
-        (tester) async {
+    testWidgets('missing artwork shows a placeholder without refetching', (
+      tester,
+    ) async {
       final dir = Directory.systemTemp.createTempSync('nt-art-null');
       addTearDown(() => dir.deleteSync(recursive: true));
       final store = _CountingStore(
@@ -447,8 +520,9 @@ void main() {
   });
 
   group('overlay staging', () {
-    testWidgets('tabs wait for the slide while transport shows at once',
-        (tester) async {
+    testWidgets('tabs wait for the slide while transport shows at once', (
+      tester,
+    ) async {
       final dir = Directory.systemTemp.createTempSync('nt-stage-test');
       addTearDown(() => dir.deleteSync(recursive: true));
       final tube = _QuietTube();
@@ -473,9 +547,7 @@ void main() {
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: state,
-          child: const MaterialApp(
-            home: Scaffold(body: NowPlayingScreen()),
-          ),
+          child: const MaterialApp(home: Scaffold(body: NowPlayingScreen())),
         ),
       );
       player.playTracks([
@@ -527,8 +599,9 @@ void main() {
       expect(isProgressOnlyUpdate(base, both), isFalse);
     });
 
-    testWidgets('volume drags tick instead of rebuilding watchers',
-        (tester) async {
+    testWidgets('volume drags tick instead of rebuilding watchers', (
+      tester,
+    ) async {
       final dir = Directory.systemTemp.createTempSync('nt-volume-test');
       addTearDown(() => dir.deleteSync(recursive: true));
       final tube = _QuietTube();
@@ -558,11 +631,13 @@ void main() {
             home: Scaffold(
               body: Column(
                 children: [
-                  Builder(builder: (context) {
-                    context.watch<AppState>();
-                    builds++;
-                    return const SizedBox.shrink();
-                  }),
+                  Builder(
+                    builder: (context) {
+                      context.watch<AppState>();
+                      builds++;
+                      return const SizedBox.shrink();
+                    },
+                  ),
                   const Expanded(child: NowPlayingScreen()),
                 ],
               ),
@@ -586,8 +661,11 @@ void main() {
       player.setVolume(50);
       await tester.pump();
       expect(state.volumeTick.value, greaterThan(0));
-      expect(builds, afterPlay,
-          reason: 'volume drags must not rebuild watchers');
+      expect(
+        builds,
+        afterPlay,
+        reason: 'volume drags must not rebuild watchers',
+      );
       // The slider itself follows via volumeTick: one of the two
       // sliders (seek + volume) now reads 50.
       final values = tester
@@ -601,8 +679,9 @@ void main() {
   });
 
   group('fullscreen lyrics', () {
-    testWidgets('expand shows bar + lyrics, collapse and close restore',
-        (tester) async {
+    testWidgets('expand shows bar + lyrics, collapse and close restore', (
+      tester,
+    ) async {
       final dir = Directory.systemTemp.createTempSync('nt-full-lyrics');
       addTearDown(() => dir.deleteSync(recursive: true));
       final tube = _QuietTube();
@@ -627,9 +706,7 @@ void main() {
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: state,
-          child: const MaterialApp(
-            home: Scaffold(body: NowPlayingScreen()),
-          ),
+          child: const MaterialApp(home: Scaffold(body: NowPlayingScreen())),
         ),
       );
       player.playTracks([
@@ -658,10 +735,7 @@ void main() {
       await tester.pump();
       expect(state.lyricsFull, isTrue);
       expect(find.byType(PlayerBar), findsOneWidget);
-      expect(
-        find.byIcon(Icons.fullscreen_exit_rounded),
-        findsOneWidget,
-      );
+      expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
       expect(find.text('No lyrics found'), findsOneWidget);
 
       await tester.tap(find.byIcon(Icons.fullscreen_exit_rounded));

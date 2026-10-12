@@ -69,19 +69,25 @@ void main() {
     expect(fields['api_key'], _key);
     expect(fields['format'], 'json');
     // api_sig = lowercase hex md5 of sorted "keyvalue" concat + secret.
-    final base = 'api_key$_key' 'methodauth.getToken' '$_secret';
+    final base =
+        'api_key$_key'
+        'methodauth.getToken'
+        '$_secret';
     expect(fields['api_sig'], md5.convert(utf8.encode(base)).toString());
   });
 
-  test('requestToken rejects missing credentials without network use', () async {
-    startService();
-    config.lastfmApiKey = '';
-    config.lastfmSecret = '';
-    final token = await service.requestToken();
-    expect(token, isNull);
-    expect(service.status, contains('error'));
-    expect(calls, isEmpty);
-  });
+  test(
+    'requestToken rejects missing credentials without network use',
+    () async {
+      startService();
+      config.lastfmApiKey = '';
+      config.lastfmSecret = '';
+      final token = await service.requestToken();
+      expect(token, isNull);
+      expect(service.status, contains('error'));
+      expect(calls, isEmpty);
+    },
+  );
 
   test('requestToken surfaces an API error', () async {
     startService(
@@ -178,8 +184,7 @@ void main() {
     durationSec: 200,
   );
 
-  test('new track sends now-playing; scrobble fires once past half',
-      () async {
+  test('new track sends now-playing; scrobble fires once past half', () async {
     startService();
     await service.update(
       PlayerState(current: track, playing: true, positionMs: 0),
@@ -211,7 +216,10 @@ void main() {
     // Now-playing fired on track start, before the scrobble.
     final nowPlayings = callsFor('track.updateNowPlaying');
     expect(nowPlayings, hasLength(1));
-    expect(calls.indexOf(nowPlayings.first), lessThan(calls.indexOf(scrobbles.first)));
+    expect(
+      calls.indexOf(nowPlayings.first),
+      lessThan(calls.indexOf(scrobbles.first)),
+    );
     // No duplicate scrobble on later progress.
     await service.update(
       PlayerState(current: track, playing: true, positionMs: 199000),
@@ -227,8 +235,12 @@ void main() {
       artists: [ArtistRef('A')],
       durationSec: 20,
     );
-    await service.update(PlayerState(current: short, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: short, playing: true, positionMs: 20000));
+    await service.update(
+      PlayerState(current: short, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: short, playing: true, positionMs: 20000),
+    );
     expect(callsFor('track.scrobble'), isEmpty);
   });
 
@@ -240,28 +252,46 @@ void main() {
       artists: [ArtistRef('A')],
       durationSec: 600,
     );
-    await service.update(PlayerState(current: long, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: long, playing: true, positionMs: 239000));
+    await service.update(
+      PlayerState(current: long, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: long, playing: true, positionMs: 239000),
+    );
     expect(callsFor('track.scrobble'), isEmpty);
-    await service.update(PlayerState(current: long, playing: true, positionMs: 240000));
+    await service.update(
+      PlayerState(current: long, playing: true, positionMs: 240000),
+    );
     expect(callsFor('track.scrobble'), hasLength(1));
   });
 
   test('paused playback never scrobbles', () async {
     startService();
-    await service.update(PlayerState(current: track, playing: false, positionMs: 0));
-    await service.update(PlayerState(current: track, playing: false, positionMs: 150000));
+    await service.update(
+      PlayerState(current: track, playing: false, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: track, playing: false, positionMs: 150000),
+    );
     expect(callsFor('track.scrobble'), isEmpty);
   });
 
   test('backward seek before the threshold restarts the play', () async {
     startService();
-    await service.update(PlayerState(current: track, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: track, playing: true, positionMs: 60000));
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 60000),
+    );
     // Big seek back: a new play (another now-playing), no scrobble yet.
-    await service.update(PlayerState(current: track, playing: true, positionMs: 5000));
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 5000),
+    );
     expect(callsFor('track.scrobble'), isEmpty);
-    await service.update(PlayerState(current: track, playing: true, positionMs: 100000));
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 100000),
+    );
     expect(callsFor('track.scrobble'), hasLength(1));
     // Two now-playings: the original start and the restart.
     expect(callsFor('track.updateNowPlaying'), hasLength(2));
@@ -275,14 +305,22 @@ void main() {
       artists: [ArtistRef('Primo'), ArtistRef('Secondo')],
       durationSec: 200,
     );
-    await service.update(PlayerState(current: multi, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: multi, playing: true, positionMs: 100000));
+    await service.update(
+      PlayerState(current: multi, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: multi, playing: true, positionMs: 100000),
+    );
     expect(form(callsFor('track.scrobble').first)['artist'], 'Primo');
     expect(form(callsFor('track.updateNowPlaying').first)['artist'], 'Primo');
 
     const unlinked = Track(videoId: 'u1', title: 'Solo', durationSec: 200);
-    await service.update(PlayerState(current: unlinked, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: unlinked, playing: true, positionMs: 100000));
+    await service.update(
+      PlayerState(current: unlinked, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: unlinked, playing: true, positionMs: 100000),
+    );
     // A track with no artist at all is never scrobbled (blank artist guard),
     // so the only scrobble still belongs to the duet.
     expect(callsFor('track.scrobble'), hasLength(1));
@@ -291,15 +329,23 @@ void main() {
 
   test('disabled scrobbling sends nothing', () async {
     startService(enabled: false);
-    await service.update(PlayerState(current: track, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: track, playing: true, positionMs: 120000));
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 120000),
+    );
     expect(calls, isEmpty);
   });
 
   test('session-less scrobbling sends nothing', () async {
     startService(session: false);
-    await service.update(PlayerState(current: track, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: track, playing: true, positionMs: 120000));
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: track, playing: true, positionMs: 120000),
+    );
     expect(calls, isEmpty);
   });
 
@@ -337,8 +383,12 @@ void main() {
       artists: [ArtistRef('Headline'), ArtistRef('Other')],
       durationSec: 200,
     );
-    await service.update(PlayerState(current: ft, playing: true, positionMs: 0));
-    await service.update(PlayerState(current: ft, playing: true, positionMs: 100000));
+    await service.update(
+      PlayerState(current: ft, playing: true, positionMs: 0),
+    );
+    await service.update(
+      PlayerState(current: ft, playing: true, positionMs: 100000),
+    );
     final nowPlaying = form(callsFor('track.updateNowPlaying').first);
     expect(nowPlaying['track'], 'Anthem');
     expect(nowPlaying['artist'], 'Headline');

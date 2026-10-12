@@ -113,9 +113,7 @@ void main() {
           ChangeNotifierProvider.value(value: discord),
           ChangeNotifierProvider.value(value: lastfm),
         ],
-        child: MaterialApp(
-          home: Scaffold(body: SettingsScreen()),
-        ),
+        child: MaterialApp(home: Scaffold(body: SettingsScreen())),
       ),
     );
   }
@@ -135,8 +133,9 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('Last.fm card renders, toggle and credentials persist',
-      (tester) async {
+  testWidgets('Last.fm card renders, toggle and credentials persist', (
+    tester,
+  ) async {
     await pumpSettings(tester);
     await tester.pump();
     await reveal(tester, find.text('Last.fm scrobbling'));
@@ -174,8 +173,9 @@ void main() {
     expect(config.lastfmSecret, 'secret');
   });
 
-  testWidgets('connect flow approves in the browser and signs in',
-      (tester) async {
+  testWidgets('connect flow approves in the browser and signs in', (
+    tester,
+  ) async {
     await pumpSettings(tester);
     await tester.pump();
     await reveal(tester, find.text('Last.fm scrobbling'));
