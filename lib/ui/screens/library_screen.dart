@@ -2,6 +2,7 @@
 // artists and liked songs, plus the open-playlist view.
 
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
@@ -10,6 +11,7 @@ import '../theme.dart';
 import '../widgets/album_panel.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/cards.dart';
+import '../widgets/fab_menu_down.dart';
 import '../widgets/rails.dart';
 import '../widgets/track_row.dart';
 
@@ -21,14 +23,18 @@ class LibraryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Full watch: the backdrop palette resolves asynchronously
+    // (ensurePalette → notifyListeners), and a select on openedPlaylist /
+    // account would miss that and leave the wash stuck on the fallback.
     final state = context.watch<AppState>();
     final opened = state.openedPlaylist;
+    final account = state.account;
     // Backdrop fills the whole screen, header row included: the
     // title and settings icon sit on the wash, like Now Playing.
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (opened != null && state.account != null)
+        if (opened != null && account != null)
           RepaintBoundary(
             child: PaletteBackdrop(palette: _paletteFor(state, opened)),
           ),
@@ -40,7 +46,7 @@ class LibraryScreen extends StatelessWidget {
                 screenPadding,
                 screenPadding,
                 screenPadding,
-                0,
+                screenPadding,
               ),
               child: Row(
                 children: [
@@ -56,7 +62,44 @@ class LibraryScreen extends StatelessWidget {
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                   ),
-                  if (opened == null)
+                  if (opened != null && opened.playlist.id != '__liked')
+                    // M3E action menu: the three-dot trigger
+                    // morphs and springs pill items open below
+                    // it (downwards, so the header menu never
+                    // flies off the top of the screen),
+                    // replacing the old popup menu.
+                    M3EFabMenuDown(
+                      icon: const Icon(Icons.more_vert_rounded),
+                      closeIcon: const Icon(Icons.close_rounded),
+                      size: M3EFabSize.small,
+                      color: M3EFabColor.surface,
+                      position: M3EFabMenuPosition.right,
+                      items: [
+                        M3EFabMenuItem(
+                          icon: const Icon(
+                            Icons.drive_file_rename_outline_rounded,
+                          ),
+                          label: 'Rename playlist',
+                          onPressed: () => _handlePlaylistEdit(
+                            context,
+                            state,
+                            opened,
+                            'rename',
+                          ),
+                        ),
+                        M3EFabMenuItem(
+                          icon: const Icon(Icons.delete_rounded),
+                          label: 'Delete playlist',
+                          onPressed: () => _handlePlaylistEdit(
+                            context,
+                            state,
+                            opened,
+                            'delete',
+                          ),
+                        ),
+                      ],
+                    )
+                  else if (opened == null)
                     IconButton(
                       icon: const Icon(Icons.settings_rounded),
                       tooltip: 'Settings',
@@ -65,7 +108,7 @@ class LibraryScreen extends StatelessWidget {
                 ],
               ),
             ),
-            if (state.account == null)
+            if (account == null)
               _signInPrompt(context, state)
             else if (opened != null)
               Expanded(child: _openPlaylist(context, state, opened))
@@ -73,7 +116,59 @@ class LibraryScreen extends StatelessWidget {
               Expanded(child: _tabs(context, state)),
           ],
         ),
+        if (account != null && opened == null)
+          Positioned(
+            // Clear the floating mini player bar.
+            right: screenPadding,
+            bottom: playerBarClearance,
+            child: M3EFloatingActionButton(
+              shape: M3EButtonShape.square,
+              onPressed: () => _createPlaylist(context, state),
+              tooltip: 'New playlist',
+              child: const Icon(Icons.playlist_add_rounded),
+            ),
+          ),
       ],
+    );
+  }
+
+  /// Prompts for a playlist name, creates it via the Data API, and reports
+  /// the outcome in a SnackBar.
+  Future<void> _createPlaylist(BuildContext context, AppState state) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New playlist'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+        ),
+        actions: [
+          M3ETextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          M3EFilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    final id = await state.createPlaylist(name);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          id != null
+              ? 'Playlist “$name” created.'
+              : 'Could not create the playlist.',
+        ),
+      ),
     );
   }
 
@@ -101,7 +196,7 @@ class LibraryScreen extends StatelessWidget {
         children: [
           const Text('Sign in to see your library, likes and playlists.'),
           const SizedBox(height: 12),
-          FilledButton(
+          M3EFilledButton(
             onPressed: () => state.go(Screen.settings),
             child: const Text('Open Settings'),
           ),
@@ -135,12 +230,99 @@ class LibraryScreen extends StatelessWidget {
       numbered: false,
       topPadding: 16,
       listLoading: state.libraryLoading && opened.tracks.isEmpty,
+      // Own playlists can be edited (remove tracks); the liked list is
+      // read-only.
+      removable: pl.id != '__liked' && state.account != null,
+      onRemoveTrack: pl.id == '__liked'
+          ? null
+          : (t) => state.removeTrackFromPlaylist(pl.id, t),
     );
+  }
+
+  /// Renames or deletes the open playlist from the header menu.
+  Future<void> _handlePlaylistEdit(
+    BuildContext context,
+    AppState state,
+    OpenPlaylist opened,
+    String action,
+  ) async {    if (action == 'rename') {
+      final controller = TextEditingController(text: opened.playlist.title);
+      final newName = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Rename playlist'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Name'),
+            onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+          ),
+          actions: [
+            M3ETextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            M3EFilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Rename'),
+            ),
+          ],
+        ),
+      );
+      if (newName == null ||
+          newName.isEmpty ||
+          newName == opened.playlist.title) {
+        return;
+      }
+      final ok = await state.renamePlaylist(opened.playlist.id, newName);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ok ? 'Playlist renamed.' : 'Could not rename the playlist.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (action == 'delete') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Delete playlist?'),
+          content: Text(
+            '“${opened.playlist.title}” will be deleted. '
+            'This cannot be undone.',
+          ),
+          actions: [
+            M3ETextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            M3EFilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      final ok = await state.deletePlaylist(opened.playlist.id);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ok ? 'Playlist deleted.' : 'Could not delete the playlist.',
+          ),
+        ),
+      );
+    }
   }
 
   Widget _tabs(BuildContext context, AppState state) {
     if (state.libraryLoading && state.playlists.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: M3ELoadingIndicator());
     }
     final tabs = [
       'Playlists (${state.playlists.length})',
@@ -226,7 +408,11 @@ class LibraryScreen extends StatelessWidget {
             ),
             onTap: () => state.go(Screen.detail, detail: a),
             leading: ArtworkImage(
-              a.thumbnails.isEmpty ? null : a.thumbnails.first.url,
+              a.thumbnails.isEmpty
+                  ? null
+                  : a.thumbnails
+                      .reduce((x, y) => x.width >= y.width ? x : y)
+                      .url,
               size: 48,
               circular: true,
               iconSize: 24,
@@ -251,7 +437,7 @@ class LibraryScreen extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(
             screenPadding,
-            8,
+            screenPadding,
             screenPadding,
             0,
           ),
@@ -263,7 +449,7 @@ class LibraryScreen extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-              TextButton(
+              M3ETextButton(
                 onPressed: liked.isEmpty
                     ? null
                     : () => state.playSongs(liked, 0),

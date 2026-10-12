@@ -110,4 +110,71 @@ void main() {
     // Settle the follow-scroll animation before teardown.
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('nothing highlights before the first line is sung',
+      (tester) async {
+    final dir = Directory.systemTemp.createTempSync('nt-lyrics-test');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = InnerTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: _IdleEngine(),
+      tube: tube,
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+      oauth: GoogleOAuth(storePath: '${dir.path}/oauth.properties'),
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+    const lines = [
+      LyricLine(timeMs: 5000, text: 'first line'),
+      LyricLine(timeMs: 60000, text: 'second line'),
+    ];
+    final ctrl = ScrollController();
+    addTearDown(ctrl.dispose);
+    Widget buildAt(int positionMs) => ChangeNotifierProvider.value(
+          value: state,
+          child: MaterialApp(
+            home: Scaffold(
+              body: LyricsList(
+                ctrl: ctrl,
+                lyrics: lines,
+                positionMs: positionMs,
+                state: state,
+              ),
+            ),
+          ),
+        );
+    AnimatedDefaultTextStyle styleOf(String text) => tester.widget(
+          find.ancestor(
+            of: find.text(text),
+            matching: find.byType(AnimatedDefaultTextStyle),
+          ).first,
+        );
+
+    // Intro: both rows share the inactive style.
+    await tester.pumpWidget(buildAt(0));
+    expect(
+      styleOf('first line').style.fontSize,
+      styleOf('second line').style.fontSize,
+    );
+    expect(
+      styleOf('first line').style.color,
+      styleOf('second line').style.color,
+    );
+
+    // First line's turn: only it highlights.
+    await tester.pumpWidget(buildAt(5000));
+    expect(
+      styleOf('first line').style.fontSize,
+      isNot(styleOf('second line').style.fontSize),
+    );
+    await tester.pump(const Duration(seconds: 1));
+  });
 }

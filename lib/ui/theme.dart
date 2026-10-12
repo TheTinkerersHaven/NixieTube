@@ -3,9 +3,9 @@
 // Only the dark scheme is applied (the Kotlin `App` hardcodes
 // `YtmDarkScheme`); the light scheme is defined but unused there too.
 
+import 'package:google_fonts/google_fonts.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
-
-import 'widgets/gapped_rounded_track_shape.dart';
 
 /// Shared outer padding applied by every top-level screen.
 const double screenPadding = 20.0;
@@ -60,46 +60,258 @@ const double playerBarClearance = 150.0;
 
 const _ytmRed = Color(0xFFFF0000);
 
-ThemeData buildTheme() {
-  const scheme = ColorScheme(
-    brightness: Brightness.dark,
-    primary: Color(0xFFFFB3B3),
-    onPrimary: Color(0xFF680003),
-    primaryContainer: Color(0xFF5C0E0E),
-    onPrimaryContainer: Color(0xFFFFDAD4),
-    secondary: Color(0xFFE7BDB7),
-    onSecondary: Color(0xFF4A2C28),
-    tertiary: Color(0xFFE7BDB7),
-    onTertiary: Color(0xFF4A2C28),
-    error: Color(0xFFFFB4AB),
-    onError: Color(0xFF690005),
-    surface: Color(0xFF131314),
-    onSurface: Color(0xFFF5F0EE),
-    surfaceContainerHighest: Color(0xFF28282A),
-    surfaceContainerHigh: Color(0xFF28282A),
-    surfaceContainer: Color(0xFF1E1E20),
-    onSurfaceVariant: Color(0xFFD8CFCB),
-    outline: Color(0xFF534341),
-    outlineVariant: Color(0xFF3A3231),
-  );
-  return ThemeData(
-    colorScheme: scheme,
-    scaffoldBackgroundColor: const Color(0xFF0B0B0C),
+/// Default custom seed (YTM red): the custom source with this
+/// seed resolves to null, keeping the hand-tuned scheme below
+/// exactly.
+const int defaultSeedColor = 0xffff0000;
+
+/// Seed/override swatch presets (opaque ARGB).
+const List<int> themeColorPresets = <int>[
+  0xffff0000, // YTM red (default)
+  0xffff6d00, // orange
+  0xffffb300, // amber
+  0xff4caf50, // green
+  0xff009688, // teal
+  0xff00bcd4, // cyan
+  0xff2196f3, // blue
+  0xff7c4dff, // violet
+  0xffe91e63, // pink
+  0xff9e9e9e, // grey
+];
+
+/// Theme color source (mirrors `SysConfig.themeSource`).
+enum ThemeSource {
+  /// Desktop accent via dynamic_color (falls back to built-in
+  /// when the platform reports none).
+  system,
+
+  /// Seed-generated scheme.
+  custom;
+
+  /// Unknown keys fall back to custom so the app keeps its
+  /// YTM-red look instead of surprising with system colors.
+  static ThemeSource fromKey(String key) =>
+      key == system.name ? system : custom;
+}
+
+const _defaultScheme = ColorScheme(
+  brightness: Brightness.dark,
+  primary: Color(0xFFFFB3B3),
+  onPrimary: Color(0xFF680003),
+  primaryContainer: Color(0xFF5C0E0E),
+  onPrimaryContainer: Color(0xFFFFDAD4),
+  secondary: Color(0xFFE7BDB7),
+  onSecondary: Color(0xFF4A2C28),
+  tertiary: Color(0xFFE7BDB7),
+  onTertiary: Color(0xFF4A2C28),
+  error: Color(0xFFFFB4AB),
+  onError: Color(0xFF690005),
+  surface: Color(0xFF131314),
+  onSurface: Color(0xFFF5F0EE),
+  surfaceContainerHighest: Color(0xFF28282A),
+  surfaceContainerHigh: Color(0xFF28282A),
+  surfaceContainer: Color(0xFF1E1E20),
+  onSurfaceVariant: Color(0xFFD8CFCB),
+  outline: Color(0xFF534341),
+  outlineVariant: Color(0xFF3A3231),
+);
+
+// Accessibility high contrast: brighter text and borders plus
+// more distinct surface tiers, so separation and legibility
+// survive low vision. The base surface stays put — only the
+// luminance of the foreground and the container steps move.
+// Applies to the built-in scheme only; dynamic and seeded
+// schemes are contrast-safe by construction.
+const _hcScheme = ColorScheme(
+  brightness: Brightness.dark,
+  primary: Color(0xFFFFC9C4),
+  onPrimary: Color(0xFF680003),
+  primaryContainer: Color(0xFF5C0E0E),
+  onPrimaryContainer: Color(0xFFFFDAD4),
+  secondary: Color(0xFFF0D5CF),
+  onSecondary: Color(0xFF4A2C28),
+  tertiary: Color(0xFFF0D5CF),
+  onTertiary: Color(0xFF4A2C28),
+  error: Color(0xFFFFC1B8),
+  onError: Color(0xFF690005),
+  surface: Color(0xFF131314),
+  onSurface: Color(0xFFFFFFFF),
+  surfaceContainerHighest: Color(0xFF3D3D40),
+  surfaceContainerHigh: Color(0xFF303033),
+  surfaceContainer: Color(0xFF232326),
+  onSurfaceVariant: Color(0xFFF0EAE7),
+  outline: Color(0xFF8A736F),
+  outlineVariant: Color(0xFF5E524F),
+);
+
+ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
+  final effective = scheme ?? (highContrast ? _hcScheme : _defaultScheme);
+  final base = ThemeData(
+    colorScheme: effective,
+    scaffoldBackgroundColor:
+        scheme == null ? const Color(0xFF0B0B0C) : effective.surface,
     useMaterial3: true,
-    // M3 Expressive styling for indicators and sliders. The flag reads
-    // deprecated, but the 2023 Material You look is still the default,
-    // so opt out explicitly (here = every widget app-wide).
-    progressIndicatorTheme:
-        // ignore: deprecated_member_use
-        const ProgressIndicatorThemeData(year2023: false),
-    sliderTheme: const SliderThemeData(
-      trackHeight: 16,
-      trackShape: GappedRoundedTrackShape(),
-      // ignore: deprecated_member_use
-      year2023: false,
+    fontFamily: GoogleFonts.googleSansFlex().fontFamily,
+  );
+  return base.copyWith(
+    // De-bolded hierarchy: nothing above w500 anywhere. Emphasis
+    // comes from size, spacing and color instead — heavy weights
+    // clump together, especially on dark backgrounds. (A `wdth`
+    // axis would be the expressive alternative, but google_fonts
+    // serves Google Sans Flex as static per-weight cuts, so extra
+    // width variations would be silently ignored.)
+    textTheme: base.textTheme.emphasized.copyWith(
+      // Overrides for the app's specific hierarchy:
+      // Now Playing track title — presence via size, not weight.
+      headlineMedium: base.textTheme.headlineMedium?.copyWith(
+        fontWeight: FontWeight.w500,
+        fontVariations: const [
+          FontVariation('wght', 500),
+          FontVariation('opsz', 28),
+        ],
+      ),
+      // Shelf / section titles — light enough to not shout.
+      titleLarge: base.textTheme.titleLarge?.copyWith(
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.25,
+        fontVariations: const [
+          FontVariation('wght', 500),
+          FontVariation('opsz', 22),
+        ],
+      ),
+      // Track row titles — regular weight, clean.
+      titleMedium: base.textTheme.titleMedium?.copyWith(
+        fontWeight: FontWeight.w400,
+        letterSpacing: 0.15,
+        fontVariations: const [
+          FontVariation('wght', 400),
+          FontVariation('opsz', 16),
+        ],
+      ),
+      // Small titles — medium, aired out with spacing.
+      titleSmall: base.textTheme.titleSmall?.copyWith(
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.1,
+        fontVariations: const [
+          FontVariation('wght', 500),
+          FontVariation('opsz', 14),
+        ],
+      ),
+      // Body text — regular weight for readability.
+      bodyLarge: base.textTheme.bodyLarge?.copyWith(
+        fontWeight: FontWeight.w400,
+        letterSpacing: 0.25,
+        fontVariations: const [
+          FontVariation('wght', 400),
+          FontVariation('opsz', 16),
+        ],
+      ),
+      bodyMedium: base.textTheme.bodyMedium?.copyWith(
+        fontWeight: FontWeight.w400,
+        letterSpacing: 0.25,
+        fontVariations: const [
+          FontVariation('wght', 400),
+          FontVariation('opsz', 14),
+        ],
+      ),
+      bodySmall: base.textTheme.bodySmall?.copyWith(
+        fontWeight: FontWeight.w400,
+        letterSpacing: 0.1,
+        fontVariations: const [
+          FontVariation('wght', 400),
+          FontVariation('opsz', 12),
+        ],
+      ),
+      // Buttons, chips, badges — medium with native spacing.
+      labelLarge: base.textTheme.labelLarge?.copyWith(
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.1,
+        fontVariations: const [
+          FontVariation('wght', 500),
+          FontVariation('opsz', 14),
+        ],
+      ),
+      labelMedium: base.textTheme.labelMedium?.copyWith(
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.1,
+        fontVariations: const [
+          FontVariation('wght', 500),
+          FontVariation('opsz', 12),
+        ],
+      ),
+      labelSmall: base.textTheme.labelSmall?.copyWith(
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.1,
+        fontVariations: const [
+          FontVariation('wght', 500),
+          FontVariation('opsz', 11),
+        ],
+      ),
     ),
+  );
+}
+/// Resolves the effective dark scheme for the theme settings,
+/// or null to keep the built-in hand-tuned scheme exactly:
+/// system source without platform colors, or custom source
+/// with the default seed and no manual overrides.
+ColorScheme? resolveColorScheme({
+  required ThemeSource source,
+  required int seedColor,
+  ColorScheme? systemDark,
+  int? primaryOverride,
+  int? secondaryOverride,
+  int? tertiaryOverride,
+  int? surfaceOverride,
+}) {
+  ColorScheme? base;
+  if (source == ThemeSource.system && systemDark != null) {
+    base = systemDark;
+  } else if (source == ThemeSource.custom &&
+      (seedColor & 0xffffffff) != defaultSeedColor) {
+    base = ColorScheme.fromSeed(
+      seedColor: Color(seedColor & 0xffffffff),
+      brightness: Brightness.dark,
+    );
+  }
+  if (base == null &&
+      primaryOverride == null &&
+      secondaryOverride == null &&
+      tertiaryOverride == null &&
+      surfaceOverride == null) {
+    return null;
+  }
+  base ??= _defaultScheme;
+  if (primaryOverride == null &&
+      secondaryOverride == null &&
+      tertiaryOverride == null &&
+      surfaceOverride == null) {
+    return base;
+  }
+  // Manual overrides apply as-is on top of either source.
+  return base.copyWith(
+    primary: primaryOverride == null ? null : Color(primaryOverride),
+    secondary: secondaryOverride == null ? null : Color(secondaryOverride),
+    tertiary: tertiaryOverride == null ? null : Color(tertiaryOverride),
+    surface: surfaceOverride == null ? null : Color(surfaceOverride),
   );
 }
 
 /// YTM red accent used sparingly (badges, active states).
 Color get ytmRed => _ytmRed;
+
+/// Shared toggle-button-group styling: each segment is individually
+/// filled — secondary container unselected, primary selected — with
+/// no surrounding outline. The `selected` widget state (added by the
+/// group for checked buttons) drives both colors.
+M3EToggleButtonDecoration toggleButtonGroupDecoration(ColorScheme scheme) {
+  return M3EToggleButtonDecoration(
+    backgroundColor: WidgetStateProperty.resolveWith((states) =>
+        states.contains(WidgetState.selected)
+            ? scheme.primary
+            : scheme.secondaryContainer),
+    foregroundColor: WidgetStateProperty.resolveWith((states) =>
+        states.contains(WidgetState.selected)
+            ? scheme.onPrimary
+            : scheme.onSecondaryContainer),
+  );
+}

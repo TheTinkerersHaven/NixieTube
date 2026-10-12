@@ -2,6 +2,7 @@
 // filter chips, and categorized results.
 
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
@@ -47,8 +48,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final search = state.search;
+    final search = context.select<AppState, SearchUiState>((s) => s.search);
+    final state = context.read<AppState>();
     return Column(
       children: [
         Padding(
@@ -78,8 +79,8 @@ class _SearchScreenState extends State<SearchScreen> {
         if (search.query.isNotEmpty) _filters(context, state),
         if (search.loading)
           const Padding(
-            padding: EdgeInsets.all(16),
-            child: CircularProgressIndicator(),
+            padding: EdgeInsets.all(screenPadding),
+            child: M3ELoadingIndicator(),
           ),
         if (search.error != null)
           ErrorBox(
@@ -163,7 +164,7 @@ class _SearchScreenState extends State<SearchScreen> {
           child: Text(key, style: Theme.of(context).textTheme.titleLarge),
         ),
         if (songs.isNotEmpty)
-          TextButton(
+          M3ETextButton(
             onPressed: () => state.playSongs(songs, 0),
             child: const Text('Play all'),
           ),
@@ -241,6 +242,8 @@ class _SearchScreenState extends State<SearchScreen> {
     if (state.searchHistory.isEmpty) {
       return const SizedBox.shrink();
     }
+    // History rows (not chips): clock icon reruns the query, the X
+    // drops just that entry.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -252,25 +255,34 @@ class _SearchScreenState extends State<SearchScreen> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
-            TextButton(
+            M3ETextButton(
               onPressed: state.clearSearchHistory,
               child: const Text('Clear'),
             ),
           ],
         ),
-        Wrap(
-          spacing: 8,
-          children: [
-            for (final q in state.searchHistory)
-              ActionChip(
-                label: Text(q),
-                onPressed: () {
-                  _controller.text = q;
-                  state.searchFor(q);
-                },
-              ),
-          ],
-        ),
+        for (final q in state.searchHistory)
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+            leading: Icon(
+              Icons.history_rounded,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            title: Text(
+              q,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.close_rounded),
+              tooltip: 'Remove',
+              onPressed: () => state.removeSearchHistory(q),
+            ),
+            onTap: () {
+              _controller.text = q;
+              state.searchFor(q);
+            },
+          ),
       ],
     );
   }

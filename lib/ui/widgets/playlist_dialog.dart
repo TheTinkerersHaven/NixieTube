@@ -2,8 +2,11 @@
 // play-next shortcut plus one toggle row per account playlist.
 
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/models/models.dart';
+import '../../core/innertube/gdata_api.dart';
 import '../app_state.dart';
 
 /// Centered add-to-playlist dialog for the dialog track.
@@ -12,10 +15,27 @@ class PlaylistPickerDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final track = state.playlistDialogTrack;
+    final track = context.select<AppState, Track?>((s) => s.playlistDialogTrack);
+    final playlists = context.select<AppState, List<GPlaylist>>((s) => s.playlists);
+    // Render state, not just data: the loading flag flips
+    // and the membership map is replaced when the
+    // per-playlist checks land, while the track and the
+    // playlist list above stay identical — without these
+    // selects the dialog never rebuilds and the spinner
+    // stays up forever.
+    final gdata = context.select<AppState, bool>((s) => s.gdataAvailable);
+    final state = context.read<AppState>();
+    final loading = context.select<AppState, bool>(
+      (s) => s.playlistDialogLoading,
+    );
+    final membership = context.select<AppState, Map<String, bool>>(
+      (s) => s.playlistMembership,
+    );
+    final dialogError = context.select<AppState, String?>(
+      (s) => s.playlistDialogError,
+    );
     if (track == null) return const SizedBox.shrink();
-    final mine = state.playlists.where((p) => p.id != '__liked').toList();
+    final mine = playlists.where((p) => p.id != '__liked').toList();
     return AlertDialog(
       content: SizedBox(
         width: 400,
@@ -60,19 +80,22 @@ class PlaylistPickerDialog extends StatelessWidget {
               ),
             ),
             const Divider(),
-            if (state.gdataAvailable == false)
+            if (!gdata)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Text('Sign in to manage playlists.'),
               )
-            else if (state.playlistDialogLoading && mine.isNotEmpty)
+            else if (loading && mine.isNotEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
                 child: Center(
-                  child: SizedBox(
-                    width: 32,
-                    height: 32,
-                    child: CircularProgressIndicator(),
+                  // M3E loading shapes; tight 32x32 keeps the
+                  // slot the spinner used to occupy.
+                  child: M3ELoadingIndicator(
+                    constraints: BoxConstraints.tightFor(
+                      width: 32,
+                      height: 32,
+                    ),
                   ),
                 ),
               )
@@ -88,7 +111,7 @@ class PlaylistPickerDialog extends StatelessWidget {
                   itemCount: mine.length,
                   itemBuilder: (context, i) {
                     final pl = mine[i];
-                    final member = state.playlistMembership[pl.id] == true;
+                    final member = membership[pl.id] == true;
                     return InkWell(
                       onTap: () => state.toggleTrackPlaylist(pl.id, track),
                       child: Padding(
@@ -129,10 +152,10 @@ class PlaylistPickerDialog extends StatelessWidget {
                   },
                 ),
               ),
-            if (state.playlistDialogError != null) ...[
+            if (dialogError != null) ...[
               const SizedBox(height: 8),
               Text(
-                state.playlistDialogError!,
+                dialogError,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
@@ -140,7 +163,7 @@ class PlaylistPickerDialog extends StatelessWidget {
         ),
       ),
       actions: [
-        TextButton(
+        M3ETextButton(
           onPressed: () {
             // Pop the route (see above): state-only close strands the
             // ModalBarrier.

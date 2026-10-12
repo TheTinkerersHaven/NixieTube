@@ -2,12 +2,15 @@
 // `ArtistBrowseRail`: titled horizontal carousels with scroll arrows.
 
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 
 import '../../core/models/models.dart';
+import '../a11y.dart';
 import 'cards.dart';
 
 /// Section header with title plus scroll-left/right buttons, mirroring
-/// Kotlin `RailHeader`. [step] scrolls ~4 cards per press.
+/// Kotlin `RailHeader`. Each press transitions exactly one viewport
+/// page ([step] only covers the pre-layout window with no viewport).
 class RailHeader extends StatelessWidget {
   const RailHeader({
     super.key,
@@ -22,15 +25,21 @@ class RailHeader extends StatelessWidget {
   final double step;
   final Widget? trailing;
 
-  void _scroll(double delta) {
+  void _scroll(BuildContext context, int direction) {
     if (!controller.hasClients) return;
-    final target = (controller.offset + delta).clamp(
+    final position = controller.position;
+    final viewport = position.viewportDimension;
+    final stride = viewport > 0 ? viewport : step;
+    final target = (controller.offset + direction * stride).clamp(
       0.0,
-      controller.position.maxScrollExtent,
+      position.maxScrollExtent,
     );
     controller.animateTo(
       target,
-      duration: const Duration(milliseconds: 300),
+      duration: readMotionDuration(
+        context,
+        const Duration(milliseconds: 300),
+      ),
       curve: Curves.easeOut,
     );
   }
@@ -48,12 +57,12 @@ class RailHeader extends StatelessWidget {
         IconButton(
           icon: const Icon(Icons.chevron_left_rounded),
           tooltip: 'Scroll left',
-          onPressed: () => _scroll(-step),
+          onPressed: () => _scroll(context, -1),
         ),
         IconButton(
           icon: const Icon(Icons.chevron_right_rounded),
           tooltip: 'Scroll right',
-          onPressed: () => _scroll(step),
+          onPressed: () => _scroll(context, 1),
         ),
         if (trailing case final Widget t) t,
       ],
@@ -242,7 +251,7 @@ class ErrorBox extends StatelessWidget {
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
           const SizedBox(height: 8),
-          FilledButton.icon(
+          M3EFilledButton.icon(
             onPressed: onRetry,
             icon: const Icon(Icons.refresh_rounded),
             label: const Text('Retry'),

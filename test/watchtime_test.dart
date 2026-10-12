@@ -5,27 +5,30 @@
 
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:nixietube/core/innertube/auth_session.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 
-String? _header(Map<String, String> headers, String name) {
+import 'mock_dio.dart';
+
+String? _header(Map<String, dynamic> headers, String name) {
   for (final e in headers.entries) {
-    if (e.key.toLowerCase() == name.toLowerCase()) return e.value;
+    if (e.key.toLowerCase() == name.toLowerCase()) {
+      final v = e.value;
+      return v is String ? v : v?.toString();
+    }
   }
   return null;
 }
 
-http.Response _envelope(Object json) =>
-    http.Response(jsonEncode(json), 200);
+(int, Object) _envelope(Object json) => (200, jsonEncode(json));
 
 void main() {
   group('watchtime reporting', () {
     test('player tokens extracted into WatchtimeContext', () async {
-      final client = MockClient((req) async {
-        if (req.url.path.contains('/player')) {
+      final client = mockDio((options) async {
+        if (options.uri.path.contains('/player')) {
           return _envelope({
             'playbackTracking': {
               'videostatsWatchtimeUrl': {
@@ -39,13 +42,13 @@ void main() {
             'videoDetails': {'lengthSeconds': '200'},
           });
         }
-        return http.Response('', 404);
+        return (404, '');
       });
 
       final tube = InnerTube(
         auth: const AuthSession(
             cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc'),
-        httpClient: client,
+        dio: client,
       );
       final ctx = await tube.watchtimeContext('deadbeef');
       tube.close();
@@ -62,18 +65,16 @@ void main() {
 
     test('reportWatchtime sends ptracking + playback + watchtime + feedback',
         () async {
-      final requests = <http.Request>[];
-      final client = MockClient((req) async {
-        requests.add(req);
-        final u = req.url.toString();
+      final requests = <RequestOptions>[];
+      final client = mockDio((options) async {
+        requests.add(options);
+        final u = options.uri.toString();
 
         // Session token extraction from YTM root page (path is '/' or empty).
-        if (req.url.host == 'music.youtube.com' &&
-            (req.url.path == '/' || req.url.path.isEmpty) &&
-            req.method == 'GET') {
-          return http.Response(
-              '{"XSRF_TOKEN":"test-session-token"}',
-              200);
+        if (options.uri.host == 'music.youtube.com' &&
+            (options.uri.path == '/' || options.uri.path.isEmpty) &&
+            options.method == 'GET') {
+          return (200, '{"XSRF_TOKEN":"test-session-token"}');
         }
 
         // Player endpoint for watchtime context.
@@ -93,18 +94,18 @@ void main() {
         }
 
         // Beacon endpoints (ptracking GET, stats/* POST).
-        if (u.contains('/api/stats/')) return http.Response('', 204);
+        if (u.contains('/api/stats/')) return (204, '');
         // ptracking pixel (best-effort GET).
-        if (u.contains('/watch?v=')) return http.Response('', 404);
+        if (u.contains('/watch?v=')) return (404, '');
         // feedback endpoint.
         if (u.contains('/feedback')) return _envelope(<String, dynamic>{});
-        return http.Response('', 404);
+        return (404, '');
       });
 
       final tube = InnerTube(
         auth: const AuthSession(
             cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc'),
-        httpClient: client,
+        dio: client,
       );
       tube.authProvider = () async => const AuthSession(accessToken: 'tok');
 
@@ -121,7 +122,7 @@ void main() {
 
       expect(ok, isTrue);
 
-      final urls = requests.map((r) => r.url.toString()).toList();
+      final urls = requests.map((r) => r.uri.toString()).toList();
       expect(urls.any((u) => u.contains('/api/stats/playback')), isTrue);
       expect(urls.any((u) => u.contains('/api/stats/watchtime')), isTrue);
       expect(urls.any((u) => u == 'https://music.youtube.com/watch?v=ptrack'),
@@ -145,10 +146,10 @@ void main() {
       // Beacon POSTs carry session_token in JSON body.
       final beaconPosts = requests
           .where((r) =>
-              r.url.path.contains('/api/stats/') && r.method == 'POST')
+              r.uri.path.contains('/api/stats/') && r.method == 'POST')
           .toList();
       expect(beaconPosts, isNotEmpty);
-      expect(beaconPosts.first.body, contains('session_token'));
+      expect(beaconPosts.first.data as String, contains('session_token'));
       expect(_header(beaconPosts.first.headers, 'Content-Type'),
           contains('application/json'));
     });
@@ -156,12 +157,12 @@ void main() {
     test("heartbeats reuse cached context and don't re-fetch player",
         () async {
       final playerCalls = <String>[];
-      final client = MockClient((req) async {
-        final u = req.url.toString();
-        if (req.url.host == 'music.youtube.com' &&
-            (req.url.path == '/' || req.url.path.isEmpty) &&
-            req.method == 'GET') {
-          return http.Response('{"XSRF_TOKEN":"tok"}', 200);
+      final client = mockDio((options) async {
+        final u = options.uri.toString();
+        if (options.uri.host == 'music.youtube.com' &&
+            (options.uri.path == '/' || options.uri.path.isEmpty) &&
+            options.method == 'GET') {
+          return (200, '{"XSRF_TOKEN":"tok"}');
         }
         if (u.contains('/player')) {
           playerCalls.add(u);
@@ -178,15 +179,15 @@ void main() {
             'videoDetails': {'lengthSeconds': '120'},
           });
         }
-        if (u.contains('/api/stats/')) return http.Response('', 204);
+        if (u.contains('/api/stats/')) return (204, '');
         if (u.contains('/feedback')) return _envelope({});
-        return http.Response('', 404);
+        return (404, '');
       });
 
       final tube = InnerTube(
         auth: const AuthSession(
             cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc'),
-        httpClient: client,
+        dio: client,
       );
 
       await tube.reportWatchtime(
@@ -204,12 +205,12 @@ void main() {
 
     test('final=1 appended on pause', () async {
       final watchtimeUrls = <String>[];
-      final client = MockClient((req) async {
-        final u = req.url.toString();
-        if (req.url.host == 'music.youtube.com' &&
-            (req.url.path == '/' || req.url.path.isEmpty) &&
-            req.method == 'GET') {
-          return http.Response('{"XSRF_TOKEN":"tok"}', 200);
+      final client = mockDio((options) async {
+        final u = options.uri.toString();
+        if (options.uri.host == 'music.youtube.com' &&
+            (options.uri.path == '/' || options.uri.path.isEmpty) &&
+            options.method == 'GET') {
+          return (200, '{"XSRF_TOKEN":"tok"}');
         }
         if (u.contains('/player')) {
           return _envelope({
@@ -227,17 +228,17 @@ void main() {
         }
         if (u.contains('/api/stats/watchtime')) {
           watchtimeUrls.add(u);
-          return http.Response('', 204);
+          return (204, '');
         }
-        if (u.contains('/api/stats/')) return http.Response('', 204);
+        if (u.contains('/api/stats/')) return (204, '');
         if (u.contains('/feedback')) return _envelope({});
-        return http.Response('', 404);
+        return (404, '');
       });
 
       final tube = InnerTube(
         auth: const AuthSession(
             cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc'),
-        httpClient: client,
+        dio: client,
       );
 
       await tube.reportWatchtime(
@@ -261,17 +262,17 @@ void main() {
     test('anonymous session still fires feedback (no beacon candidates)',
         () async {
       final statsCalled = <String>[];
-      final client = MockClient((req) async {
-        final u = req.url.toString();
+      final client = mockDio((options) async {
+        final u = options.uri.toString();
         if (u.contains('/api/stats/')) {
           statsCalled.add(u);
-          return http.Response('', 204);
+          return (204, '');
         }
         if (u.contains('/feedback')) return _envelope({});
-        return http.Response('', 404);
+        return (404, '');
       });
 
-      final tube = InnerTube(httpClient: client);
+      final tube = InnerTube(dio: client);
       // No cookie → fetchSessionToken returns null → no beacon candidates.
       final ok = await tube.reportWatchtime(
           'v', 'c-2', 0.0, 1.0, 'playing', 30.0, null);

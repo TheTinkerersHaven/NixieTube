@@ -2,10 +2,12 @@
 // body, mini player bar, Now Playing overlay, and playlist dialog.
 
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'app_state.dart';
+import 'a11y.dart';
 import 'screens/detail_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
@@ -81,10 +83,19 @@ class AppShell extends StatelessWidget {
                       ],
                     ),
                     Expanded(
-                      child: Column(
+                      child: Stack(
                         children: [
-                          const _SessionBanner(),
-                          Expanded(child: _Body()),
+                          Column(
+                            children: [
+                              Expanded(child: _Body()),
+                            ],
+                          ),
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: _SessionBanner(),
+                          ),
                         ],
                       ),
                     ),
@@ -133,6 +144,35 @@ class _Body extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screen = context.select<AppState, Screen>((s) => s.screen);
+    final forward = context.select<AppState, bool>((s) => s.lastNavForward);
+    // Router-aware switch: pushes rise from the bottom, back pops
+    // sink down, always over a fade. Only the incoming child stays
+    // mounted (the outgoing one drops at once), so lists never
+    // double-mount mid-transition.
+    return AnimatedSwitcher(
+      duration: motionDuration(context, const Duration(milliseconds: 220)),
+      switchInCurve: Curves.easeOut,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position:
+              Tween(
+                begin: Offset(0, forward ? 0.05 : -0.04),
+                end: Offset.zero,
+              ).animate(animation),
+          child: child,
+        ),
+      ),
+      layoutBuilder: (currentChild, previousChildren) =>
+          Stack(children: [?currentChild]),
+      child: KeyedSubtree(
+        key: ValueKey(screen),
+        child: _screenFor(screen),
+      ),
+    );
+  }
+
+  Widget _screenFor(Screen screen) {
     switch (screen) {
       case Screen.home:
       case Screen.detail:
@@ -190,7 +230,7 @@ class _SessionBanner extends StatelessWidget {
                   ?.copyWith(color: scheme.onErrorContainer),
             ),
           ),
-          TextButton(
+          M3ETextButton(
             onPressed: () => context.read<AppState>().go(Screen.settings),
             child: Text(
               'Sign in',
@@ -250,6 +290,13 @@ class _NowPlayingOverlayState extends State<_NowPlayingOverlay>
   @override
   Widget build(BuildContext context) {
     final open = context.select<AppState, bool>((s) => s.nowOpen);
+    // Follow the reduced-motion setting: this selector joins the
+    // one above, so a flip rebuilds the wrapper and the controller
+    // adopts the collapsed duration — the next forward/reverse
+    // (and the mirrored palette hold) is then instant.
+    _controller.duration = context.select<AppState, Duration>(
+      (s) => s.nowPlayingTransitionDuration,
+    );
     // Drive the transition on flag flips only: steady-state opens
     // rebuild nothing but this wrapper — the content tree is already
     // laid out and its cover decoded.

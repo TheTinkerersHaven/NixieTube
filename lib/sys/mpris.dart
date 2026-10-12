@@ -82,12 +82,16 @@ class _MprisObject extends DBusObject {
   PlayerState get _s => _controller.state;
 
   /// Local file:// art when already rendered, else the remote URL.
+  /// Fallback sync version for compatibility - checks file existence synchronously.
   String? _artUrl(Track track) {
     final remote = track.displayArtwork;
     if (remote == null || remote.isEmpty) return null;
     try {
-      final cached = _art.cachedFile(remote);
-      if (cached != null) return 'file://${cached.path}';
+      final path = _art.croppedFilePath(remote);
+      final file = File(path);
+      if (file.existsSync() && file.lengthSync() > 0) {
+        return 'file://$path';
+      }
     } catch (_) {}
     return remote;
   }

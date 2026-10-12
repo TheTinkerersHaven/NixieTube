@@ -8,8 +8,9 @@
 
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 
+import '../../sys/http_client.dart';
 import '../models/models.dart';
 import 'json.dart';
 import 'metadata.dart';
@@ -58,30 +59,44 @@ class _VideoMeta {
 class GDataApi {
   GDataApi({
     required Future<String?> Function() tokenProvider,
-    http.Client? httpClient,
-  }) : _client = httpClient ?? http.Client() {
+    Dio? dio,
+  }) : _dio = dio ?? newHttpClient() {
     _tokenProvider = tokenProvider;
   }
 
   late final Future<String?> Function() _tokenProvider;
-  final http.Client _client;
+  final Dio _dio;
 
-  void close() => _client.close();
+  /// Every Data API call fails fast instead of hanging on a stalled token
+  /// refresh or transport (a hung request would otherwise spin the
+  /// add-to-playlist dialog forever).
+  static const _gdataTimeout = Duration(seconds: 20);
+
+  void close() => _dio.close();
+
+  /// True for 2xx statuses. Dio's status is nullable; a missing
+  /// status counts as a failure.
+  static bool _okStatus(int? status) =>
+      status != null && status >= 200 && status < 300;
 
   /// Returns the current OAuth token or throws when signed out.
   Future<String> _token() async {
-    final token = await _tokenProvider();
+    final token = await _tokenProvider().timeout(_gdataTimeout);
     if (token == null) throw StateError('not signed in');
     return token;
   }
 
   Future<dynamic> _get(String path, Map<String, String> params) async {
     final uri = Uri.https('www.googleapis.com', '/youtube/v3/$path', params);
-    final res = await _client.get(
-      uri,
-      headers: {'Authorization': 'Bearer ${await _token()}'},
-    );
-    return decodeJsonResponse(res.body);
+    final res = await _dio
+        .getUri<String>(
+          uri,
+          options: Options(
+            headers: {'Authorization': 'Bearer ${await _token()}'},
+          ),
+        )
+        .timeout(_gdataTimeout);
+    return decodeJsonResponse(res.data ?? '');
   }
 
   /// Playlist/video thumbnails come in varying sizes; take the best available.
@@ -210,6 +225,40 @@ class GDataApi {
     return _keepMusicPlaylists(
       out.where((pl) => !pl.id.startsWith('LL')).toList(),
     );
+  }
+
+  /// Creates a playlist and returns its id, or null on failure. New
+  /// playlists default to private (unlisted-public surfaces are unusual for
+  /// a local player).
+  Future<String?> createPlaylist({
+    required String title,
+    String description = '',
+    String privacy = 'private',
+  }) async {
+    try {
+      final res = await _dio
+          .postUri<String>(
+            Uri.https('www.googleapis.com', '/youtube/v3/playlists', {
+              'part': 'snippet,status',
+            }),
+            data: jsonEncode({
+              'snippet': {'title': title, 'description': description},
+              'status': {'privacyStatus': privacy},
+            }),
+            options: Options(
+              headers: {
+                'Authorization': 'Bearer ${await _token()}',
+                'Content-Type': 'application/json',
+              },
+            ),
+          )
+          .timeout(_gdataTimeout);
+      final data = await decodeJsonResponse(res.data ?? '');
+      final id = data is Map ? data['id'] : null;
+      return id is String ? id : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// First classifiable video id in a playlist (probe for keep-music).
@@ -690,8 +739,13 @@ class GDataApi {
         'id': videoId,
         'rating': like ? 'like' : 'none',
       });
-      await _client.post(uri, headers: {'Authorization': 'Bearer $token'});
-      return true;
+      final res = await _dio
+          .postUri<String>(
+            uri,
+            options: Options(headers: {'Authorization': 'Bearer $token'}),
+          )
+          .timeout(_gdataTimeout);
+      return _okStatus(res.statusCode);
     } catch (_) {
       return false;
     }
@@ -704,20 +758,24 @@ class GDataApi {
       final uri = Uri.https('www.googleapis.com', '/youtube/v3/playlistItems', {
         'part': 'snippet',
       });
-      await _client.post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'snippet': {
-            'playlistId': playlistId,
-            'resourceId': {'kind': 'youtube#video', 'videoId': videoId},
-          },
-        }),
-      );
-      return true;
+      final res = await _dio
+          .postUri<String>(
+            uri,
+            data: jsonEncode({
+              'snippet': {
+                'playlistId': playlistId,
+                'resourceId': {'kind': 'youtube#video', 'videoId': videoId},
+              },
+            }),
+            options: Options(
+              headers: {
+                'Authorization': 'Bearer $token',
+                'Content-Type': 'application/json',
+              },
+            ),
+          )
+          .timeout(_gdataTimeout);
+      return _okStatus(res.statusCode);
     } catch (_) {
       return false;
     }
@@ -769,8 +827,61 @@ class GDataApi {
       final uri = Uri.https('www.googleapis.com', '/youtube/v3/playlistItems', {
         'id': itemId,
       });
-      await _client.delete(uri, headers: {'Authorization': 'Bearer $token'});
-      return true;
+      final res = await _dio
+          .deleteUri<String>(
+            uri,
+            options: Options(headers: {'Authorization': 'Bearer $token'}),
+          )
+          .timeout(_gdataTimeout);
+      return _okStatus(res.statusCode);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Renames a playlist. Only the snippet part is sent, so the playlist's
+  /// privacy status is preserved.
+  Future<bool> renamePlaylist(String playlistId, String newTitle) async {
+    try {
+      final token = await _token();
+      final uri = Uri.https('www.googleapis.com', '/youtube/v3/playlists', {
+        'part': 'snippet',
+      });
+      final res = await _dio
+          .putUri<String>(
+            uri,
+            data: jsonEncode({
+              'id': playlistId,
+              'snippet': {'title': newTitle},
+            }),
+            options: Options(
+              headers: {
+                'Authorization': 'Bearer $token',
+                'Content-Type': 'application/json',
+              },
+            ),
+          )
+          .timeout(_gdataTimeout);
+      return _okStatus(res.statusCode);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Deletes a playlist.
+  Future<bool> deletePlaylist(String playlistId) async {
+    try {
+      final token = await _token();
+      final uri = Uri.https('www.googleapis.com', '/youtube/v3/playlists', {
+        'id': playlistId,
+      });
+      final res = await _dio
+          .deleteUri<String>(
+            uri,
+            options: Options(headers: {'Authorization': 'Bearer $token'}),
+          )
+          .timeout(_gdataTimeout);
+      return _okStatus(res.statusCode);
     } catch (_) {
       return false;
     }
@@ -799,19 +910,23 @@ class GDataApi {
       final uri = Uri.https('www.googleapis.com', '/youtube/v3/subscriptions', {
         'part': 'snippet',
       });
-      await _client.post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'snippet': {
-            'resourceId': {'kind': 'youtube#channel', 'channelId': channelId},
-          },
-        }),
-      );
-      return true;
+      final res = await _dio
+          .postUri<String>(
+            uri,
+            data: jsonEncode({
+              'snippet': {
+                'resourceId': {'kind': 'youtube#channel', 'channelId': channelId},
+              },
+            }),
+            options: Options(
+              headers: {
+                'Authorization': 'Bearer $token',
+                'Content-Type': 'application/json',
+              },
+            ),
+          )
+          .timeout(_gdataTimeout);
+      return _okStatus(res.statusCode);
     } catch (_) {
       return false;
     }
@@ -824,8 +939,13 @@ class GDataApi {
       final uri = Uri.https('www.googleapis.com', '/youtube/v3/subscriptions', {
         'id': subscriptionId,
       });
-      await _client.delete(uri, headers: {'Authorization': 'Bearer $token'});
-      return true;
+      final res = await _dio
+          .deleteUri<String>(
+            uri,
+            options: Options(headers: {'Authorization': 'Bearer $token'}),
+          )
+          .timeout(_gdataTimeout);
+      return _okStatus(res.statusCode);
     } catch (_) {
       return false;
     }

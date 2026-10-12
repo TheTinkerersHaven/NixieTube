@@ -72,6 +72,55 @@ void main() {
     });
   });
 
+  group('hasSignedInSession', () {
+    Map<String, String> cookie(
+      String name,
+      String value, [
+      String domain = '.youtube.com',
+    ]) =>
+        {'name': name, 'value': value, 'domain': domain};
+
+    test('true with a SAPISID value on a YouTube domain', () {
+      expect(
+        BrowserCookies.hasSignedInSession([
+          cookie('VISITOR_INFO1_LIVE', 'xyz'),
+          cookie('SAPISID', 'abc'),
+        ]),
+        isTrue,
+      );
+      expect(
+        BrowserCookies.hasSignedInSession([
+          cookie('__Secure-3PAPISID', 'abc', '.music.youtube.com'),
+        ]),
+        isTrue,
+      );
+    });
+
+    test('false for anonymous, empty or foreign cookies', () {
+      expect(BrowserCookies.hasSignedInSession([]), isFalse);
+      expect(
+        BrowserCookies.hasSignedInSession([
+          cookie('VISITOR_INFO1_LIVE', 'xyz'),
+          cookie('PREF', 'f4'),
+        ]),
+        isFalse,
+      );
+      expect(
+        BrowserCookies.hasSignedInSession([
+          cookie('SAPISID', '', '.youtube.com'),
+        ]),
+        isFalse,
+      );
+      expect(
+        BrowserCookies.hasSignedInSession([
+          cookie('SAPISID', 'abc', 'google.com'),
+        ]),
+        isFalse,
+      );
+      expect(BrowserCookies.hasSignedInSession(['junk']), isFalse);
+    });
+  });
+
   group('detectProfiles', () {
     test('finds installed browsers with a Cookies store', () {
       final root = Directory.systemTemp.createTempSync('nt-prof');

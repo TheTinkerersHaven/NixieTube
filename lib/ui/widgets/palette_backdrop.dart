@@ -14,6 +14,7 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import '../a11y.dart';
 /// Relative luminance of an opaque color, 0 (black) to 1 (white).
 double luminance(Color c) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
 
@@ -51,14 +52,20 @@ class PaletteBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final backdrop = Theme.of(context).colorScheme.surface;
-    if (palette.length < 25) return ColoredBox(color: backdrop);
+    // High contrast drops the cover-tinted wash for a solid
+    // surface: text separation must never depend on artwork
+    // luminance. The select rebuilds the backdrop when the
+    // setting flips, swapping gradient and solid live.
+    if (highContrastOf(context) || palette.length < 25) {
+      return ColoredBox(color: backdrop);
+    }
     final gradient = _gradient(palette, backdrop);
     // Begin == end on the first build (no visible animation),
     // so the gradient is shown immediately; on a palette
     // change TweenAnimationBuilder crossfades from the
     // currently displayed gradient to the new one.
     return TweenAnimationBuilder<Decoration?>(
-      duration: paletteWash,
+      duration: motionDuration(context, paletteWash),
       tween: DecorationTween(
         begin: BoxDecoration(gradient: gradient),
         end: BoxDecoration(gradient: gradient),

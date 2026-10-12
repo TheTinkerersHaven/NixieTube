@@ -4,14 +4,17 @@
 
 import 'dart:typed_data';
 
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:material_ui/material_ui.dart';
-import 'package:image/image.dart' as imgpkg;
+import 'package:m3e_core/m3e_core.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/album_panel.dart';
+import '../widgets/loading_placeholders.dart';
 import '../widgets/rails.dart';
 import '../widgets/track_row.dart';
 
@@ -21,11 +24,25 @@ class DetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final detail = state.detail;
-    final item = state.detailItem;
+    final detail = context.select<AppState, DetailUiState>((s) => s.detail);
+    final item = context.select<AppState, BrowseItem?>((s) => s.detailItem);
+    final state = context.read<AppState>();
     if (detail.loading) {
-      return const Center(child: CircularProgressIndicator());
+      // Album and playlist songs shimmer as skeleton rows while
+      // the songs load (same panel as the loaded view, so they
+      // reveal in place). The type is known from the browse id
+      // prefix; anything else keeps the spinner.
+      final id = item?.browseId ?? '';
+      if (id.startsWith('MPRE')) {
+        return const _DetailSkeleton(numbered: true);
+      }
+      if (item != null && !id.startsWith('UC')) {
+        return const _DetailSkeleton(numbered: false);
+      }
+      if (id.startsWith('UC')) {
+        return const _ArtistSkeleton();
+      }
+      return const Center(child: M3ELoadingIndicator());
     }
     if (detail.error != null) {
       return Center(
@@ -66,6 +83,7 @@ class DetailScreen extends StatelessWidget {
         owner: album.artist,
         tracks: album.tracks,
         numbered: true,
+        showViews: true,
       );
     } else if (detail.playlist != null) {
       final pl = detail.playlist!;
@@ -109,6 +127,47 @@ class DetailScreen extends StatelessWidget {
   }
 }
 
+/// Skeleton album/playlist detail: the same panel as the loaded
+/// view with placeholder songs, so rows reveal in place.
+class _DetailSkeleton extends StatelessWidget {
+  const _DetailSkeleton({required this.numbered});
+
+  final bool numbered;
+
+  @override
+  Widget build(BuildContext context) {
+    return Skeletonizer(
+      enabled: true,
+      enableSwitchAnimation: true,
+      child: AlbumPlaylistView(
+        title: 'Loading songs',
+        subtitle: '',
+        description: '',
+        art: null,
+        owner: null,
+        tracks: placeholderTracks,
+        numbered: numbered,
+      ),
+    );
+  }
+}
+
+/// Skeleton artist view: the same layout as the loaded view with
+/// placeholder content, so banner, buttons, songs, rails and bio
+/// reveal in place.
+class _ArtistSkeleton extends StatelessWidget {
+  const _ArtistSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Skeletonizer(
+      enabled: true,
+      enableSwitchAnimation: true,
+      child: _ArtistDetailView(artist: placeholderArtist),
+    );
+  }
+}
+
 /// Shared album/playlist panel: left art column, right sortable track list.
 class _ArtistDetailView extends StatelessWidget {
   const _ArtistDetailView({required this.artist});
@@ -130,11 +189,14 @@ class _ArtistDetailView extends StatelessWidget {
         ? null
         : artist.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url;
     return ListView(
+      // Deep enough that the banner survives scrolling through the
+      // top songs instead of unmounting and reloading on return.
+      scrollCacheExtent: const ScrollCacheExtent.pixels(800),
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
-        64,
         screenPadding,
-        playerBarClearance,
+        screenPadding,
+        screenPadding + playerBarClearance,
       ),
       children: [
         if (banner != null)
@@ -158,14 +220,14 @@ class _ArtistDetailView extends StatelessWidget {
         Wrap(
           spacing: 8,
           children: [
-            FilledButton.icon(
+            M3EFilledButton.icon(
               onPressed: artist.topSongs.isEmpty
                   ? null
                   : () => state.playArtistSongs(artist, false),
               icon: const Icon(Icons.play_arrow_rounded),
               label: const Text('Shuffle'),
             ),
-            OutlinedButton.icon(
+            M3EOutlinedButton.icon(
               onPressed: artist.topSongs.isEmpty
                   ? null
                   : () async {
@@ -194,7 +256,7 @@ class _ArtistDetailView extends StatelessWidget {
               label: const Text('Mix'),
             ),
             if (signedIn && state.detailItem != null)
-              OutlinedButton(
+              M3EOutlinedButton(
                 onPressed: () =>
                     state.toggleSubscribe(state.detailItem!.browseId),
                 child: Text(subscribed ? 'Subscribed' : 'Subscribe'),
@@ -212,7 +274,7 @@ class _ArtistDetailView extends StatelessWidget {
                 ),
               ),
               if (artist.songsPlaylistId != null)
-                TextButton(
+                M3ETextButton(
                   onPressed: () => state.go(
                     Screen.detail,
                     detail: BrowseItem(
@@ -235,6 +297,7 @@ class _ArtistDetailView extends StatelessWidget {
               onPlay: () => state.playArtistTopSong(artist, i),
               rateable: true,
               showPlaylists: true,
+              showViews: true,
             ),
           const SizedBox(height: 16),
         ],
@@ -290,15 +353,9 @@ class _BannerImageState extends State<_BannerImage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _future ??= context
-        .read<AppState>()
-        .art
-        .source(widget.url)
-        .then(
-          (image) => image == null
-              ? Uint8List(0)
-              : Uint8List.fromList(imgpkg.encodePng(image)),
-        );
+    // Finished bytes are memoized in the store, so remounts after a
+    // scroll unmount resolve (near-)instantly instead of re-decoding.
+    _future ??= context.read<AppState>().art.bannerPng(widget.url);
   }
 
   @override

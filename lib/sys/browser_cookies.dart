@@ -129,6 +129,29 @@ class BrowserCookies {
     return out;
   }
 
+  /// True when [cookies] carry a signed-in YouTube session (a SAPISID
+  /// value), as opposed to anonymous visitor cookies. Pure.
+  static bool hasSignedInSession(List<dynamic> cookies) {
+    for (final c in cookies) {
+      if (c is! Map) continue;
+      final domain = c['domain'];
+      final name = c['name'];
+      final value = c['value'];
+      if (domain is! String ||
+          name is! String ||
+          value is! String ||
+          !isYouTubeDomain(domain)) {
+        continue;
+      }
+      final n = name.trim();
+      if ((n == 'SAPISID' || n == '__Secure-3PAPISID') &&
+          value.trim().isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Assembles a `Cookie` header from CDP cookie objects, keeping only
   /// YouTube-session domains. Null when none are present.
   static String? buildYouTubeHeader(List<dynamic> cookies) {
@@ -194,7 +217,7 @@ class BrowserCookies {
       final port = await _devToolsPort(proc);
       if (port == null) return null;
       final cookies = await _allCookies(port);
-      if (cookies == null) return null;
+      if (cookies == null || !hasSignedInSession(cookies)) return null;
       return buildYouTubeHeader(cookies);
     } catch (_) {
       return null;

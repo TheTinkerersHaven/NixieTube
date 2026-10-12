@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -22,6 +23,7 @@ import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/now_playing_screen.dart';
 import 'package:nixietube/ui/widgets/artwork_image.dart';
 import 'package:nixietube/ui/widgets/player_bar.dart';
+import 'package:nixietube/ui/widgets/seek_slider.dart';
 
 class _FakeEngine implements PlayerEngine {
   bool playing = false;
@@ -131,7 +133,7 @@ void main() {
 
   group('selective rebuilds', () {
     ({AppState state, PlayerController player, _QuietTube tube})
-    buildApp({ArtworkStore? art}) {
+    buildApp({ArtworkStore? art, Future<ResolvedStream> Function(String)? resolveStream}) {
       final dir = Directory.systemTemp.createTempSync('nt-select-test');
       addTearDown(() => dir.deleteSync(recursive: true));
       final tube = _QuietTube();
@@ -139,8 +141,9 @@ void main() {
       final player = PlayerController(
         engine: _FakeEngine(),
         tube: tube,
-        resolveStream: (id) async =>
-            ResolvedStream(url: 'https://x/$id', bitrate: 1),
+        resolveStream:
+            resolveStream ??
+            (id) async => ResolvedStream(url: 'https://x/$id', bitrate: 1),
         configDirPath: dir.path,
       );
       addTearDown(player.dispose);
@@ -185,6 +188,71 @@ void main() {
       expect(env.state.nowOpen, isTrue);
       // Let the transition hold timer fire so no timer pends.
       await tester.pump(const Duration(milliseconds: 500));
+      env.player.dispose();
+      await tester.pump();
+    });
+
+    testWidgets('player bar keeps its height swapping loader and slider',
+        (tester) async {
+      // Hold the stream resolve so the track sits in the
+      // loading state with the wavy indicator in the seek slot.
+      final gate = Completer<ResolvedStream>();
+      final env = buildApp(resolveStream: (_) => gate.future);
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: env.state,
+          child: const MaterialApp(
+            home: Scaffold(body: PlayerBar()),
+          ),
+        ),
+      );
+      env.player.playTracks([
+        const Track(
+          videoId: 'v1',
+          title: 'One',
+          artists: [ArtistRef('Uno')],
+          durationSec: 200,
+        ),
+      ]);
+      await tester.pump();
+      expect(find.byType(M3ELinearWavyProgressIndicator), findsOneWidget);
+      expect(find.byType(SeekSlider), findsNothing);
+      final loadingSize = tester.getSize(find.byType(PlayerBar));
+      // The 10dp squiggle sits centered in the 24dp slot,
+      // exactly where the slider track will be — not
+      // crushed flat against the bottom of the box.
+      final indRect = tester.getRect(
+        find.byType(M3ELinearWavyProgressIndicator),
+      );
+      expect(indRect.height, 10);
+      tester
+          .element(find.byType(M3ELinearWavyProgressIndicator))
+          .visitAncestorElements((e) {
+        final w = e.widget;
+        if (w is SizedBox && w.height == 24) {
+          expect(indRect.center.dy, tester.getRect(find.byWidget(w)).center.dy);
+          return false;
+        }
+        return true;
+      });
+
+      // Resolved: the seek slider takes the same fixed slot,
+      // so the bar must not move.
+      gate.complete(ResolvedStream(url: 'https://x/v1', bitrate: 1));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(SeekSlider), findsOneWidget);
+      expect(find.byType(M3ELinearWavyProgressIndicator), findsNothing);
+      expect(tester.getSize(find.byType(PlayerBar)), loadingSize);
+      // Snug slot: the 24dp box hugs the slider, which
+      // keeps a 5dp side inset (plus the bar's own 6dp
+      // outer margin).
+      final barRect = tester.getRect(find.byType(PlayerBar));
+      final sliderRect = tester.getRect(find.byType(SeekSlider));
+      expect(sliderRect.left - barRect.left, 11);
+      expect(barRect.right - sliderRect.right, 11);
+      expect(sliderRect.height, 24);
+
       env.player.dispose();
       await tester.pump();
     });
@@ -523,7 +591,7 @@ void main() {
       // The slider itself follows via volumeTick: one of the two
       // sliders (seek + volume) now reads 50.
       final values = tester
-          .widgetList<Slider>(find.byType(Slider))
+          .widgetList<M3ESlider>(find.byType(M3ESlider))
           .map((s) => s.value)
           .toList();
       expect(values, contains(50.0));

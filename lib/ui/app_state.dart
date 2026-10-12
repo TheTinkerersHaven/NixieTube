@@ -5,6 +5,7 @@
 // Async jobs are fenced with generation counters (Kotlin cancels Jobs).
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show File, FileMode;
 import 'dart:math' show Random;
 
@@ -13,17 +14,21 @@ import 'package:material_ui/material_ui.dart'
         BuildContext,
         ChangeNotifier,
         Color,
+        ColorScheme,
         ScaffoldMessenger,
         SnackBar,
         Text,
         ValueNotifier,
         debugPrint;
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/painting.dart' show PaintingBinding;
 
 import '../core/artwork/artwork_store.dart';
 import '../core/innertube/gdata_api.dart';
 import '../core/innertube/auth_session.dart';
 import '../core/innertube/inner_tube.dart';
 import '../core/innertube/lyrics.dart';
+import '../core/innertube/parse.dart';
 import '../core/innertube/metadata.dart'
     show canonical, hasGenericReleaseArtist;
 import '../core/models/models.dart';
@@ -45,11 +50,42 @@ class HistoryEntry {
 }
 
 /// Loaded state of the home feed.
+///
+/// Immutable: every update reassigns a new instance via [copyWith], so
+/// `context.select((s) => s.home)` can detect changes by identity and the
+/// home screen rebuilds only when the feed actually changes.
 class HomeUiState {
-  HomeUiState({this.loading = true, this.shelves = const [], this.error});
-  bool loading;
-  List<Shelf> shelves;
-  String? error;
+  HomeUiState({
+    this.loading = true,
+    this.shelves = const [],
+    this.moods = const [],
+    this.error,
+  });
+  final bool loading;
+  final List<Shelf> shelves;
+
+  /// Mood filter chips from the feed's chip cloud (feed order, no
+  /// hardcoding). Empty while loading or when the feed has none, in
+  /// which case the chips row hides.
+  final List<String> moods;
+  final String? error;
+
+  static const _unset = Object();
+
+  HomeUiState copyWith({
+    bool? loading,
+    List<Shelf>? shelves,
+    List<String>? moods,
+    Object? error = _unset,
+  }) {
+    return HomeUiState(
+      loading: loading ?? this.loading,
+      shelves: shelves ?? this.shelves,
+      moods: moods ?? this.moods,
+      // `error` may be cleared explicitly (set to null).
+      error: identical(error, _unset) ? this.error : error as String?,
+    );
+  }
 }
 
 /// Loaded state of the search results.
@@ -123,6 +159,8 @@ bool isProgressOnlyUpdate(PlayerState prev, PlayerState next) {
       prev.repeat == next.repeat &&
       prev.autoplay == next.autoplay &&
       prev.error == next.error &&
+      prev.sleepTimerMode == next.sleepTimerMode &&
+      prev.sleepTimerEndsAtMs == next.sleepTimerEndsAtMs &&
       queueSignature(prev.queue) == queueSignature(next.queue);
 }
 
@@ -144,6 +182,8 @@ bool isVolumeOnlyUpdate(PlayerState prev, PlayerState next) {
       prev.repeat == next.repeat &&
       prev.autoplay == next.autoplay &&
       prev.error == next.error &&
+      prev.sleepTimerMode == next.sleepTimerMode &&
+      prev.sleepTimerEndsAtMs == next.sleepTimerEndsAtMs &&
       queueSignature(prev.queue) == queueSignature(next.queue);
 }
 
@@ -181,6 +221,8 @@ class AppState extends ChangeNotifier {
     _openUrl = openUrl;
     _tube.authProvider = () => _oauth.validSession();
     _playerSub = _player.states.listen(_onPlayerState);
+    _loadLocalRecents();
+    _loadPinnedPicks();
   }
 
   late final InnerTube _tube;
@@ -205,13 +247,15 @@ class AppState extends ChangeNotifier {
   PlayerState get playerState => _player.state;
 
   GDataApi? get gdata =>
-      _account == null ? null : GDataApi(tokenProvider: _oauth.accessToken);
+      account == null ? null : GDataApi(tokenProvider: _oauth.accessToken);
 
   @override
   void dispose() {
     _playerSub?.cancel();
     progressTick.dispose();
     volumeTick.dispose();
+    squareCoverTick.dispose();
+    displayScheme.dispose();
     super.dispose();
   }
 
@@ -233,7 +277,13 @@ class AppState extends ChangeNotifier {
     _canGoBack = true;
   }
 
+  /// Direction of the latest navigation: false only for back pops.
+  /// Pushes rise from the bottom, pops sink back down.
+  bool _lastNavForward = true;
+  bool get lastNavForward => _lastNavForward;
+
   void go(Screen screen, {BrowseItem? detail}) {
+    _lastNavForward = true;
     _pushHistory();
     _screen = screen;
     _detailItem = detail;
@@ -245,6 +295,7 @@ class AppState extends ChangeNotifier {
 
   void goBack() {
     if (_history.isEmpty) return;
+    _lastNavForward = false;
     final entry = _history.removeLast();
     _canGoBack = _history.isNotEmpty;
     _screen = entry.screen;
@@ -350,9 +401,107 @@ class AppState extends ChangeNotifier {
   HomeUiState home = HomeUiState();
   SearchUiState search = SearchUiState();
   DetailUiState detail = DetailUiState();
+
+  /// InnerTube-supplied custom mixes lifted out of the home shelves
+  /// for the Mixed-for-you section: `VLRD…` mix playlist pages plus
+  /// personalized mix seed cards (`RDEM…`/`RDCLAK…` watch cards such
+  /// as My Mix or Discover Mix).
+  List<HomeMix> get mixes => mixesOfShelves(home.shelves);
+
+  /// True when [track] is a personalized mix seed card rather than a
+  /// plain song: its radio list (not the single video) is the mix.
+  /// Song radios (`RDAMVM…`, carried by every song card) are excluded.
+  static bool isMixSeed(Track track) {
+    final pid = track.playlistId ?? '';
+    return pid.startsWith('RDEM') || pid.startsWith('RDCLAK');
+  }
+
+  /// Collects deduplicated mixes from [shelves] in feed order.
+  static List<HomeMix> mixesOfShelves(List<Shelf> shelves) {
+    final seen = <String>{};
+    final out = <HomeMix>[];
+    void add(HomeMix mix, String key) {
+      if (seen.add(key)) out.add(mix);
+    }
+
+    for (final shelf in shelves) {
+      for (final item in shelf.items) {
+        if (item is BrowseItem) {
+          if (!item.browseId.startsWith('VLRD')) continue;
+          add(
+            HomeMix(
+              title: item.title,
+              subtitle: item.subtitle,
+              thumbnails: item.thumbnails,
+              browseId: item.browseId,
+            ),
+            item.browseId,
+          );
+        } else if (item is SongItem) {
+          final seed = item.track;
+          final pid = seed.playlistId ?? '';
+          if (!isMixSeed(seed)) continue;
+          final artists = seed.artistNames().trim();
+          add(
+            HomeMix(
+              title: seed.title,
+              subtitle: artists.isEmpty ? 'Mix' : artists,
+              thumbnails: seed.thumbnails,
+              browseId: 'VL$pid',
+              seed: seed,
+            ),
+            'VL$pid',
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Plays a home mix: seed cards resolve through their radio list,
+  /// playlist pages open as a playlist.
+  Future<void> playMix(HomeMix mix) async {
+    if (mix.seed != null) {
+      await playMixSeed(mix.seed!);
+      return;
+    }
+    final browseId = mix.browseId;
+    if (browseId == null || browseId.isEmpty) return;
+    PlaylistDetail? pl;
+    try {
+      pl = await _tube.playlist(browseId);
+    } catch (_) {
+      return;
+    }
+    final tracks =
+        pl?.tracks.where((t) => t.videoId.isNotEmpty).toList() ?? [];
+    if (tracks.isEmpty) return;
+    playSongs(tracks, 0);
+  }
+
+  /// Plays a personalized mix seed card: the seed first, then its
+  /// radio mix behind it (same shape as single-track playback).
+  Future<void> playMixSeed(Track seed) async {
+    final pid = seed.playlistId;
+    if (pid == null || pid.isEmpty) return;
+    List<Track> mix;
+    try {
+      mix = await _tube.upNext(seed.videoId, playlistId: pid);
+    } catch (_) {
+      return;
+    }
+    final upcoming =
+        mix.where((t) => t.videoId != seed.videoId).toList();
+    playSongs([seed, ...upcoming], 0);
+  }
   int _searchGen = 0;
   int _detailGen = 0;
   int _homeGen = 0;
+
+  /// Last queue identity seen on the player stream (video ids only;
+  /// rating restamps must not retrigger). A change means new tracks
+  /// entered Up Next, so their like states need a stamp pass.
+  String _lastQueueKey = '';
 
   /// Reloads the home shelves feed from InnerTube.
   ///
@@ -361,22 +510,27 @@ class AppState extends ChangeNotifier {
   /// the error state (with Retry) instead of a forever spinner.
   Future<void> loadHome() async {
     final gen = ++_homeGen;
-    home.loading = true;
-    home.error = null;
+    home = home.copyWith(loading: true, error: null);
     notifyListeners();
     try {
-      final shelves = await _tube.home().timeout(const Duration(seconds: 60));
+      final feed =
+          await _tube.home().timeout(const Duration(seconds: 60));
       if (gen != _homeGen) return;
-      home.shelves = _stampShelves(shelves);
+      home = home.copyWith(
+        shelves: _stampShelves(feed.shelves),
+        moods: feed.moods,
+      );
       unawaited(_healShelfArtists(gen));
     } catch (e) {
       if (gen != _homeGen) return;
-      home.error = e is TimeoutException
-          ? 'Home timed out — check connection.'
-          : e.toString();
+      home = home.copyWith(
+        error: e is TimeoutException
+            ? 'Home timed out — check connection.'
+            : e.toString(),
+      );
     } finally {
       if (gen == _homeGen) {
-        home.loading = false;
+        home = home.copyWith(loading: false);
         notifyListeners();
       }
     }
@@ -398,7 +552,7 @@ class AppState extends ChangeNotifier {
     final fixed = await fixReleaseCredits(songTracks);
     if (gen != _homeGen) return;
     final byId = {for (final t in fixed) t.videoId: t};
-    home.shelves = [
+    home = home.copyWith(shelves: [
       for (final shelf in home.shelves)
         Shelf(shelf.title, [
           for (final item in shelf.items)
@@ -406,7 +560,7 @@ class AppState extends ChangeNotifier {
                 ? SongItem(byId[item.track.videoId] ?? item.track)
                 : item,
         ]),
-    ];
+    ]);
     final after = home.shelves
         .expand((s) => s.items)
         .whereType<SongItem>()
@@ -455,6 +609,20 @@ class AppState extends ChangeNotifier {
     try {
       final f = _searchHistoryFile;
       if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  /// Drops one query from the in-memory and persisted search history.
+  void removeSearchHistory(String query) {
+    final key = query.trim().toLowerCase();
+    if (key.isEmpty) return;
+    final kept =
+        searchHistory.where((q) => q.toLowerCase() != key).toList();
+    if (kept.length == searchHistory.length) return;
+    searchHistory = kept;
+    try {
+      _searchHistoryFile.writeAsStringSync('${searchHistory.join('\n')}\n');
     } catch (_) {}
     notifyListeners();
   }
@@ -524,20 +692,6 @@ class AppState extends ChangeNotifier {
     unawaited(searchFor(query));
     go(Screen.search);
   }
-
-  /// YTM-style mood shortcuts, each running a plain search.
-  static const moods = [
-    'Relax',
-    'Energia pura',
-    'Festa',
-    'Romantico',
-    'Concentrazione',
-    'Allenamento',
-    'Viaggio',
-    'Dormire',
-    'Rock',
-    'Jazz',
-  ];
 
   /// Plays [songs] starting at [index]. A lone track plays as its own
   /// radio station instead of a one-song queue (see [playSingle]).
@@ -718,7 +872,18 @@ class AppState extends ChangeNotifier {
   // ---------- Account / library ----------
 
   String? _account;
-  String? get account => _account;
+  String? get account => testAccount ?? _account;
+
+  /// Test-only sign-in stub: widget tests set this (with
+  /// [apiOverride]) to reach signed-in UI without running
+  /// the login flow, which would touch the real auth files
+  /// on disk and the network.
+  @visibleForTesting
+  String? testAccount;
+
+  /// Test-only Data API stub (avoids network in widget tests).
+  @visibleForTesting
+  GDataApi? apiOverride;
 
   String? _accountAvatar;
   String? get accountAvatar => _accountAvatar;
@@ -741,18 +906,19 @@ class AppState extends ChangeNotifier {
   bool get loginValid => _loginValid;
 
   GDataApi? get _api {
+    if (apiOverride != null) return apiOverride;
     // The Data API client is available once an account name is
     // known or a Google sign-in token is stored. Gating only on
     // the account name would break OAuth-first sign-in (the name
     // is fetched after the token is minted) and skip Data API
     // loads for a token stored in a previous session. The Data
     // API needs the OAuth token, not the browser cookie.
-    if (_account == null && !oauthSignedIn) return null;
+    if (account == null && !oauthSignedIn) return null;
     return GDataApi(tokenProvider: _oauth.accessToken);
   }
 
   /// True when Data API calls can be attempted (signed in).
-  bool get gdataAvailable => _account != null;
+  bool get gdataAvailable => account != null;
 
   /// True when the Google (OAuth) sign-in has a stored
   /// token — required for the YouTube Data API (playlists,
@@ -772,14 +938,182 @@ class AppState extends ChangeNotifier {
   OpenPlaylist? _openPlaylist;
   OpenPlaylist? get openedPlaylist => _openPlaylist;
 
+  /// Guards openPlaylist loads: closing or opening another playlist
+  /// invalidates in-flight fetches so a stale one can never pop over
+  /// the new view (or reopen a closed one) when it lands.
+  int _openPlaylistGen = 0;
+
   bool _libraryLoading = false;
   bool get libraryLoading => _libraryLoading;
 
   List<Track> _activity = [];
   List<Track> get activity => _activity;
 
+  /// Locally-played tracks (this session plus persisted recents from
+  /// previous ones), most recent first. Server history lags behind
+  /// what just played, so these are merged ahead of it on every
+  /// library load — otherwise just-played songs vanish from quick
+  /// picks until the server catches up.
+  static const _localRecentCap = 30;
+  List<Track> _localRecents = [];
+
+  void _loadLocalRecents() {
+    try {
+      final raw = _config.get('home.localRecents', '');
+      if (raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      _localRecents = decoded
+          .map(_decodeRecentTrack)
+          .whereType<Track>()
+          .take(_localRecentCap)
+          .toList();
+    } catch (_) {}
+  }
+
+  /// Best-effort decode of one persisted recent; null when the stored
+  /// JSON no longer parses (schema drift must never break startup).
+  static Track? _decodeRecentTrack(dynamic e) {
+    if (e is! Map) return null;
+    try {
+      return Track.fromJson(e.map((k, v) => MapEntry(k.toString(), v)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _saveLocalRecents() {
+    try {
+      _config.set(
+        'home.localRecents',
+        jsonEncode([for (final t in _localRecents) t.toJson()]),
+      );
+    } catch (_) {}
+  }
+
   List<Track> _discover = [];
   List<Track> get discover => _discover;
+
+  /// Per-launch shuffle nonce for the quick-picks grid: mixed into
+  /// the deterministic picks seed so the grid rotates every app
+  /// start instead of looking frozen while the library is static.
+  /// Final per AppState, so the order never jumps mid-session.
+  final int quickPicksNonce = Random().nextInt(1 << 31);
+
+  /// User-pinned quick picks, most recent pin last. YTM pins live
+  /// only in the official clients, so pins are stored locally as
+  /// snapshots and rendered ahead of the rotating pools.
+  static const _pinnedPicksCap = 12;
+  List<ShelfItem> _pinnedPicks = [];
+  List<ShelfItem> get pinnedPicks => _pinnedPicks;
+
+  static String? pickKeyOf(ShelfItem item) {
+    if (item is SongItem) {
+      return item.track.videoId.isEmpty ? null : 's:${item.track.videoId}';
+    }
+    if (item is BrowseItem) {
+      return item.browseId.isEmpty ? null : 'b:${item.browseId}';
+    }
+    return null;
+  }
+
+  /// True when [item] (by video/browse id) is in the pinned list.
+  bool isPinned(ShelfItem item) {
+    final id = pickKeyOf(item);
+    return id != null && _pinnedPicks.any((p) => pickKeyOf(p) == id);
+  }
+
+  /// Pins or unpins a quick-pick tile. Skeleton tiles and over-cap
+  /// pins are ignored. Reassigns (never mutates) so selects detect
+  /// the change and the grid rebuilds.
+  void togglePin(ShelfItem item) {
+    final id = pickKeyOf(item);
+    if (id == null || id.startsWith('s:skeleton-')) return;
+    if (_pinnedPicks.any((p) => pickKeyOf(p) == id)) {
+      _pinnedPicks = [
+        for (final p in _pinnedPicks)
+          if (pickKeyOf(p) != id) p,
+      ];
+    } else {
+      if (_pinnedPicks.length >= _pinnedPicksCap) return;
+      _pinnedPicks = [..._pinnedPicks, item];
+    }
+    _savePinnedPicks();
+    notifyListeners();
+  }
+
+  /// Snapshot encoding for one pin (static so it stays unit-testable
+  /// without an AppState instance).
+  static Map<String, dynamic> pinToJson(ShelfItem item) {
+    if (item is SongItem) return {'k': 's', 'track': item.track.toJson()};
+    final b = item as BrowseItem;
+    return {
+      'k': 'b',
+      'title': b.title,
+      'subtitle': b.subtitle,
+      'browseId': b.browseId,
+      'thumbnails': [for (final t in b.thumbnails) t.toJson()],
+    };
+  }
+
+  /// Decodes one pin snapshot; null on any schema drift (a stale pin
+  /// must never break startup).
+  static ShelfItem? pinFromJson(dynamic e) {
+    if (e is! Map) return null;
+    try {
+      if (e['k'] == 's') {
+        final t = e['track'];
+        if (t is! Map) return null;
+        return ShelfItem.song(
+          Track.fromJson(t.map((k, v) => MapEntry(k.toString(), v))),
+        );
+      }
+      if (e['k'] == 'b') {
+        final browseId = e['browseId']?.toString() ?? '';
+        if (browseId.isEmpty) return null;
+        final thumbs = e['thumbnails'];
+        return ShelfItem.browse(
+          title: e['title']?.toString() ?? '',
+          subtitle: e['subtitle']?.toString() ?? '',
+          browseId: browseId,
+          thumbnails: [
+            if (thumbs is List)
+              for (final t in thumbs)
+                if (t is Map)
+                  Thumbnail.fromJson(
+                    t.map((k, v) => MapEntry(k.toString(), v)),
+                  ),
+          ],
+        );
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  void _loadPinnedPicks() {
+    try {
+      final raw = _config.get('home.pinnedPicks', '');
+      if (raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      _pinnedPicks = decoded
+          .map(pinFromJson)
+          .whereType<ShelfItem>()
+          .take(_pinnedPicksCap)
+          .toList();
+    } catch (_) {}
+  }
+
+  void _savePinnedPicks() {
+    try {
+      _config.set(
+        'home.pinnedPicks',
+        jsonEncode([for (final p in _pinnedPicks) pinToJson(p)]),
+      );
+    } catch (_) {}
+  }
 
   List<BrowseItem> _recentArtists = [];
   List<BrowseItem> get recentArtists => _recentArtists;
@@ -820,7 +1154,7 @@ class AppState extends ChangeNotifier {
         final homeSeeds = <Track>[];
         final shelves = home.shelves.isNotEmpty
             ? home.shelves
-            : await _tube.home();
+            : (await _tube.home()).shelves;
         for (final shelf in shelves) {
           if (homeSeeds.length >= 5) break;
           for (final item in shelf.items) {
@@ -950,7 +1284,10 @@ class AppState extends ChangeNotifier {
       // Fire-and-forget like Kotlin: covers pop in per chunk without
       // parking the library behind the slowest artwork fetch.
       unawaited(_enrichPlaylistArtwork());
-      _activity = _stampKnownRatings(results[1] as List<Track>);
+      _activity = mergeLocalRecents(
+        _stampKnownRatings(results[1] as List<Track>),
+        _localRecents,
+      );
       _refreshRecentArtists();
       _artists = (results[2] as List<ShelfItem>)
           .whereType<BrowseItem>()
@@ -1154,8 +1491,84 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Creates a new playlist via the Data API and refreshes the library.
+  /// Returns the new playlist's id, or null on failure.
+  Future<String?> createPlaylist(String title) async {
+    final api = _api;
+    if (api == null) return null;
+    final id = await api.createPlaylist(title: title);
+    if (id != null && id.isNotEmpty) {
+      // Show the new playlist immediately; the refresh reconciles the
+      // rest (counts, artwork) in the background.
+      _playlists = [
+        GPlaylist(id: id, title: title, itemCount: 0),
+        ..._playlists.where((p) => p.id != id),
+      ];
+      notifyListeners();
+      await loadLibrary();
+    }
+    return id;
+  }
+
+  /// Renames a playlist and refreshes the library.
+  Future<bool> renamePlaylist(String playlistId, String newTitle) async {
+    final api = _api;
+    if (api == null) return false;
+    final ok = await api.renamePlaylist(playlistId, newTitle);
+    if (ok) await loadLibrary();
+    return ok;
+  }
+
+  /// Deletes a playlist, closes it if open, and refreshes the library.
+  Future<bool> deletePlaylist(String playlistId) async {
+    final api = _api;
+    if (api == null) return false;
+    final ok = await api.deletePlaylist(playlistId);
+    if (ok) {
+      if (_openPlaylist?.playlist.id == playlistId) _openPlaylist = null;
+      await loadLibrary();
+    }
+    return ok;
+  }
+
+  /// Removes [track] from [playlistId] and updates the open playlist in
+  /// place (no reload) if it is the one being viewed.
+  Future<bool> removeTrackFromPlaylist(
+    String playlistId,
+    Track track,
+  ) async {
+    final api = _api;
+    if (api == null) return false;
+    final itemId = await api.playlistItemId(playlistId, track.videoId);
+    if (itemId == null) return false;
+    final ok = await api.removePlaylistItem(itemId);
+    if (ok) {
+      final opened = _openPlaylist;
+      if (opened != null && opened.playlist.id == playlistId) {
+        final remaining =
+            opened.tracks.where((t) => t.videoId != track.videoId).toList();
+        _openPlaylist = OpenPlaylist(
+          GPlaylist(
+            id: opened.playlist.id,
+            title: opened.playlist.title,
+            itemCount: remaining.length,
+            art: opened.playlist.art,
+            arts: opened.playlist.arts,
+            owner: opened.playlist.owner,
+            ownerId: opened.playlist.ownerId,
+          ),
+          remaining,
+        );
+        notifyListeners();
+      }
+    }
+    return ok;
+  }
+
   /// Opens [pl], entering its screen immediately while tracks load.
+  /// Stale loads (closed or superseded meanwhile) are dropped.
   Future<void> openPlaylist(GPlaylist pl) async {
+    final gen = ++_openPlaylistGen;
     if (pl.id == '__liked') {
       _openPlaylist = OpenPlaylist(pl, _stampLikedIds(List.of(_liked)));
       unawaited(
@@ -1202,10 +1615,12 @@ class AppState extends ChangeNotifier {
         } catch (_) {}
       }
       tracks = _stampLikedIds(tracks);
+      if (gen != _openPlaylistGen) return;
       _openPlaylist = OpenPlaylist(current, tracks);
       unawaited(
         _requestTrackRatings(tracks, (statuses) {
           final opened = _openPlaylist;
+          if (gen != _openPlaylistGen) return;
           if (opened != null && opened.playlist.id == pl.id) {
             _openPlaylist = OpenPlaylist(
               opened.playlist,
@@ -1222,14 +1637,20 @@ class AppState extends ChangeNotifier {
         }),
       );
     } finally {
-      _libraryLoading = false;
-      notifyListeners();
+      // A stale load must not clear the new view's spinner.
+      if (gen == _openPlaylistGen) {
+        _libraryLoading = false;
+        notifyListeners();
+      }
     }
   }
 
   /// Closes the open playlist, returning to the library root.
+  /// Invalidates any in-flight load so it cannot reopen the view.
   void closePlaylist() {
+    ++_openPlaylistGen;
     _openPlaylist = null;
+    _libraryLoading = false;
     notifyListeners();
   }
 
@@ -1276,10 +1697,20 @@ class AppState extends ChangeNotifier {
         }),
       );
       if (_playlistDialogTrack?.videoId != track.videoId) return;
+      // Fresh map identities: the dialog selects the
+      // membership map, and `select` only rebuilds on a
+      // changed (==) value — mutating the old map in place
+      // would leave the spinner up forever.
+      final membership = <String, bool>{};
+      final itemIds = <String, String>{};
       for (final e in results) {
-        _playlistMembership[e.key] = e.value != null;
-        if (e.value != null) _playlistItemIds[e.key] = e.value!;
+        membership[e.key] = e.value != null;
+        if (e.value != null) itemIds[e.key] = e.value!;
       }
+      _playlistMembership = membership;
+      _playlistItemIds
+        ..clear()
+        ..addAll(itemIds);
     } finally {
       if (_playlistDialogTrack?.videoId == track.videoId) {
         _playlistDialogLoading = false;
@@ -1312,7 +1743,9 @@ class AppState extends ChangeNotifier {
           notifyListeners();
           return;
         }
-        _playlistMembership[playlistId] = false;
+        // Copy-on-write (see openPlaylistDialog): the dialog
+        // selects this map by identity.
+        _playlistMembership = {..._playlistMembership, playlistId: false};
         _playlistItemIds.remove(playlistId);
       } else {
         if (!await api.addToPlaylist(playlistId, track.videoId)) {
@@ -1320,7 +1753,7 @@ class AppState extends ChangeNotifier {
           notifyListeners();
           return;
         }
-        _playlistMembership[playlistId] = true;
+        _playlistMembership = {..._playlistMembership, playlistId: true};
       }
       _playlists = _playlists.map((pl) {
         if (pl.id != playlistId) return pl;
@@ -1383,11 +1816,26 @@ class AppState extends ChangeNotifier {
   }
 
   /// Rates a track via InnerTube with a Data API fallback, updating
-  /// player, views and liked songs. Dislikes only go through InnerTube
-  /// since the Data API can only add/remove likes. Returns true when
-  /// either backend accepted the change.
+  /// player, views and liked songs. The button flips optimistically and is
+  /// reverted (with a failure result) if neither backend accepts the
+  /// change. Dislikes only go through InnerTube since the Data API can
+  /// only add/remove likes.
   Future<bool> rateTrack(String videoId, RatingStatus rating) async {
     if (rating == RatingStatus.unknown) return false;
+    final previous =
+        _ratingCache[videoId] ?? _likedRating(videoId) ?? RatingStatus.unknown;
+    final wasLiked = _likedIds.contains(videoId) ||
+        _liked.any((t) => t.videoId == videoId);
+
+    // Optimistic UI: the tapped button responds immediately.
+    _applyRating(videoId, rating);
+    if (rating == RatingStatus.like) {
+      _likedIds.add(videoId);
+    } else {
+      _likedIds.remove(videoId);
+    }
+    notifyListeners();
+
     final api = _api;
     var innerOk = false;
     try {
@@ -1403,20 +1851,23 @@ class AppState extends ChangeNotifier {
     }
     if (!innerOk && !fallbackOk) {
       debugPrint('[rate] $videoId FAILED on both paths');
+      // Revert the optimistic change.
+      _applyRating(videoId, previous);
+      if (wasLiked) {
+        _likedIds.add(videoId);
+      } else {
+        _likedIds.remove(videoId);
+      }
+      notifyListeners();
       return false;
     }
-    _player.updateTrackRating(videoId, rating);
-    _ratingCache[videoId] = rating;
-    applyRatingToViews(videoId, rating);
-    // Home rows keep their own track copies: restamp them from the cache
-    // so the tapped like repaints everywhere, not just detail views.
-    _activity = _stampKnownRatings(_activity);
-    _discover = _stampKnownRatings(_discover);
-    home.shelves = _stampShelves(home.shelves);
+    // Backend accepted: maintain the liked list.
     if (rating == RatingStatus.like) {
       final track = _player.state.current?.videoId == videoId
           ? _player.state.current
-          : _player.state.queue.where((t) => t.videoId == videoId).firstOrNull;
+          : _player.state.queue
+              .where((t) => t.videoId == videoId)
+              .firstOrNull;
       if (track != null && !_liked.any((t) => t.videoId == videoId)) {
         _liked = [..._liked, track];
         _updateLikedPlaylistEntry();
@@ -1425,8 +1876,20 @@ class AppState extends ChangeNotifier {
       _liked = _liked.where((t) => t.videoId != videoId).toList();
       _updateLikedPlaylistEntry();
     }
-    notifyListeners();
     return true;
+  }
+
+  /// Applies [rating] to the player's track, the rating cache, and every
+  /// view (home rows, detail, open playlist), notifying listeners.
+  void _applyRating(String videoId, RatingStatus rating) {
+    _player.updateTrackRating(videoId, rating);
+    _ratingCache[videoId] = rating;
+    applyRatingToViews(videoId, rating);
+    // Home rows keep their own track copies: restamp them from the cache
+    // so the tapped like repaints everywhere, not just detail views.
+    _activity = _stampKnownRatings(_activity);
+    _discover = _stampKnownRatings(_discover);
+    home = home.copyWith(shelves: _stampShelves(home.shelves));
   }
 
   /// Pushes a new rating into the visible detail and open-playlist track
@@ -1510,6 +1973,38 @@ class AppState extends ChangeNotifier {
         if (stamped == null) return;
         detail = stamped;
         notifyListeners();
+      }),
+    );
+  }
+
+  /// Batch-resolves like states for the Up Next queue and stamps them
+  /// into the player state. The queue otherwise keeps whatever rating
+  /// the panel parse carried (unknown when the row had no like signal),
+  /// so liked songs never highlight without this pass — the same stamp
+  /// detail pages get via [_stampDetailRatings].
+  ///
+  /// Local knowledge (rating cache, liked ids/list) applies instantly
+  /// with zero network; only ids unknown locally go to InnerTube, and
+  /// only ids still queued are applied (stale fetches land in the cache
+  /// for later instead of touching a moved-on queue).
+  void _stampQueueRatings() {
+    final queue = _player.state.queue;
+    if (queue.isEmpty || !ratingsAvailable) return;
+    final local = <String, RatingStatus>{};
+    for (final t in queue) {
+      final known = _ratingCache[t.videoId] ?? _likedRating(t.videoId);
+      if (known != null && known != t.rating) local[t.videoId] = known;
+    }
+    if (local.isNotEmpty) _player.updateTrackRatings(local);
+    unawaited(
+      _requestTrackRatings(queue, (statuses) {
+        if (statuses.isEmpty) return;
+        final current = _player.state.queue.map((t) => t.videoId).toSet();
+        final live = {
+          for (final e in statuses.entries)
+            if (current.contains(e.key)) e.key: e.value,
+        };
+        if (live.isNotEmpty) _player.updateTrackRatings(live);
       }),
     );
   }
@@ -1620,6 +2115,16 @@ class AppState extends ChangeNotifier {
         query: search.query,
         sections: _stampSearchSections(search.sections),
       );
+      // Liked ids are stamp input for Up Next too: repaint the queue
+      // from local knowledge without waiting for a queue change.
+      final local = <String, RatingStatus>{};
+      for (final t in _player.state.queue) {
+        if (_likedIds.contains(t.videoId) &&
+            t.rating != RatingStatus.like) {
+          local[t.videoId] = RatingStatus.like;
+        }
+      }
+      if (local.isNotEmpty) _player.updateTrackRatings(local);
       notifyListeners();
     } catch (_) {}
   }
@@ -1643,6 +2148,90 @@ class AppState extends ChangeNotifier {
   List<LyricLine> _lyrics = [];
   List<LyricLine> get lyrics => _lyrics;
 
+  /// True while the current track's lyrics are being fetched
+  /// (network paths only — cache hits set [_lyrics] without
+  /// going through a loading state, so they never flash a
+  /// skeleton). Drives the shimmering placeholder lines.
+  bool _lyricsLoading = false;
+  bool get lyricsLoading => _lyricsLoading;
+
+  /// Fences concurrent lyric fetches (track skips, source
+  /// switches): only the latest fetch may publish or clear
+  /// the loading flag.
+  int _lyricsGen = 0;
+
+  /// Selected lyrics provider, persisted. Defaults to LRCLIB.
+  LyricsSource get lyricsSource =>
+      LyricsSource.fromKey(_config.lyricsSource);
+
+  /// Switches the lyrics provider, refetching the current track from
+  /// the newly selected source.
+  void setLyricsSource(LyricsSource source) {
+    if (lyricsSource == source) return;
+    _config.lyricsSource = source.name;
+    final track = _player.state.current;
+    final key = track?.videoId;
+    _lyrics = [];
+    notifyListeners();
+    if (track != null && key != null && key.isNotEmpty) {
+      unawaited(_fetchLyricsFor(key));
+    }
+  }
+
+  /// Lyrics lines per track and source (`$videoId:${source.name}`),
+  /// so switching providers back and forth never refetches.
+  final Map<String, List<LyricLine>> _lyricsCache = {};
+
+  /// Loads lyrics for [key] from the selected provider (LRCLIB with
+  /// album fill, or plain YTM text), serving the cache first.
+  Future<void> _fetchLyricsFor(String key) async {
+    final current = _player.state.current;
+    if (current == null || current.videoId != key) return;
+    final source = lyricsSource;
+    final cacheKey = '$key:${source.name}';
+    final cached = _lyricsCache[cacheKey];
+    if (cached != null) {
+      if (_player.state.current?.videoId == key) {
+        _lyrics = cached;
+        notifyListeners();
+      }
+      return;
+    }
+    final gen = ++_lyricsGen;
+    _lyricsLoading = true;
+    notifyListeners();
+    try {
+      if (source == LyricsSource.ytmusic) {
+        final lines = await fetchYtmLyrics(key);
+        if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
+        _lyricsCache[cacheKey] = lines;
+        _lyrics = lines;
+        notifyListeners();
+        return;
+      }
+      try {
+        final res = await fetchLyricsAndAlbum(
+          current.artistNames(),
+          current.title,
+          current.album?.name ?? '',
+          current.durationSec,
+        );
+        if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
+        _lyricsCache[cacheKey] = res.lines;
+        _lyrics = res.lines;
+        if (res.album != null && res.album!.isNotEmpty) {
+          _player.updateTrackAlbum(key, res.album!);
+        }
+        notifyListeners();
+      } catch (_) {}
+    } finally {
+      if (gen == _lyricsGen && _player.state.current?.videoId == key) {
+        _lyricsLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
   /// Cover palette bands for the Now Playing backdrop (Kotlin
   /// `rememberCoverPalette`); empty until the artwork loads.
   List<Color> _coverPalette = [];
@@ -1652,11 +2241,44 @@ class AppState extends ChangeNotifier {
   String? _lastLyricKey;
   String? _lastRatingVideoId;
 
+  /// Records a played track at the head of recent activity so quick
+  /// picks (and jump-back-in) update as you listen instead of only on
+  /// library reloads. Local-only and capped; the next server history
+  /// fetch replaces it wholesale. No notify here — callers notify.
+  void _noteLocalHistory(Track track) {
+    if (track.videoId.isEmpty) return;
+    if (_activity.isNotEmpty && _activity.first.videoId == track.videoId) {
+      return;
+    }
+    _activity = [
+      _stampKnownRating(track),
+      for (final t in _activity)
+        if (t.videoId != track.videoId) t,
+    ].take(50).toList();
+    // Persisted too: the next library load merges these ahead of the
+    // (lagging) server history instead of dropping just-played songs.
+    _localRecents = [
+      track,
+      for (final t in _localRecents)
+        if (t.videoId != track.videoId) t,
+    ].take(_localRecentCap).toList();
+    _saveLocalRecents();
+  }
+
   void _onPlayerState(PlayerState s) {
     if (_config.reportPlayback) {
       // Fire-and-forget: beacons never touch UI state (see
       // _reportPlaybackProgress), so reporting can't jank playback.
       unawaited(_reportPlaybackProgress(s));
+    }
+    // New tracks entered Up Next (play, radio mix, autoplay advance):
+    // stamp their like states. Keyed on ids only so the restamp's own
+    // emission doesn't retrigger; progress ticks share the queue, so
+    // this is a cheap string join twice a second at most.
+    final queueKey = s.queue.map((t) => t.videoId).join(',');
+    if (queueKey != _lastQueueKey) {
+      _lastQueueKey = queueKey;
+      _stampQueueRatings();
     }
     final track = s.current;
     final key = track?.videoId;
@@ -1665,9 +2287,11 @@ class AppState extends ChangeNotifier {
     if (track != null && key != null && key != _lastLyricKey) {
       _lastLyricKey = key;
       _lyrics = [];
+      _noteLocalHistory(track);
       notifyListeners();
       unawaited(_resolveCurrentMetadata(track));
-      unawaited(_refreshPalette(track.displayArtwork));
+      ensureSquareCover(key);
+      unawaited(_refreshPalette(_playerArtwork(track)));
       return;
     }
     if (track == null || key == null) {
@@ -1698,6 +2322,10 @@ class AppState extends ChangeNotifier {
   /// volume slider listens to this; volume drags no longer rebuild the
   /// whole app on every throttled step.
   final ValueNotifier<int> volumeTick = ValueNotifier(0);
+
+  /// Effective UI color scheme for non-widget consumers (tray icon),
+  /// published by the themed shell next to MaterialApp.
+  final ValueNotifier<ColorScheme?> displayScheme = ValueNotifier(null);
 
   /// Last snapshot seen on the player stream, for progress detection.
   PlayerState? _lastNotified;
@@ -1738,6 +2366,78 @@ class AppState extends ChangeNotifier {
   /// Returns the cached palette for [url], or null if not yet computed.
   /// Call [ensurePalette] first to trigger computation.
   List<Color>? paletteFor(String? url) => _paletteCache[url];
+
+  // ---------- Square cover resolution for lists ----------
+
+  /// Bumped when a square cover is resolved, so artwork widgets that
+  /// opted into resolution re-check their video's cached cover.
+  final ValueNotifier<int> squareCoverTick = ValueNotifier(0);
+
+  /// Bumped when the on-disk artwork cache is cleared (Settings debug
+  /// action), so every visible artwork tile re-downloads/re-renders.
+  final ValueNotifier<int> artworkCacheTick = ValueNotifier(0);
+
+  /// Clears the on-disk artwork cache (raw bytes + rendered crops),
+  /// the failure skip-lists and banner memo, the in-memory cover
+  /// palettes, and Flutter's decoded-image cache, then bumps
+  /// [artworkCacheTick] so visible tiles re-fetch, and re-computes the
+  /// Now Playing backdrop palette.
+  /// Debug-only: Settings → Debug → "Clear artwork cache".
+  void clearArtworkCache() {
+    _art.clearCache();
+    _paletteCache.clear();
+    _coverPalette = [];
+    // Same-path re-renders must not decode stale pixels from memory.
+    PaintingBinding.instance.imageCache.clear();
+    artworkCacheTick.value++;
+    notifyListeners();
+    unawaited(_refreshPalette(_player.state.current?.displayArtwork));
+  }
+
+  /// The cached square cover URL for [videoId], or null (disk-backed).
+  String? cachedSquareCover(String videoId) =>
+      _tube.cachedSquareCover(videoId);
+
+  /// Artwork URL the player UI shows for [track]: the resolved square
+  /// cover when cached, else the raw frame. Tiles and palette use the
+  /// same URL, so a tap reuses the bytes the list already downloaded
+  /// instead of fetching the frame again.
+  String? _playerArtwork(Track track) =>
+      cachedSquareCover(track.videoId) ?? track.displayArtwork;
+
+  /// Resolves the square cover for [videoId] in the background (coalesced
+  /// and disk-cached in `InnerTube`), bumping [squareCoverTick] when it
+  /// lands so the artwork can swap the frame for the square cover.
+  /// The track's album id rides along so video-only panels (16:9
+  /// frames, no square art) still resolve through the album page.
+  void ensureSquareCover(String videoId) {
+    if (videoId.isEmpty) return;
+    if (_tube.cachedSquareCover(videoId) != null) return;
+    String? albumId;
+    final current = _player.state.current;
+    if (current?.videoId == videoId) {
+      albumId = current?.album?.browseId;
+    } else {
+      for (final t in _player.state.queue) {
+        if (t.videoId == videoId) {
+          albumId = t.album?.browseId;
+          break;
+        }
+      }
+    }
+    unawaited(
+      _tube.squareCoverOf(videoId, albumId: albumId).then((url) {
+        if (url == null || url.isEmpty) return;
+        squareCoverTick.value++;
+        // The current track's cover just resolved: repaint the backdrop
+        // from the same bytes the tile now shows, so the wash matches
+        // the displayed cover without a re-download.
+        if (_player.state.current?.videoId == videoId) {
+          unawaited(_refreshPalette(url));
+        }
+      }),
+    );
+  }
 
   /// Computes and caches the cover palette for [url] if not already
   /// present. Used by album/playlist views that need a backdrop wash
@@ -1797,20 +2497,7 @@ class AppState extends ChangeNotifier {
     );
     final current = _player.state.current;
     if (current == null || current.videoId != key) return;
-    try {
-      final res = await fetchLyricsAndAlbum(
-        current.artistNames(),
-        current.title,
-        current.album?.name ?? '',
-        current.durationSec,
-      );
-      if (_player.state.current?.videoId != key) return;
-      _lyrics = res.lines;
-      if (res.album != null && res.album!.isNotEmpty) {
-        _player.updateTrackAlbum(key, res.album!);
-      }
-      notifyListeners();
-    } catch (_) {}
+    await _fetchLyricsFor(key);
     if (_lastRatingVideoId != key) {
       _lastRatingVideoId = key;
       if (ratingsAvailable) {
@@ -2010,12 +2697,32 @@ class AppState extends ChangeNotifier {
   }
 
   /// Signs out everywhere: tubes, token stores, account display.
+  /// Equivalent to [logoutCookie] plus [logoutGoogle].
   void logout() {
     _tube.auth = const AuthSession.anonymous();
     _tube.authProvider = null;
     _oauth.logout();
     _account = null;
     _accountAvatar = null;
+    _clearLibraryLists();
+    // Local recents survive sign-out on purpose: they are device-local
+    // play history, and the next login's server merge dedups them
+    // against fresh history. Clearing them here is what used to wipe
+    // just-played songs back to stale server rows on every re-login.
+    try {
+      if (_authFile.existsSync()) _authFile.deleteSync();
+    } catch (_) {}
+    final current = _player.state.current;
+    if (current != null) {
+      _player.updateTrackRating(current.videoId, RatingStatus.unknown);
+    }
+    notifyListeners();
+  }
+
+  /// Clears library rows and rating state. Shared by the sign-out
+  /// paths so a partially-signed-out UI never shows the other
+  /// session's leftovers as its own.
+  void _clearLibraryLists() {
     _liked = [];
     _likedIds = {};
     _ratingCache.clear();
@@ -2028,12 +2735,44 @@ class AppState extends ChangeNotifier {
     // doesn't keep showing "expired" for a signed-out state.
     _loginValid = true;
     _loginCheckedAt = 0;
+  }
+
+  /// Signs out of the InnerTube browser-cookie session only. The
+  /// Google (OAuth) session is untouched. Account display and library
+  /// rows are cleared only when no OAuth session remains.
+  void logoutCookie() {
+    _tube.auth = const AuthSession.anonymous();
     try {
       if (_authFile.existsSync()) _authFile.deleteSync();
     } catch (_) {}
+    _ratingCache.clear();
     final current = _player.state.current;
     if (current != null) {
       _player.updateTrackRating(current.videoId, RatingStatus.unknown);
+    }
+    if (!oauthSignedIn) {
+      _account = null;
+      _accountAvatar = null;
+      _clearLibraryLists();
+    } else {
+      // Cookie gone: reset the validity verdict so the card shows
+      // "Not connected" instead of a stale "Expired".
+      _loginValid = true;
+      _loginCheckedAt = 0;
+    }
+    notifyListeners();
+  }
+
+  /// Signs out of the Google (OAuth) Data API session only. The
+  /// browser-cookie session is untouched. Account display and library
+  /// rows are cleared only when no cookie session remains.
+  void logoutGoogle() {
+    _oauth.logout();
+    _tube.authProvider = null;
+    if (!hasCookieSession) {
+      _account = null;
+      _accountAvatar = null;
+      _clearLibraryLists();
     }
     notifyListeners();
   }
@@ -2101,6 +2840,12 @@ class AppState extends ChangeNotifier {
   /// mid-transition.
   static const nowPlayingTransition = Duration(milliseconds: 250);
 
+  /// The overlay transition duration, collapsed to zero when the
+  /// reduced-motion accessibility setting is on, so the Now Playing
+  /// slide (and the palette hold that mirrors it) is instant.
+  Duration get nowPlayingTransitionDuration =>
+      config.reducedMotion ? Duration.zero : nowPlayingTransition;
+
   /// End of the current transition hold, if any.
   DateTime? _paletteHoldUntil;
 
@@ -2146,9 +2891,10 @@ class AppState extends ChangeNotifier {
   }
 
   void _holdPaletteForTransition() {
-    final until = DateTime.now().add(nowPlayingTransition);
+    final transition = nowPlayingTransitionDuration;
+    final until = DateTime.now().add(transition);
     _paletteHoldUntil = until;
-    Timer(nowPlayingTransition + const Duration(milliseconds: 50), () {
+    Timer(transition + const Duration(milliseconds: 50), () {
       if (_paletteHoldUntil == until) _releasePaletteHold();
     });
   }

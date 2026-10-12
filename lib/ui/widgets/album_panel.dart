@@ -6,11 +6,15 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 import '../../core/models/models.dart';
+import 'package:m3e_core/m3e_core.dart';
+
 import '../app_state.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
+import 'loading_placeholders.dart';
 import 'track_row.dart';
 
 String _fmtDur(int sec) =>
@@ -32,6 +36,9 @@ class AlbumPlaylistView extends StatefulWidget {
     required this.numbered,
     this.topPadding = 64,
     this.listLoading = false,
+    this.removable = false,
+    this.onRemoveTrack,
+    this.showViews = false,
   });
 
   final String title;
@@ -55,6 +62,15 @@ class AlbumPlaylistView extends StatefulWidget {
   /// Show a spinner when [tracks] is empty and still loading.
   final bool listLoading;
 
+  /// When true each row shows a remove action (user-editable playlists).
+  final bool removable;
+
+  /// Invoked to remove a track; only used when [removable] is true.
+  final void Function(Track track)? onRemoveTrack;
+
+  /// Shows each row's play count when the backend provided one.
+  final bool showViews;
+
   @override
   State<AlbumPlaylistView> createState() => _AlbumPlaylistViewState();
 }
@@ -63,7 +79,19 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
   int _sort = 0;
   String? _lastArtUrl;
 
+  // Memoized sort: re-sorts only when the sort mode or the source list
+  // identity changes, so rebuilds (playing-id, account, parent) don't
+  // re-copy and re-sort the queue on every frame.
+  int _cachedSort = -1;
+  List<Track>? _cachedSource;
+  List<Track>? _cachedSorted;
+
   List<Track> get _sorted {
+    if (_cachedSort == _sort && identical(_cachedSource, widget.tracks)) {
+      return _cachedSorted!;
+    }
+    _cachedSort = _sort;
+    _cachedSource = widget.tracks;
     final tracks = List<Track>.of(widget.tracks);
     switch (_sort) {
       case 1:
@@ -74,7 +102,7 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
         // Longest first, mirroring the reference client.
         tracks.sort((a, b) => b.durationSec.compareTo(a.durationSec));
     }
-    return tracks;
+    return _cachedSorted = tracks;
   }
 
   @override
@@ -203,7 +231,7 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          FilledButton.icon(
+                          M3EFilledButton.icon(
                             onPressed: tracks.isEmpty
                                 ? null
                                 : () => state.playSongs(tracks, 0),
@@ -240,50 +268,84 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
                   screenPadding,
                   0,
                 ),
-                child: Builder(builder: (context) {
-                  // Measure the widest label (bold, as the
-                  // selected state renders it) so every segment
-                  // is exactly as wide as the longest one —
-                  // the control must not resize when the
-                  // selection changes.
-                  final style = Theme.of(context)
-                      .textTheme
-                      .labelLarge
-                      ?.copyWith(fontWeight: FontWeight.w600);
-                  final width = ['Default', 'Title', 'Artist', 'Duration']
-                      .map((s) => _textWidth(s, style))
-                      .fold(
-                        0.0,
-                        (m, w) => w > m ? w : m,
-                      );
-                  return SegmentedButton<int>(
-                    segments: [
-                      ButtonSegment(
-                        value: 0,
-                        label: _FixedLabel('Default', width),
-                      ),
-                      ButtonSegment(
-                        value: 1,
-                        label: _FixedLabel('Title', width),
-                      ),
-                      ButtonSegment(
-                        value: 2,
-                        label: _FixedLabel('Artist', width),
-                      ),
-                      ButtonSegment(
-                        value: 3,
-                        label: _FixedLabel('Duration', width),
-                      ),
-                    ],
-                    selected: {_sort},
-                    onSelectionChanged: (s) =>
-                        setState(() => _sort = s.first),
-                  );
-                }),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Builder(builder: (context) {
+                    final scheme = Theme.of(context).colorScheme;
+                    return M3EToggleButtonGroup(
+                      type: M3EButtonGroupType.connected,
+                      size: M3EButtonSize.sm,
+                      semanticLabel: 'Sort order',
+                      selectedIndex: _sort,
+                      onSelectedIndexChanged: (i) {
+                        // Selection-required: tapping the active sort
+                        // keeps it.
+                        if (i == null) return;
+                        setState(() => _sort = i);
+                      },
+                      actions: const [
+                        M3EToggleButtonGroupAction(
+                          label: Text(
+                            'Default',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        M3EToggleButtonGroupAction(
+                          label: Text(
+                            'Title',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        M3EToggleButtonGroupAction(
+                          label: Text(
+                            'Artist',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        M3EToggleButtonGroupAction(
+                          label: Text(
+                            'Duration',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                      decoration: toggleButtonGroupDecoration(scheme),
+                    );
+                  }),
+                ),
               ),
               Expanded(
                 child: widget.listLoading && tracks.isEmpty
-                    ? const Center(child: CircularProgressIndicator())
+                    // Songs on their way: skeleton rows in the same
+                    // list, so they reveal in place.
+                    ? Skeletonizer(
+                        enabled: true,
+                        enableSwitchAnimation: true,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(
+                            screenPadding,
+                            0,
+                            screenPadding,
+                            screenPadding + playerBarClearance,
+                          ),
+                          itemCount: placeholderTracks.length,
+                          itemBuilder: (context, i) {
+                            final t = placeholderTracks[i];
+                            return TrackRow(
+                              track: t,
+                              index: widget.numbered ? i + 1 : null,
+                              onPlay: () {},
+                              rateable: account != null,
+                              showPlaylists: true,
+                              removable: widget.removable,
+                            );
+                          },
+                        ),
+                      )
                     : ListView.builder(
                         padding: const EdgeInsets.fromLTRB(
                           screenPadding,
@@ -305,6 +367,11 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
                             onPlay: () => state.playSongs(tracks, idx),
                             rateable: account != null,
                             showPlaylists: true,
+                            showViews: widget.showViews,
+                            removable: widget.removable,
+                            onRemove: widget.onRemoveTrack == null
+                                ? null
+                                : () => widget.onRemoveTrack!(t),
                           );
                         },
                       ),
@@ -512,37 +579,3 @@ class _OwnerRowState extends State<_OwnerRow> {
   }
 }
 
-/// Sort-segment label pinned to [width] so the
-/// SegmentedButton keeps a constant overall width
-/// whichever segment is selected.
-class _FixedLabel extends StatelessWidget {
-  const _FixedLabel(this.text, this.width);
-
-  final String text;
-  final double width;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        overflow: TextOverflow.visible,
-      ),
-    );
-  }
-}
-
-/// Width of [text] rendered in [style], for sizing
-/// segmented-button labels.
-double _textWidth(String text, TextStyle? style) {
-  final painter = TextPainter(
-    text: TextSpan(text: text, style: style),
-    maxLines: 1,
-    textDirection: TextDirection.ltr,
-  )..layout();
-  final width = painter.width;
-  painter.dispose();
-  return width;
-}
