@@ -114,9 +114,26 @@ jobs:
           test -n "$(find dist -name '*.AppImage' -print -quit)"
       # Recursive glob: matches dist/x.AppImage and dist/appimage/x.AppImage.
       # fail_on_unmatched_files: an empty release must fail, never ship.
+      - name: Extract changelog section for this release
+        id: changelog
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          awk -v ver="$TAG_VER" '
+            /^## / {
+              if (capture) exit
+              if ($0 ~ "## " ver) { capture=1; next }
+              capture=0
+            }
+            capture { print }
+          ' CHANGES.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No changelog section found for version ${TAG_VER} in CHANGES.md"
+            exit 1
+          fi
+          echo "body_path=release-notes.md" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/**/*.AppImage
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          body_path: ${{ steps.changelog.outputs.body_path }}
