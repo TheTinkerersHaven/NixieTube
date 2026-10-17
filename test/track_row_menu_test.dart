@@ -94,13 +94,17 @@ Future<AppState> _boot() async {
   return state;
 }
 
-Future<void> _pumpRow(WidgetTester tester, AppState state) {
+Future<void> _pumpRow(WidgetTester tester, AppState state, [Track? track]) {
   return tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
         body: ChangeNotifierProvider.value(
           value: state,
-          child: TrackRow(track: _track, onPlay: () {}, showPlaylists: true),
+          child: TrackRow(
+            track: track ?? _track,
+            onPlay: () {},
+            showPlaylists: true,
+          ),
         ),
       ),
     ),
@@ -201,6 +205,30 @@ void main() {
 
     expect(find.text('Play next'), findsOneWidget);
     expect(find.text('Copy link'), findsOneWidget);
+    state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('explicit badge shows before the artist name', (tester) async {
+    const flagged = Track(
+      videoId: 'e1',
+      title: 'Bold Song',
+      artists: [ArtistRef('Loud Act')],
+      explicit: true,
+    );
+    final state = await _boot();
+    await _pumpRow(tester, state, flagged);
+    await tester.pump();
+    expect(find.byIcon(Icons.explicit), findsOneWidget);
+    state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('clean tracks show no badge', (tester) async {
+    final state = await _boot();
+    await _pumpRow(tester, state);
+    await tester.pump();
+    expect(find.byIcon(Icons.explicit), findsNothing);
     state.player.dispose();
     await tester.pump();
   });

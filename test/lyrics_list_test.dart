@@ -182,4 +182,76 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('off-tab advances never page back to lyrics', (tester) async {
+    final dir = Directory.systemTemp.createTempSync('nt-lyrics-tab');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = InnerTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: _IdleEngine(),
+      tube: tube,
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+      oauth: GoogleOAuth(storePath: '${dir.path}/oauth.properties'),
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+    // Tall enough to scroll: the follow-scroll has somewhere to go.
+    final lines = [
+      for (var i = 0; i < 30; i++)
+        LyricLine(timeMs: i * 60000, text: 'line $i'),
+    ];
+    final ctrl = ScrollController();
+    addTearDown(ctrl.dispose);
+    late TabController tabs;
+    Widget buildAt(int positionMs) => ChangeNotifierProvider.value(
+      value: state,
+      child: MaterialApp(
+        home: DefaultTabController(
+          length: 3,
+          initialIndex: 0,
+          child: Builder(
+            builder: (context) {
+              tabs = DefaultTabController.of(context);
+              return Scaffold(
+                body: LyricsList(
+                  ctrl: ctrl,
+                  lyrics: lines,
+                  positionMs: positionMs,
+                  state: state,
+                  visibleTabIndex: 1,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(buildAt(0));
+    expect(tabs.index, 0);
+    // Advance deep into the list: rows highlight, but the tab strip
+    // must not page back to the lyrics tab.
+    await tester.pumpWidget(buildAt(20 * 60000));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(tabs.index, 0);
+    // Same advance while ON the lyrics tab still follows.
+    tabs.animateTo(1);
+    await tester.pumpAndSettle();
+    expect(tabs.index, 1);
+    await tester.pumpWidget(buildAt(25 * 60000));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(ctrl.offset, greaterThan(0));
+  });
 }

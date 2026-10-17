@@ -30,6 +30,25 @@ void main() {
       expect(again.lyricsSource, 'ytmusic');
     });
 
+    test('a11y underline + remembered system color round-trip', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-sysconfig-a11y');
+      addTearDown(() => dir.delete(recursive: true));
+      final config = SysConfig(configPath: '${dir.path}/config.properties');
+      expect(config.underlineLinks, isFalse);
+      expect(config.themeSystemPrimary, isNull);
+      config.underlineLinks = true;
+      config.themeSystemPrimary = 0xff2196f3;
+      final again = SysConfig(configPath: '${dir.path}/config.properties');
+      expect(again.underlineLinks, isTrue);
+      expect(again.themeSystemPrimary, 0xff2196f3);
+      again.themeSystemPrimary = null;
+      expect(
+        SysConfig(configPath: '${dir.path}/config.properties')
+            .themeSystemPrimary,
+        isNull,
+      );
+    });
+
     test('readProperties decodes \\uXXXX Java escapes', () async {
       final dir = await Directory.systemTemp.createTemp('nt-props-unicode');
       addTearDown(() => dir.delete(recursive: true));

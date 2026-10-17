@@ -16,6 +16,8 @@ import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/album_panel.dart';
 
+import 'mock_dio.dart';
+
 class _FakeEngine implements PlayerEngine {
   @override
   Future<bool> play(String url) async => true;
@@ -275,6 +277,79 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('1.8M plays'), findsNothing);
+    });
+  });
+
+  group('playlist collage square covers', () {
+    Future<AppState> bootCollage() async {
+      final dir = Directory.systemTemp.createTempSync('nt-collage-test');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      // 404 backend: square resolutions settle empty fast with no
+      // timers or network, so assertions never race the backend.
+      final tube = InnerTube(dio: mockDio((_) async => (404, '{}')));
+      addTearDown(tube.close);
+      final player = PlayerController(
+        engine: _FakeEngine(),
+        tube: tube,
+        configDirPath: dir.path,
+      );
+      addTearDown(player.dispose);
+      final state = AppState(
+        tube: tube,
+        player: player,
+        art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+        oauth: GoogleOAuth(storePath: '${dir.path}/oauth.properties'),
+        config: SysConfig(configPath: '${dir.path}/config.properties'),
+        openUrl: (_) async {},
+      );
+      addTearDown(state.dispose);
+      return state;
+    }
+
+    testWidgets('collage cells never load raw frames', (tester) async {
+      // Recognizably non-square collage sources backed by tracks: the
+      // cells must wait for true squares (or placeholders), never
+      // render the cropped frame — so no Image widget mounts at all.
+      final tracks = [
+        for (var i = 0; i < 4; i++)
+          Track(
+            videoId: 'c$i',
+            title: 'T$i',
+            durationSec: 200,
+            thumbnails: [
+              Thumbnail(
+                'https://lh3.googleusercontent.com/x$i=w640-h360-l90-rj',
+                width: 640,
+                height: 360,
+              ),
+            ],
+          ),
+      ];
+      final state = await bootCollage();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChangeNotifierProvider.value(
+              value: state,
+              child: AlbumPlaylistView(
+                title: 'Playlist',
+                subtitle: '',
+                description: '',
+                art: null,
+                arts: [for (final t in tracks) t.displayArtwork!],
+                owner: null,
+                tracks: tracks,
+                numbered: false,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(Image), findsNothing);
+      state.player.dispose();
+      await tester.pump();
     });
   });
 }

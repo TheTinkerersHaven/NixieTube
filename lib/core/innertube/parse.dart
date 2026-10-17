@@ -479,7 +479,26 @@ Track? parseListItem(dynamic li) {
     artistId: artistId,
     views: views,
     rating: rating,
+    explicit: parseExplicit(li),
   );
+}
+
+/// True when an item renderer carries the explicit badge: a `badges`
+/// array holding a `musicInlineBadgeRenderer` whose icon is
+/// `MUSIC_EXPLICIT_BADGE`. Only a UI badge — there is no dedicated
+/// boolean field, and `videoDetails` never includes it, so tracks
+/// fetched by id alone always read false. Missing `badges` means not
+/// marked, not unknown.
+bool parseExplicit(dynamic node) {
+  final badges = nav(node, const ['badges']);
+  if (badges is! List) return false;
+  for (final b in badges) {
+    final iconType = str(
+      nav(b, const ['musicInlineBadgeRenderer', 'icon', 'iconType']),
+    );
+    if (iconType == 'MUSIC_EXPLICIT_BADGE') return true;
+  }
+  return false;
 }
 
 /// Parses a watch-next `playlistPanelVideoRenderer` row into a track.
@@ -557,6 +576,7 @@ Track? parsePanelVideo(dynamic item) {
     radioPlaylistId: 'RDAMVM$videoId',
     artistId: artistId,
     rating: rating,
+    explicit: parseExplicit(item),
   );
 }
 
@@ -785,6 +805,7 @@ ShelfItem? parseShelfItem(dynamic el) {
           thumbnails: thumbs,
           playlistId: playlistId,
           radioPlaylistId: 'RDAMVM$watchVideoId',
+          explicit: parseExplicit(twoRow),
         ),
       );
     }
@@ -1488,4 +1509,81 @@ List<Track> panelsOf(dynamic res) {
     if (t != null) out.add(t);
   }
   return out;
+}
+
+/// Full tracks from a `FEmusic_history` browse response, most recent
+/// first, deduplicated by video id. Unparseable entries are skipped.
+/// Stops after [maxItems] entries. Used for the quick-picks pool so
+/// heavy rotation from other sessions can surface on this device.
+List<Track> parseHistoryTracks(dynamic res, {int maxItems = 500}) {
+  final tracks = <Track>[];
+  final seen = <String>{};
+  var total = 0;
+  bool done() => total >= maxItems;
+  void walk(dynamic node) {
+    if (done() || node == null) return;
+    if (node is List) {
+      for (final e in node) {
+        walk(e);
+        if (done()) return;
+      }
+      return;
+    }
+    if (node is! Map) return;
+    final item = node['musicResponsiveListItemRenderer'];
+    if (item is Map) {
+      total++;
+      final t = parseListItem(item);
+      if (t != null && t.videoId.isNotEmpty && seen.add(t.videoId)) {
+        tracks.add(t);
+      }
+      return;
+    }
+    for (final v in node.values) {
+      walk(v);
+      if (done()) return;
+    }
+  }
+
+  walk(res);
+  return tracks;
+}
+
+/// Play counts from a `FEmusic_history` browse response: the history
+/// page lists every play (repeats appear multiple times across the
+/// day-grouped shelves), so `musicResponsiveListItemRenderer` video
+/// ids are counted as-is. Stops after [maxItems] entries. Empty when
+/// signed out (the "Sign in" wall carries no items) or on any
+/// unexpected shape — callers keep existing counts then.
+Map<String, int> parseHistoryCounts(dynamic res, {int maxItems = 500}) {
+  final counts = <String, int>{};
+  var total = 0;
+  bool done() => total >= maxItems;
+  void walk(dynamic node) {
+    if (done() || node == null) return;
+    if (node is List) {
+      for (final e in node) {
+        walk(e);
+        if (done()) return;
+      }
+      return;
+    }
+    if (node is! Map) return;
+    final item = node['musicResponsiveListItemRenderer'];
+    if (item is Map) {
+      final id = str(nav(item, const ['playlistItemData', 'videoId']));
+      total++;
+      if (id != null && id.isNotEmpty) {
+        counts[id] = (counts[id] ?? 0) + 1;
+      }
+      return;
+    }
+    for (final v in node.values) {
+      walk(v);
+      if (done()) return;
+    }
+  }
+
+  walk(res);
+  return counts;
 }

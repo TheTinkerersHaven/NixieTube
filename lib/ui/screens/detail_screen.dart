@@ -366,9 +366,25 @@ class _BannerImageState extends State<_BannerImage> {
       builder: (context, snapshot) {
         final bytes = snapshot.data;
         if (bytes == null || bytes.isEmpty) {
-          return Container(
-            color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          );
+          // An enabled ancestor loading scope (the artist skeleton)
+          // also means "art on its way" for the placeholder's empty
+          // URL: bone shimmer instead of a flat box, mirroring
+          // ArtworkImage, so the hero never pops in later.
+          final ancestorLoading =
+              context
+                  .dependOnInheritedWidgetOfExactType<SkeletonizerScope>()
+                  ?.enabled ??
+              false;
+          if (!widget.url.trim().isNotEmpty && !ancestorLoading) {
+            return Container(
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+            );
+          }
+          const bone = SizedBox.expand(child: Bone());
+          // An active ancestor scope paints the shimmer itself;
+          // otherwise the bone brings its own scope.
+          if (ancestorLoading) return bone;
+          return const Skeletonizer(enabled: true, child: bone);
         }
         // Banner decodes at display width, not the 1920px source.
         return Image.memory(

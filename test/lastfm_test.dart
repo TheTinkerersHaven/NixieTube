@@ -76,18 +76,41 @@ void main() {
     expect(fields['api_sig'], md5.convert(utf8.encode(base)).toString());
   });
 
-  test(
-    'requestToken rejects missing credentials without network use',
-    () async {
-      startService();
-      config.lastfmApiKey = '';
-      config.lastfmSecret = '';
-      final token = await service.requestToken();
-      expect(token, isNull);
-      expect(service.status, contains('error'));
-      expect(calls, isEmpty);
-    },
-  );
+  test('built-in credentials are non-empty', () {
+    expect(defaultLastfmApiKey.trim(), isNotEmpty);
+    expect(defaultLastfmSecret.trim(), isNotEmpty);
+  });
+
+  test('requestToken falls back to the built-in key when fields are empty',
+      () async {
+    startService(
+      handler: (r) async => (200, jsonEncode({'token': 'token123'})),
+    );
+    config.lastfmApiKey = '';
+    config.lastfmSecret = '';
+    final token = await service.requestToken();
+    expect(token, 'token123');
+    expect(calls, hasLength(1));
+    final fields = form(calls.first);
+    // Built-in key sent, signed with the built-in secret.
+    expect(fields['api_key'], defaultLastfmApiKey);
+    expect(fields['api_key'], isNot(_key));
+    final base =
+        'api_key$defaultLastfmApiKey'
+        'methodauth.getToken'
+        '$defaultLastfmSecret';
+    expect(fields['api_sig'], md5.convert(utf8.encode(base)).toString());
+  });
+
+  test('custom credentials override the built-in key', () async {
+    startService(
+      handler: (r) async => (200, jsonEncode({'token': 'token123'})),
+    );
+    expect(config.lastfmApiKey, _key);
+    final token = await service.requestToken();
+    expect(token, 'token123');
+    expect(form(calls.first)['api_key'], _key);
+  });
 
   test('requestToken surfaces an API error', () async {
     startService(
@@ -149,15 +172,17 @@ void main() {
     expect(service.ready(), isFalse);
   });
 
-  test('ready() gates on enabled, key, secret and session', () async {
+  test('ready() gates on enabled and session (key always resolves)',
+      () async {
     startService();
     expect(service.ready(), isTrue);
     config.lastfmEnabled = false;
     expect(service.ready(), isFalse);
     config.lastfmEnabled = true;
+    // Empty fields fall back to the built-in key: still ready.
+    config.lastfmApiKey = '';
     config.lastfmSecret = '';
-    expect(service.ready(), isFalse);
-    config.lastfmSecret = _secret;
+    expect(service.ready(), isTrue);
     config.lastfmSessionKey = '';
     expect(service.ready(), isFalse);
   });

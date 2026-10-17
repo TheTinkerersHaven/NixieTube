@@ -230,6 +230,110 @@ class _CardRailState extends State<CardRail> {
   }
 }
 
+/// Titled section laying its rows out in columns of roughly
+/// [rowsPerColumn] rows each that scroll sideways, so the section stays
+/// one screen tall however many items it holds. Column width follows the
+/// viewport (wider rows, fewer columns per screen) and the header's
+/// arrows page one viewport at a time. Renders nothing when [count] is
+/// zero, and falls back to a plain vertical list when the incoming
+/// width is unbounded.
+class TrackColumns extends StatefulWidget {
+  const TrackColumns({
+    super.key,
+    required this.title,
+    required this.count,
+    required this.itemBuilder,
+    this.rowsPerColumn = 5,
+    this.minColumnWidth = 460,
+  });
+
+  final String title;
+  final int count;
+  final Widget Function(BuildContext context, int index) itemBuilder;
+
+  /// Rows stacked in each column before the next column starts.
+  final int rowsPerColumn;
+
+  /// Width below which the visible column count drops by one; also sets
+  /// how many columns fill one screen (wider rows, fewer columns).
+  final double minColumnWidth;
+
+  @override
+  State<TrackColumns> createState() => _TrackColumnsState();
+}
+
+class _TrackColumnsState extends State<TrackColumns> {
+  final ScrollController _ctrl = ScrollController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.count == 0) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        RailHeader(title: widget.title, controller: _ctrl),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            if (!constraints.hasBoundedWidth) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < widget.count; i++)
+                    widget.itemBuilder(context, i),
+                ],
+              );
+            }
+            final perScreen = (constraints.maxWidth / widget.minColumnWidth)
+                .floor()
+                .clamp(1, 6);
+            const gap = 12.0;
+            // Columns fill the viewport, so one arrow press steps a
+            // whole screenful however many columns the section holds.
+            final colWidth =
+                (constraints.maxWidth - gap * (perScreen - 1)) / perScreen;
+            final columns = (widget.count / widget.rowsPerColumn).ceil();
+            return SingleChildScrollView(
+              controller: _ctrl,
+              scrollDirection: Axis.horizontal,
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var c = 0; c < columns; c++) ...[
+                      if (c > 0) const SizedBox(width: gap),
+                      SizedBox(
+                        width: colWidth,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (
+                              var i = c * widget.rowsPerColumn;
+                              i < (c + 1) * widget.rowsPerColumn &&
+                                  i < widget.count;
+                              i++
+                            )
+                              widget.itemBuilder(context, i),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
 /// Centered error message with a retry button (Kotlin `ErrorBox`).
 class ErrorBox extends StatelessWidget {
   const ErrorBox({super.key, required this.message, required this.onRetry});

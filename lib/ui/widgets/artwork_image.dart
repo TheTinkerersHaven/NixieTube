@@ -1,10 +1,11 @@
-// Cached artwork image with the Kotlin `Artwork(url)` semantics: square
-// art fills the tile (the store pre-crops every cover to 1:1, mirroring the
-// manual center-crop blit), and a missing URL renders the album placeholder
+// Cached artwork image tile: the store renders covers whole (no
+// client-side crop, no bar trimming) and the tile cover-fits them into
+// its square box, and a missing URL renders the album placeholder
 // instead of an empty box.
 
 import 'dart:async';
 import 'dart:io' show File;
+import 'dart:math' show min;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -21,6 +22,8 @@ import '../theme.dart';
 /// the disk-backed square-cover cache and, on a miss, resolved in the
 /// background — the tile rebuilds via [AppState.squareCoverTick] when it
 /// lands, so lists can show the same square album art the player does.
+/// Music videos have no square art anywhere, so when the resolution
+/// settles empty the tile falls back to the frame itself (cover-fit).
 class ArtworkImage extends StatefulWidget {
   const ArtworkImage(
     this.url, {
@@ -48,9 +51,21 @@ class ArtworkImage extends StatefulWidget {
 class _ArtworkImageState extends State<ArtworkImage> {
   String? _loadedUrl;
   File? _file;
+  (int, int)? _tileSize;
   Timer? _retryTimer;
   bool _retried = false;
   bool _failed = false;
+
+  /// Square-cover wait this tile is parked on (video id), or null.
+  /// While parked the tile bones instead of loading a cropped frame;
+  /// cleared when the cover lands or the key changes.
+  String? _waitingSquareKey;
+
+  /// Square-cover fallback already decided (video id): the resolution
+  /// settled with no square art, so this tile shows the raw frame
+  /// itself — the square box cover-fits it — instead of parking on a
+  /// blank album icon forever. Reset by a new key/URL or a cache clear.
+  String? _frameKey;
 
   /// Last-seen artwork-cache generation; bumped by the Settings "Clear
   /// artwork cache" action to force every tile to re-fetch.
@@ -69,8 +84,11 @@ class _ArtworkImageState extends State<ArtworkImage> {
       _retryTimer?.cancel();
       _retryTimer = null;
       _file = null;
+      _tileSize = null;
       _loadedUrl = null;
       _failed = false;
+      _waitingSquareKey = null;
+      _frameKey = null;
     }
     _maybeLoad();
   }
@@ -82,6 +100,8 @@ class _ArtworkImageState extends State<ArtworkImage> {
       _retried = false;
       _retryTimer?.cancel();
       _retryTimer = null;
+      _waitingSquareKey = null;
+      _frameKey = null;
       // The raw frame often swaps under enrichment while the displayed
       // (square) cover stays put: only blank the tile when the
       // effective artwork actually changed. Otherwise _maybeLoad
@@ -89,6 +109,7 @@ class _ArtworkImageState extends State<ArtworkImage> {
       // forever with nothing left to load.
       if (_effectiveUrl() != _loadedUrl) {
         _file = null;
+        _tileSize = null;
         setState(_maybeLoad);
       }
     }
@@ -103,8 +124,11 @@ class _ArtworkImageState extends State<ArtworkImage> {
   /// The artwork URL this tile displays: the frame URL (with the
   /// `//` scheme fixed), swapped for the track's resolved square cover
   /// when this tile opted into square-cover resolution and one is
-  /// cached. On a cache miss the resolution is kicked off; the build's
-  /// squareCoverTick select rebuilds this tile when it lands.
+  /// cached. While the resolution is in flight a recognizably
+  /// non-square frame is held back — true square art must never be
+  /// replaced by a client-side crop — and the tile bones until it
+  /// lands. When the resolution settles with no square art at all, the
+  /// frame is shown itself; the square box cover-fits it.
   String? _effectiveUrl() {
     var u = widget.url;
     if (u != null && u.startsWith('//')) u = 'https:$u';
@@ -113,9 +137,22 @@ class _ArtworkImageState extends State<ArtworkImage> {
       final state = context.read<AppState>();
       final cover = state.cachedSquareCover(key);
       if (cover != null && cover.isNotEmpty) return cover;
-      state.ensureSquareCover(key);
+      if (_frameKey != key) {
+        state.ensureSquareCover(key);
+        if (_isNonSquareFrame(u)) return null;
+      }
     }
     return (u == null || u.isEmpty) ? null : u;
+  }
+
+  /// True when [url] is recognizably a non-square frame: a Google
+  /// `=w{W}-h{H}` size suffix with unequal sides, or an `i.ytimg.com`
+  /// video still (never square). Anything else loads as before — only
+  /// proven frames wait for the true square cover.
+  bool _isNonSquareFrame(String url) {
+    final m = RegExp(r'=w(\d+)-h(\d+)').firstMatch(url);
+    if (m != null) return m.group(1) != m.group(2);
+    return url.contains('i.ytimg.com/vi/');
   }
 
   void _maybeLoad() {
@@ -125,9 +162,43 @@ class _ArtworkImageState extends State<ArtworkImage> {
     if (u == null) {
       _loadedUrl = null;
       _file = null;
+      _tileSize = null;
+      final key = widget.squareCoverKey;
+      final raw = widget.url;
+      final squareWait =
+          key != null &&
+          key.isNotEmpty &&
+          raw != null &&
+          _isNonSquareFrame(raw);
       _failed = false;
+      // Square-cover wait (non-square frame held back above): when the
+      // resolution settles empty, fall back to the frame itself rather
+      // than blanking the tile for the rest of the session.
+      if (squareWait && _waitingSquareKey != key) {
+        // `squareWait` already implies a non-null key.
+        final kid = key;
+        _waitingSquareKey = kid;
+        final state = context.read<AppState>();
+        unawaited(
+          state.ensureSquareCover(kid).then((_) {
+            if (!mounted || _waitingSquareKey != kid) return;
+            _waitingSquareKey = null;
+            final cover = state.cachedSquareCover(kid);
+            if (cover == null || cover.isEmpty) {
+              // No square art exists for this video — a music video's
+              // only art is its 16:9 still: show the frame. The square
+              // box cover-fits it (sides cut, never stretched or
+              // barred), so the tile gets a real cover instead of a
+              // blank album icon.
+              _frameKey = kid;
+              setState(_maybeLoad);
+            }
+          }),
+        );
+      }
       return;
     }
+    _waitingSquareKey = null;
     if (u == _loadedUrl) return;
     _loadedUrl = u;
     _failed = false;
@@ -137,18 +208,7 @@ class _ArtworkImageState extends State<ArtworkImage> {
         .art
         .file(u)
         .then(
-          (f) {
-            if (!mounted || _loadedUrl != u) return;
-            if (f == null) {
-              _maybeRetry();
-              // Rebuild to the static placeholder now: without this
-              // the tile would keep shimmering until an unrelated
-              // rebuild (or the delayed retry) swaps it out.
-              setState(() => _failed = true);
-              return;
-            }
-            setState(() => _file = f);
-          },
+          (f) => _onRender(u, f),
           onError: (_) {
             // A failed load behaves like a missing file: placeholder now,
             // one delayed retry (see _maybeRetry).
@@ -157,6 +217,38 @@ class _ArtworkImageState extends State<ArtworkImage> {
             setState(() => _failed = true);
           },
         );
+  }
+
+  /// Shows the resolved render for [u], then refines the decode width from
+  /// the render's pixel size (read from the PNG header alone) so a
+  /// cover-fit crop fills the box without upscaling.
+  Future<void> _onRender(String u, File? f) async {
+    if (!mounted || _loadedUrl != u) return;
+    if (f == null) {
+      _maybeRetry();
+      // Rebuild to the static placeholder now: without this the tile
+      // would keep shimmering until an unrelated rebuild (or the delayed
+      // retry) swaps it out.
+      setState(() => _failed = true);
+      return;
+    }
+    setState(() => _file = f);
+    unawaited(_refineDecodeSize(u));
+  }
+
+  /// Reads the tile's pixel size (24-byte PNG header, no full decode) and
+  /// stamps it so the next build decodes the long side wide enough for
+  /// BoxFit.cover to fill the box from the short side. Fire and forget:
+  /// the tile is already shown; this only sharpens it.
+  Future<void> _refineDecodeSize(String u) async {
+    (int, int)? size;
+    try {
+      size = await context.read<AppState>().art.tileSize(u);
+    } catch (_) {
+      size = null;
+    }
+    if (!mounted || _loadedUrl != u) return;
+    setState(() => _tileSize = size);
   }
 
   /// One delayed retry when resolution yields nothing: a flaky boot-time
@@ -230,14 +322,32 @@ class _ArtworkImageState extends State<ArtworkImage> {
         false;
     Widget child;
     if (file != null) {
+      // Decode so the crop covers the box without upscaling: a 48px row
+      // on a 2x screen needs 96 bitmap pixels on the tile's short side,
+      // otherwise the box cover-fit upscales the short side into softness
+      // (a 16:9 video still lands about 1.8× too small). BoxFit.cover
+      // fills the square box from the long side, so decode the long side
+      // wide enough for the short side to reach dpr size — capped at the
+      // render's actual pixels, so nothing is invented.
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final targetShort = (widget.size * dpr).round().clamp(1, 2048);
+      int decodeWidth = targetShort;
+      if (_tileSize != null) {
+        final (tw, th) = _tileSize!;
+        final aspect = tw / th;
+        decodeWidth = (targetShort * aspect.clamp(1, 2048)).round();
+        decodeWidth = decodeWidth.clamp(1, min(tw, 2048));
+      }
       child = Image.file(
         file,
         width: widget.size,
         height: widget.size,
-        // Decode at display size: a 48px row must not decode 540px.
-        cacheWidth: widget.size.toInt().clamp(1, 1 << 15),
-        cacheHeight: widget.size.toInt().clamp(1, 1 << 15),
+        cacheWidth: decodeWidth,
         fit: BoxFit.cover,
+        // Medium filtering: grid geometry is rarely integer logical
+        // pixels, so every tile resamples fractionally — low quality
+        // reads as grain on those resamples.
+        filterQuality: FilterQuality.medium,
         gaplessPlayback: true,
         errorBuilder: (context, _, _) => placeholder(),
       );

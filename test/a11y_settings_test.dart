@@ -1,5 +1,5 @@
 // Accessibility settings widget tests: the Accessibility section
-// renders both toggles, they persist to config, and reduced motion
+// renders all toggles, they persist to config, and reduced motion
 // collapses the Now Playing transition duration to zero.
 
 import 'dart:io';
@@ -10,6 +10,8 @@ import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
+import 'package:nixietube/core/innertube/stream_resolver.dart';
+import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/discord.dart';
@@ -18,6 +20,7 @@ import 'package:nixietube/sys/lastfm.dart';
 import 'package:nixietube/sys/mpris.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
+import 'package:nixietube/ui/screens/now_playing_screen.dart';
 import 'package:nixietube/ui/screens/settings_screen.dart';
 import 'package:nixietube/ui/theme.dart';
 import 'package:nixietube/ui/widgets/palette_backdrop.dart';
@@ -103,6 +106,16 @@ Future<({AppState state, String configPath})> _pumpWith(
   return (state: state, configPath: '${dir.path}/config.properties');
 }
 
+/// InnerTube double with inert metadata: panel enrichment and
+/// ratings resolve locally so no test triggers network.
+class _NoopTube extends InnerTube {
+  @override
+  Future<Track> enrichTrack(Track track) async => track;
+
+  @override
+  Future<RatingStatus> rating(String videoId) async => RatingStatus.unknown;
+}
+
 /// Boots the real [AppState] with temp dirs and a fake engine,
 /// then pumps the settings screen under a MaterialApp with the
 /// same providers the app root registers.
@@ -117,7 +130,7 @@ Finder _switchOf(String title) => find.descendant(
 );
 
 void main() {
-  testWidgets('accessibility section renders and persists both toggles', (
+  testWidgets('accessibility section renders and persists all toggles', (
     tester,
   ) async {
     final (:state, :configPath) = await _pumpSettings(tester);
@@ -130,15 +143,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('High contrast'), findsOneWidget);
     expect(find.text('Reduce motion'), findsOneWidget);
-    // Both off by default; the transition runs at full length.
+    await tester.scrollUntilVisible(
+      find.text('Underline links'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Underline links'), findsOneWidget);
+    // All off by default; the transition runs at full length.
     expect(state.config.highContrast, isFalse);
     expect(state.config.reducedMotion, isFalse);
+    expect(state.config.underlineLinks, isFalse);
     expect(
       state.nowPlayingTransitionDuration,
       const Duration(milliseconds: 250),
     );
 
-    // Toggling Reduce motion collapses the transition to zero.
+    // Toggling Reduce motion collapses the transition to zero
+    // (scroll back: the underline check above moved it out of view).
+    await tester.scrollUntilVisible(
+      find.text('Reduce motion'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(_switchOf('Reduce motion'));
     await tester.pumpAndSettle();
     expect(state.config.reducedMotion, isTrue);
@@ -161,6 +189,18 @@ void main() {
     final reloaded = SysConfig(configPath: configPath);
     expect(reloaded.highContrast, isTrue);
     expect(reloaded.reducedMotion, isTrue);
+
+    // Toggling Underline links persists too (default off).
+    await tester.scrollUntilVisible(
+      find.text('Underline links'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(_switchOf('Underline links'));
+    await tester.pumpAndSettle();
+    expect(state.config.underlineLinks, isTrue);
+    expect(SysConfig(configPath: configPath).underlineLinks, isTrue);
   });
 
   testWidgets('reduce motion toggles off and restores the transition', (
@@ -230,5 +270,77 @@ void main() {
     state.refreshConfig();
     await tester.pump();
     expect(gradientBox(), isNotNull);
+  });
+
+  testWidgets('info tab links underline only when opted in', (tester) async {
+    final dir = Directory.systemTemp.createTempSync('nt-a11y-links');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = _NoopTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: _FakeEngine(),
+      tube: tube,
+      resolveStream: (id) async =>
+          ResolvedStream(url: 'https://x/$id', bitrate: 1),
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
+    addTearDown(art.close);
+    final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+    addTearDown(oauth.close);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: art,
+      oauth: oauth,
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Scaffold(
+          body: ChangeNotifierProvider.value(
+            value: state,
+            child: const NowPlayingScreen(),
+          ),
+        ),
+      ),
+    );
+    state.player.playTracks([
+      const Track(
+        videoId: 'v1',
+        title: 'One',
+        artists: [ArtistRef('Some Artist', browseId: 'UC1')],
+        durationSec: 200,
+      ),
+    ]);
+    await tester.pump();
+    // Tabs stage in after the overlay slide completes (a wall-clock
+    // timer, not a ticker, so advance time explicitly).
+    state.openNow();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Info'));
+    await tester.pumpAndSettle();
+    final primary = buildTheme().colorScheme.primary;
+    Text artistLink() => tester.widget<Text>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Text && w.data == 'Some Artist' && w.style?.color == primary,
+      ),
+    );
+    // Off by default: plain primary-colored text, no underline.
+    expect(state.config.underlineLinks, isFalse);
+    expect(artistLink().style?.decoration, TextDecoration.none);
+    // Opting in underlines the link in place.
+    state.config.underlineLinks = true;
+    state.refreshConfig();
+    await tester.pumpAndSettle();
+    expect(artistLink().style?.decoration, TextDecoration.underline);
+    state.player.dispose();
+    await tester.pump();
   });
 }

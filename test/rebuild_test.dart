@@ -168,6 +168,50 @@ void main() {
       return (state: state, player: player, tube: tube);
     }
 
+    testWidgets('player bar shows the explicit badge before the artist', (
+      tester,
+    ) async {
+      final env = buildApp();
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: env.state,
+          child: const MaterialApp(home: Scaffold(body: PlayerBar())),
+        ),
+      );
+      Track song(String id, bool explicit) => Track(
+        videoId: id,
+        title: 'Title $id',
+        artists: [const ArtistRef('Uno')],
+        durationSec: 200,
+        explicit: explicit,
+      );
+      env.player.playTracks([song('v1', true)]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Title v1'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(PlayerBar),
+          matching: find.byIcon(Icons.explicit),
+        ),
+        findsOneWidget,
+      );
+      // Clean tracks show no badge.
+      env.player.playTracks([song('v2', false)]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Title v2'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(PlayerBar),
+          matching: find.byIcon(Icons.explicit),
+        ),
+        findsNothing,
+      );
+      env.player.dispose();
+      await tester.pump();
+    });
+
     testWidgets('player bar surface tap opens Now Playing', (tester) async {
       final env = buildApp();
       await tester.pumpWidget(

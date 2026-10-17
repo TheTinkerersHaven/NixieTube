@@ -1,10 +1,9 @@
 // Pure-Dart artwork pipeline: integrity-checked disk cache with failure
-// tracking. Downloads thumbnails, center-crops non-square covers (a square
-// as tall as the thumbnail, centered), and exposes stable cropped files.
-// Square thumbnails are kept untouched. Cache layout matches the Kotlin app
-// (`art2` + generation suffixes), so both frontends share on-disk renders.
-// Decode/crop work runs on worker isolates and nothing decoded is retained
-// in memory.
+// tracking. Downloads thumbnails and exposes stable rendered files;
+// square tiles display YouTube's own square art (or fetched album art)
+// exactly as served — no client-side crop and no bar trimming — so a
+// cover that ships with its own black border keeps it. Decode work runs
+// on worker isolates and nothing decoded is retained in memory.
 
 import 'dart:async';
 import 'dart:convert';
@@ -21,15 +20,32 @@ import '../../sys/paths.dart';
 
 const maxFailureKeys = 2000;
 
-/// Consecutive download failures before a URL is skipped.
-const maxFailures = 3;
+/// Consecutive download failures before a URL is skipped. Each failure
+/// is already the end of a retry ladder ([newResilientClient] retries
+/// transient statuses and transport blips several times), so this is
+/// the last resort: a url must fail its whole budget this many times
+/// before the session stops trying it. Cleared by `clearCache`.
+const maxFailures = 5;
 
-/// Rewrites a thumbnail URL to request a ~540px cover, preserving the
-/// source aspect ratio. Forcing a square box (`=w540-h540`) makes the
-/// image service letterbox/crop non-square art server-side before we ever
-/// see the true rectangle — which crops too close. Keeping the ratio
-/// means a non-square thumbnail arrives non-square, and the client-side
-/// center-square (as tall as the thumbnail) decides the crop instead.
+/// `maxresdefault.jpg` guess for `i.ytimg.com` video stills: the Data
+/// API often lists only `hqdefault` (480px) while the 1280px still
+/// exists. Tried first, original kept as fallback (a 404 lands as a
+/// normal response and falls through the same null path).
+String? maxResGuess(String url) {
+  final m = RegExp(r'https://i\.ytimg\.com/vi/([^/]+)/').firstMatch(url);
+  if (m == null || url.contains('maxresdefault')) return null;
+  return 'https://i.ytimg.com/vi/${m.group(1)}/maxresdefault.jpg';
+}
+
+/// Rewrites a thumbnail URL to request a ~1080px cover, preserving the
+/// source aspect ratio (the server clamps to the original when it is
+/// smaller, so this never invents pixels). Tiles decode up to
+/// 360px×devicePixelRatio, and anything smaller upscales into grain.
+/// Forcing a square box (`=w540-h540`) makes the image service
+/// letterbox/crop non-square art server-side before we ever see the
+/// true rectangle — which crops too close. Keeping the ratio means a
+/// non-square thumbnail arrives non-square, and callers pick a true
+/// square (YouTube square art or album art) instead.
 String upgradeArt(String url) {
   final re = RegExp(r'=w(\d+)-h(\d+)([^?]*)$');
   final m = re.firstMatch(url);
@@ -37,7 +53,7 @@ String upgradeArt(String url) {
   final w = int.tryParse(m.group(1) ?? '') ?? 0;
   final h = int.tryParse(m.group(2) ?? '') ?? 0;
   if (w <= 0 || h <= 0) return url;
-  const target = 540;
+  const target = 1080;
   final nh = ((target * h) / w).round().clamp(1, 1 << 31);
   final suffix = m.group(3) ?? '';
   return url.replaceRange(m.start, m.end, '=w$target-h$nh$suffix');
@@ -45,6 +61,10 @@ String upgradeArt(String url) {
 
 String _originalArt(String url) =>
     url.replaceAll(RegExp(r'=w\d+-h\d+[^?]*'), '');
+
+/// PNG signature, followed by an 8-byte chunk header: the IHDR width and
+/// height are two big-endian 32-bit values at bytes 16..24.
+const _pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
 /// Rewrites Google image size params up to [targetWidth]; never downscales.
 String upscaleArtworkUrl(String url, int targetWidth) {
@@ -73,111 +93,16 @@ bool looksComplete(List<int> bytes) {
 
 String _sha1Hex(String url) => sha1.convert(utf8.encode(url)).toString();
 
-/// Centered-square crop as an owned buffer: for a non-square thumbnail the
-/// square is as tall as the thumbnail (landscape) or as wide (portrait),
-/// centered on the larger axis — the `crop=min(iw,ih)` centre crop. Square
-/// thumbnails are returned unchanged.
-/// `copyCrop` copies pixels, so the source frame is droppable and offcuts
-/// never sit in memory.
-///
-/// Runs after [removeLetterbox] in the decode path (see [_decode]), so by
-/// the time the geometry applies, baked-in black bars are already gone
-/// and this stays a pure centre crop.
-img.Image centerSquare(img.Image src) {
-  final w = src.width;
-  final h = src.height;
-  if (w <= 0 || h <= 0 || w == h) return src.clone();
-  if (w > h) {
-    return img.copyCrop(src, x: (w - h) ~/ 2, y: 0, width: h, height: h);
-  }
-  return img.copyCrop(src, x: 0, y: (h - w) ~/ 2, width: w, height: w);
-}
-
-img.Image? _decode(List<int> bytes, {bool cropSquare = true}) {
-  img.Image? decoded;
+/// Decodes image bytes exactly as served — no client-side crop and no
+/// bar trimming. A cover that ships with its own black frame (square
+/// art with a printed border) keeps it; tiles show YouTube's own square
+/// art as-is rather than cropping it.
+img.Image? _decode(List<int> bytes) {
   try {
-    decoded = img.decodeImage(Uint8List.fromList(bytes));
+    return img.decodeImage(Uint8List.fromList(bytes));
   } catch (_) {
     return null;
   }
-  if (decoded == null) return null;
-  return cropSquare ? centerSquare(removeLetterbox(decoded)) : decoded;
-}
-
-/// Near-black channel ceiling for bar detection. YouTube bars are pure
-/// black; a small tolerance absorbs JPEG ringing at the seam.
-const _barBlackCeiling = 10;
-
-/// Minimum share of sampled pixels reading near-black for a row or
-/// column to count as bar.
-const _barUniformity = 0.98;
-
-/// Minimum surviving fraction per axis: an all-black cover keeps its
-/// frame instead of collapsing to nothing.
-const _barMinRetain = 0.5;
-
-/// Strips baked-in letterbox/pillarbox bars (black bands facing each
-/// other) so masked-as-square frames resolve to their content box.
-/// Conservative by design: single-edge darkness (vignettes, fades)
-/// never trims, content above the black ceiling never counts, and the
-/// surviving box must keep at least half of each axis. A genuinely
-/// black cover therefore passes through untouched.
-img.Image removeLetterbox(img.Image src) {
-  final w = src.width;
-  final h = src.height;
-  if (w <= 0 || h <= 0) return src;
-  bool dark(int x, int y) {
-    final px = src.getPixel(x, y);
-    if (px.a.toInt() < 128) return false;
-    return px.r.toInt() <= _barBlackCeiling &&
-        px.g.toInt() <= _barBlackCeiling &&
-        px.b.toInt() <= _barBlackCeiling;
-  }
-
-  // A row/column counts as bar when ~every sampled pixel is black;
-  // ~64 samples per line regardless of size.
-  bool lineDark(bool horizontal, int fixed, int len) {
-    var step = len ~/ 64;
-    if (step < 1) step = 1;
-    var darks = 0;
-    var total = 0;
-    for (var i = 0; i < len; i += step) {
-      total++;
-      if (horizontal ? dark(i, fixed) : dark(fixed, i)) darks++;
-    }
-    return total > 0 && darks / total >= _barUniformity;
-  }
-
-  var top = 0;
-  while (top < h && lineDark(true, top, w)) {
-    top++;
-  }
-  var bottom = 0;
-  while (bottom < h - top && lineDark(true, h - 1 - bottom, w)) {
-    bottom++;
-  }
-  var left = 0;
-  while (left < w && lineDark(false, left, h)) {
-    left++;
-  }
-  var right = 0;
-  while (right < w - left && lineDark(false, w - 1 - right, h)) {
-    right++;
-  }
-  // Bars must face each other.
-  final vertical = top > 0 && bottom > 0;
-  final horizontal = left > 0 && right > 0;
-  if (!vertical && !horizontal) return src;
-  final x0 = horizontal ? left : 0;
-  final x1 = horizontal ? w - right : w;
-  final y0 = vertical ? top : 0;
-  final y1 = vertical ? h - bottom : h;
-  if (x1 - x0 < (w * _barMinRetain).ceil() ||
-      y1 - y0 < (h * _barMinRetain).ceil()) {
-    return src;
-  }
-  if (x0 == 0 && y0 == 0 && x1 == w && y1 == h) return src;
-  return img.copyCrop(src, x: x0, y: y0, width: x1 - x0, height: y1 - y0);
 }
 
 /// Cover palette for tinted backdrops: average colors of a
@@ -186,9 +111,8 @@ img.Image removeLetterbox(img.Image src) {
 /// to 25 points so the wash can follow the whole artwork.
 /// Null when the image is empty.
 ///
-/// The sampling window is inset from the edges: border,
-/// vignette and letterbox-remnant pixels would otherwise
-/// dominate the outer rows and columns.
+/// The sampling window is inset from the edges: border and vignette
+/// pixels would otherwise dominate the outer rows and columns.
 List<(int, int, int)>? coverBands(img.Image src) {
   if (src.width <= 0 || src.height <= 0) return null;
   const size = 48;
@@ -229,9 +153,9 @@ List<(int, int, int)>? coverBands(img.Image src) {
 }
 
 /// Job kinds for the persistent artwork workers.
-const _jobSquare = 0;
+const _jobImage = 0;
 const _jobBanner = 1;
-const _jobCropPng = 2;
+const _jobTilePng = 2;
 
 /// Persistent worker main: one warm isolate per pool, listening for jobs
 /// and replying on each job's own reply port. Spawned once and reused,
@@ -246,14 +170,13 @@ void _workerMain(List<dynamic> args) {
     final SendPort replyTo = job[0] as SendPort;
     final Uint8List bytes = job[1] as Uint8List;
     try {
-      switch (kind) {
-        case _jobBanner:
-          replyTo.send(_decode(bytes, cropSquare: false));
-        case _jobCropPng:
-          final rendered = _decode(bytes);
-          replyTo.send(rendered == null ? null : img.encodePng(rendered));
-        default:
-          replyTo.send(_decode(bytes));
+      // Banner and tile jobs share one decode (full frame, never
+      // cropped or trimmed); only the reply encoding differs.
+      final rendered = _decode(bytes);
+      if (kind == _jobTilePng) {
+        replyTo.send(rendered == null ? null : img.encodePng(rendered));
+      } else {
+        replyTo.send(rendered);
       }
     } catch (_) {
       replyTo.send(null);
@@ -329,14 +252,14 @@ class _ArtPool {
 /// Pure-Dart artwork pipeline: integrity-checked disk cache with
 /// failure tracking. Decoded bitmaps are never retained in memory —
 /// Flutter's image cache plus the on-disk renders are the caches, and all
-/// decode/crop work runs on worker isolates.
+/// decode work runs on worker isolates.
 class ArtworkStore {
   ArtworkStore({Dio? dio, String? cacheDirPath})
-    : _dio = dio ?? newHttpClient(),
+    : _dio = dio ?? newResilientClient(),
       _dirPath = cacheDirPath ?? '${cacheDir().path}/art2',
-      _squarePool = _ArtPool(_jobSquare),
+      _imagePool = _ArtPool(_jobImage),
       _bannerPool = _ArtPool(_jobBanner),
-      _cropPool = _ArtPool(_jobCropPng) {
+      _tilePool = _ArtPool(_jobTilePng) {
     // Ensure directory exists - use sync for constructor, but this is fine
     // as it only happens once during initialization
     Directory(_dirPath).createSync(recursive: true);
@@ -348,20 +271,20 @@ class ArtworkStore {
   final Map<String, int> _sourceFailures = {};
   final Map<String, Future<dynamic>> _inflight = {};
 
-  final _ArtPool _squarePool;
+  final _ArtPool _imagePool;
   final _ArtPool _bannerPool;
-  final _ArtPool _cropPool;
+  final _ArtPool _tilePool;
 
   /// Shuts down the HTTP client and the worker pools. In-flight jobs
   /// fail fast; call once at app/test teardown.
   void close() {
     _dio.close();
-    _squarePool.dispose();
+    _imagePool.dispose();
     _bannerPool.dispose();
-    _cropPool.dispose();
+    _tilePool.dispose();
   }
 
-  /// Deletes every cached artwork file (raw bytes and rendered crops) so
+  /// Deletes every cached artwork file (raw bytes and tile renders) so
   /// the next display re-downloads and re-renders from scratch. Also
   /// resets the failure skip-lists and the banner memo: without this,
   /// previously-failed URLs would stay skipped and banners would keep
@@ -385,18 +308,18 @@ class ArtworkStore {
     } catch (_) {}
   }
 
-  // `.img3`/`.crop5`: bump to invalidate the artwork cache — previously
-  // cached bytes/renders (from earlier crop-logic experiments) are
-  // re-fetched and re-rendered with the current pipeline. crop5 adds
-  // letterbox stripping to the render, so pre-fix crops (with baked-in
-  // black bars, e.g. in playlist collages) must not be reused.
-  String _rawFile(String url) => '$_dirPath/${_sha1Hex(url)}.img3';
-  String _sourceFile(String url) => '$_dirPath/${_sha1Hex(url)}.source3.img';
+  // `.img4`/`.tile7`: bump to invalidate the artwork cache — previously
+  // cached bytes/renders are re-fetched and re-rendered with the
+  // current pipeline. img4 fetches higher-resolution sources for
+  // HiDPI tiles; tile7 stores the whole frame with no client-side crop
+  // or bar trimming (a cover's own black border is kept).
+  String _rawFile(String url) => '$_dirPath/${_sha1Hex(url)}.img4';
+  String _sourceFile(String url) => '$_dirPath/${_sha1Hex(url)}.source4.img';
 
-  /// On-disk path of the finished square crop for [url]. Stable
+  /// On-disk path of the finished tile render for [url]. Stable
   /// across launches (content hash), so tiles, player and MPRIS share
   /// one render instead of each decoding.
-  String croppedFilePath(String url) => '$_dirPath/${_sha1Hex(url)}.crop5.png';
+  String tileFilePath(String url) => '$_dirPath/${_sha1Hex(url)}.tile7.png';
 
   void _noteFailure(Map<String, int> failures, String url) {
     failures[url] = (failures[url] ?? 0) + 1;
@@ -461,6 +384,10 @@ class ArtworkStore {
             options: Options(responseType: ResponseType.bytes),
           )
           .timeout(const Duration(seconds: 30));
+      // Error pages (404 HTML and friends) must not pass as art: the
+      // download chain falls through to the next candidate instead.
+      final contentType = res.headers.value('content-type') ?? '';
+      if (contentType.startsWith('text/')) return null;
       final bytes = res.data;
       if (bytes != null && bytes.length > 100 && looksComplete(bytes)) {
         return bytes;
@@ -472,6 +399,11 @@ class ArtworkStore {
   }
 
   Future<List<int>?> _download(String url) async {
+    final guess = maxResGuess(url);
+    if (guess != null) {
+      final bytes = await _tryDownload(guess);
+      if (bytes != null) return bytes;
+    }
     final upgraded = upgradeArt(url);
     if (upgraded != url) {
       final bytes = await _tryDownload(upgraded);
@@ -480,9 +412,10 @@ class ArtworkStore {
     return _tryDownload(url);
   }
 
-  /// Decoded square cover for [url], downloading and caching on miss.
-  /// Decode runs on a worker isolate; nothing decoded is retained.
-  /// Uses async file operations to prevent UI thread blocking.
+  /// Decoded cover for [url] (whole frame, uncropped), downloading and
+  /// caching on miss. Decode runs on a worker isolate; nothing decoded
+  /// is retained. Uses async file operations to prevent UI thread
+  /// blocking.
   Future<img.Image?> image(String url) {
     if (url.trim().isEmpty) return Future.value();
     if ((_failures[url] ?? 0) >= maxFailures) return Future.value();
@@ -497,7 +430,7 @@ class ArtworkStore {
         await _writeAtomicallyAsync(_rawFile(url), bytes);
       }
       try {
-        return await _squarePool.run<img.Image>(Uint8List.fromList(bytes));
+        return await _imagePool.run<img.Image>(Uint8List.fromList(bytes));
       } catch (_) {
         return null;
       }
@@ -563,23 +496,29 @@ class ArtworkStore {
   }
 
   Future<List<int>?> _downloadSource(String url) async {
-    for (final candidate in [
+    final candidates = <String>[
       upscaleArtworkUrl(url, 1920),
       url,
       _originalArt(url),
-    ]) {
+    ];
+    final guess = maxResGuess(url);
+    if (guess != null) candidates.insert(0, guess);
+    // Deduplicate while preserving order (upgrades can no-op).
+    final seen = <String>{};
+    for (final candidate in candidates) {
+      if (!seen.add(candidate)) continue;
       final bytes = await _tryDownload(candidate);
       if (bytes != null) return bytes;
     }
     return null;
   }
 
-  /// Stable cropped PNG file for [url], rendering on first use.
+  /// Stable whole-frame render for [url], rendering on first use.
   /// Uses async file operations to prevent UI thread blocking.
   Future<File?> file(String url) {
     if (url.trim().isEmpty) return Future.value();
     return _keyed('file:$url', () async {
-      final target = File(croppedFilePath(url));
+      final target = File(tileFilePath(url));
       try {
         if (await target.exists() && await target.length() > 0) {
           return target;
@@ -596,7 +535,7 @@ class ArtworkStore {
       }
       Uint8List? png;
       try {
-        png = await _cropPool.run<Uint8List>(Uint8List.fromList(bytes));
+        png = await _tilePool.run<Uint8List>(Uint8List.fromList(bytes));
       } catch (_) {
         png = null;
       }
@@ -612,14 +551,48 @@ class ArtworkStore {
     });
   }
 
-  /// Cropped file only if already rendered on disk.
+  /// Whole-frame render only if already rendered on disk.
   /// Uses async file check to prevent UI thread blocking.
   Future<File?> cachedFile(String url) async {
     if (url.trim().isEmpty) return null;
     try {
-      final target = File(croppedFilePath(url));
+      final target = File(tileFilePath(url));
       if (await target.exists() && await target.length() > 0) return target;
       return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Pixel size of the rendered tile for [url], read from the PNG header
+  /// alone (24 bytes, no decode). Null when the render is missing or is
+  /// not a PNG.
+  ///
+  /// Cover-fit tiles need it: `BoxFit.cover` fills its box from a
+  /// non-square frame's *short* side, so decoding the frame at the box
+  /// width leaves the bitmap about `aspect` times too small and the fit
+  /// upscales it — a 16:9 video still in a square tile lands soft. With
+  /// the real size the tile can decode the long side wide enough for the
+  /// short side to cover the box, capped at the pixels the file has.
+  Future<(int, int)?> tileSize(String url) async {
+    if (url.trim().isEmpty) return null;
+    try {
+      final header = await File(tileFilePath(url))
+          .openRead(0, 24)
+          .fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+      if (header.length < 24) return null;
+      for (var i = 0; i < _pngSignature.length; i++) {
+        if (header[i] != _pngSignature[i]) return null;
+      }
+      int be32(int at) =>
+          (header[at] << 24) |
+          (header[at + 1] << 16) |
+          (header[at + 2] << 8) |
+          header[at + 3];
+      final width = be32(16);
+      final height = be32(20);
+      if (width <= 0 || height <= 0) return null;
+      return (width, height);
     } catch (_) {
       return null;
     }

@@ -1,15 +1,11 @@
 // Home screen ported from Kotlin `HomePanel`: greeting, mood chips,
 // personal quick picks, discover rail, and content shelves.
 
-import 'dart:math';
-
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
-import '../../core/innertube/gdata_api.dart';
-import '../../core/innertube/parse.dart';
 import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../theme.dart';
@@ -19,8 +15,11 @@ import '../widgets/loading_placeholders.dart';
 import '../widgets/rails.dart';
 import '../widgets/track_row.dart';
 
-/// Home screen with greeting, mood chips, personal quick picks, discover
-/// rail, and content shelves.
+/// Home screen with greeting, mood chips, the personal block (quick-picks
+/// grid + liked songs), and then the pinned sections: Discover, Listen
+/// Again, Forgotten favorites, New releases, Albums made for you and the
+/// remaining personalized feed rows, with the trending rows (the user's
+/// country, then worldwide) last.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -33,14 +32,14 @@ class HomeScreen extends StatelessWidget {
     final home = context.select<AppState, HomeUiState>((s) => s.home);
     final account = context.select<AppState, String?>((s) => s.account);
     final activity = context.select<AppState, List<Track>>((s) => s.activity);
-    final recentArtists = context.select<AppState, List<BrowseItem>>(
-      (s) => s.recentArtists,
+    // Reassigned (not mutated) on history import, so these selects
+    // fire and quick picks re-rank. Local bumps mutate in place but
+    // always ride with an activity reassignment, which rebuilds anyway.
+    final playCounts = context.select<AppState, Map<String, int>>(
+      (s) => s.playCounts,
     );
-    final artists = context.select<AppState, List<BrowseItem>>(
-      (s) => s.artists,
-    );
-    final playlists = context.select<AppState, List<GPlaylist>>(
-      (s) => s.playlists,
+    final historyTracks = context.select<AppState, List<Track>>(
+      (s) => s.historyTracks,
     );
     final discover = context.select<AppState, List<Track>>((s) => s.discover);
     final liked = context.select<AppState, List<Track>>((s) => s.liked);
@@ -60,41 +59,70 @@ class HomeScreen extends StatelessWidget {
         child: ErrorBox(message: home.error!, onRetry: () => state.loadHome()),
       );
     }
-    final pools = _buildPools(
+    final songs = rankPickSongs(
       activity: activity,
-      recentArtists: recentArtists,
-      artists: artists,
-      playlists: playlists,
+      liked: liked,
+      history: historyTracks,
+      counts: playCounts,
+      nonce: state.quickPicksNonce,
     );
     final showPersonalPicks =
-        account != null && (pools.songs.length + pools.nonSongs.length) >= 6;
-    final shelves = showPersonalPicks
-        ? home.shelves
-              .where((s) => s.title.toLowerCase() != 'quick picks')
-              .toList()
-        : home.shelves;
-    // Rows about the user first: shelves overlapping their history,
-    // liked songs, artists, or personalized mix seeds outrank generic
-    // editorial rows. Empty profile (signed out) preserves feed order.
+        account != null && (songs.length + pins.length) >= 6;
+    // Fixed home sections, sourced from the pinned feeds in section
+    // order: the personalized feed carries the user's own rows (Listen
+    // again, Forgotten favorites), Explore the stable editorial rails
+    // (New releases, Trending) and the Charts feed the worldwide chart.
+    // Placeholders while loading keep the layout from popping in.
+    final listenAgain = loading
+        ? _placeholderSongShelf()
+        : firstShelfWithTitle(home.shelves, const ['listen again']);
+    final forgotten = loading
+        ? _placeholderBrowseShelf()
+        : firstShelfWithTitle(home.shelves, const ['forgotten']);
+    final newReleases = loading
+        ? _placeholderBrowseShelf()
+        : firstShelfWithTitle(home.explore, const ['new album', 'new release']);
+    // The country row's feed shelf is region-derived, so its header names
+    // the country the Charts feed reports; before that lands (or when it
+    // is unknown) the shelf keeps its own name.
+    final trending = loading
+        ? _placeholderSongShelf()
+        : firstShelfWithTitle(home.explore, const ['trend']);
+    final trendingTitle = home.country == null
+        ? 'Trending'
+        : 'Trending in ${home.country}';
+    final globalTrending = loading
+        ? _placeholderSongShelf()
+        : home.globalTrending.isEmpty
+        ? null
+        : Shelf('', [for (final t in home.globalTrending) ShelfItem.song(t)]);
+    final recaps = loading
+        ? const <Shelf>[]
+        : [
+            for (final s in home.shelves)
+              if (s.title.toLowerCase().contains('recap')) s,
+          ];
+    // Everything not already pinned above renders after the fixed
+    // sections, still ranked so user-overlapping rows come first.
+    final leftovers = loading
+        ? const <Shelf>[]
+        : [
+            for (final s in home.shelves)
+              if (isLeftoverShelf(
+                s.title,
+                showingPersonalPicks: showPersonalPicks,
+              ))
+                s,
+          ];
     final rankedShelves = loading
-        ? _placeholderShelves()
-        : rankShelvesByProfile(
-            shelves,
-            trackIds: {
-              for (final t in activity) t.videoId,
-              for (final t in liked) t.videoId,
-            },
-            artistKeys: shelfArtistKeys(
-              artists: [...recentArtists, ...artists],
-              tracks: [...activity, ...liked],
-            ),
-          );
+        ? const <Shelf>[]
+        : state.rankedHomeShelves(leftovers);
     // The quick-picks grid keeps its skeleton until ITS data (account +
-    // library: activity/artists/playlists) is loaded — not just until the
-    // home shelves land — so it never shimmers, disappears, then pops in.
+    // library activity) is loaded — not just until the home shelves
+    // land — so it never shimmers, disappears, then pops in.
     // Only signed-in users get it.
     final gridLoading = loading || (account != null && libraryLoading);
-    final gridPools = gridLoading ? _skeletonPools() : pools;
+    final gridSongs = gridLoading ? _skeletonPicks() : songs;
     final showGrid = gridLoading ? account != null : showPersonalPicks;
     return Container(
       decoration: BoxDecoration(
@@ -128,8 +156,7 @@ class HomeScreen extends StatelessWidget {
             _moods(context, state),
             // Personal block next, no matter what: the quick-picks
             // grid + liked list (or the jump-back-in fallback on
-            // sparse accounts) always render above mixes, discover
-            // and shelves.
+            // sparse accounts) always render above the fixed sections.
             if (showGrid) ...[
               // Own skeleton scope: the grid keeps shimmering until its
               // own data (library) is ready, independent of the shelves.
@@ -141,7 +168,7 @@ class HomeScreen extends StatelessWidget {
                 child: _personal(
                   context,
                   state,
-                  gridPools,
+                  gridSongs,
                   pins: gridLoading ? const <ShelfItem>[] : pins,
                 ),
               ),
@@ -150,13 +177,44 @@ class HomeScreen extends StatelessWidget {
               _jumpBackIn(context, state),
               const SizedBox(height: 20),
             ],
-            _mixes(context, state, loading),
+            // Personal sections first, then the editorial and trending
+            // rows. Browsable shelves render as horizontal cover rails;
+            // song-only shelves render as columns of rows that scroll
+            // sideways, save for the ones asked to read as covers (see
+            // [_ShelfSection.songRail]).
             if (!loading && discover.isNotEmpty) ...[
               _discover(context, state),
               const SizedBox(height: 20),
             ],
+            if (listenAgain != null) ...[
+              _ShelfSection(shelf: listenAgain, title: 'Listen Again'),
+              const SizedBox(height: 20),
+            ],
+            if (forgotten != null) ...[
+              _ShelfSection(
+                shelf: forgotten,
+                title: 'Forgotten favorites',
+                songRail: true,
+              ),
+              const SizedBox(height: 20),
+            ],
+            if (newReleases != null) ...[
+              _ShelfSection(shelf: newReleases, title: 'New releases'),
+              const SizedBox(height: 20),
+            ],
+            _albumsMadeForYou(context, state, loading, recaps),
             for (final shelf in rankedShelves) ...[
               _ShelfSection(shelf: shelf),
+              const SizedBox(height: 20),
+            ],
+            // Trending closes the screen, country first: the region row
+            // Explore serves, then the worldwide chart.
+            if (trending != null) ...[
+              _ShelfSection(shelf: trending, title: trendingTitle),
+              const SizedBox(height: 20),
+            ],
+            if (globalTrending != null) ...[
+              _ShelfSection(shelf: globalTrending, title: 'Trending globally'),
               const SizedBox(height: 20),
             ],
           ],
@@ -165,128 +223,47 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  /// Builds the quick-picks source pools: recent songs and browsable
-  /// entries (recently played albums, followed artists, and playlists).
-  /// The grid interleaves them pseudo-randomly, filling every cell.
-  ({List<ShelfItem> songs, List<ShelfItem> nonSongs}) _buildPools({
-    required List<Track> activity,
-    required List<BrowseItem> recentArtists,
-    required List<BrowseItem> artists,
-    required List<GPlaylist> playlists,
-  }) {
-    final songs = <ShelfItem>[];
-    final seenTracks = <String>{};
-    for (final t in activity) {
-      if (t.videoId.isEmpty || !seenTracks.add(t.videoId)) continue;
-      songs.add(ShelfItem.song(t));
-    }
-
-    final nonSongs = <ShelfItem>[];
-    final seenBrowse = <String>{};
-    void addBrowse(String? id, ShelfItem Function() build) {
-      if (id == null || id.isEmpty || !seenBrowse.add(id)) return;
-      nonSongs.add(build());
-    }
-
-    // Recently played albums, derived from activity track credits.
-    // Singles are skipped: the song tile already covers them
-    // (see isSingleRelease). EPs and albums always stay.
-    for (final t in activity) {
-      final a = t.album;
-      if (a == null || a.browseId == null || a.browseId!.isEmpty) continue;
-      if (isSingleRelease(t)) continue;
-      addBrowse(
-        a.browseId,
-        () => ShelfItem.browse(
-          title: a.name,
-          subtitle: 'Album',
-          browseId: a.browseId!,
-          thumbnails: t.thumbnails.isNotEmpty
-              ? t.thumbnails
-              : const <Thumbnail>[],
-        ),
-      );
-    }
-
-    for (final b in [...recentArtists, ...artists]) {
-      addBrowse(b.browseId, () => b);
-    }
-
-    for (final pl in playlists.where((p) => p.id != '__liked')) {
-      addBrowse(pl.id, () {
-        final thumbs =
-            (pl.arts.isNotEmpty ? pl.arts : [if (pl.art != null) pl.art!])
-                .map((u) => Thumbnail(u))
-                .toList();
-        final owner = [
-          pl.owner,
-          '${pl.itemCount} songs',
-        ].where((s) => s.trim().isNotEmpty).join(' • ');
-        return ShelfItem.browse(
-          title: pl.title,
-          subtitle: owner,
-          browseId: pl.id,
-          thumbnails: thumbs,
-        );
-      });
-    }
-
-    return (songs: songs, nonSongs: nonSongs);
-  }
-
-  /// Placeholder source pools for the quick-picks grid while the personal
-  /// data loads, so the grid is skeletonized instead of popping in later.
-  ({List<ShelfItem> songs, List<ShelfItem> nonSongs}) _skeletonPools() {
-    return (
-      songs: [
-        for (var i = 0; i < 8; i++)
-          ShelfItem.song(
-            Track(
-              videoId: 'skeleton-song-$i',
-              title: 'Song title',
-              artists: const [],
-              thumbnails: const [],
-            ),
-          ),
-      ],
-      nonSongs: [
-        for (var i = 0; i < 6; i++)
-          ShelfItem.browse(
-            title: 'Album title',
-            subtitle: 'Artist name',
-            browseId: 'skeleton-browse-$i',
+  /// Placeholder quick-picks while the personal data loads, so the grid
+  /// is skeletonized instead of popping in later.
+  List<ShelfItem> _skeletonPicks() {
+    return [
+      for (var i = 0; i < 8; i++)
+        ShelfItem.song(
+          Track(
+            videoId: 'skeleton-song-$i',
+            title: 'Song title',
+            artists: const [],
             thumbnails: const [],
           ),
-      ],
-    );
-  }
-
-  /// Placeholder shelves rendered (skeletonized) while the home feed
-  /// loads, so the page shows a stable layout instead of a spinner followed
-  /// by content popping in. Replaced by the real shelves once loaded.
-  List<Shelf> _placeholderShelves() {
-    SongItem song(int i) => SongItem(
-      Track(
-        videoId: 'skeleton-$i',
-        title: 'Song title',
-        artists: const [],
-        thumbnails: const [],
-      ),
-    );
-    ShelfItem browse(int i) => ShelfItem.browse(
-      title: 'Album title',
-      subtitle: 'Artist name',
-      browseId: 'skeleton-b$i',
-      thumbnails: const [],
-    );
-    return [
-      // A vertical track-list shelf and two horizontal tile rails give a
-      // realistic skeleton of a typical feed.
-      Shelf('', [for (var i = 0; i < 5; i++) song(i)]),
-      Shelf('', [for (var i = 0; i < 6; i++) browse(i)]),
-      Shelf('', [for (var i = 0; i < 6; i++) song(10 + i)]),
+        ),
     ];
   }
+
+  /// Placeholder browse rail (6 cards) for a skeleton fixed section, so
+  /// the layout shows a stable cover rail instead of popping in later.
+  Shelf _placeholderBrowseShelf() => Shelf('', [
+    for (var i = 0; i < 6; i++)
+      ShelfItem.browse(
+        title: 'Album title',
+        subtitle: 'Artist name',
+        browseId: 'skeleton-b$i',
+        thumbnails: const [],
+      ),
+  ]);
+
+  /// Placeholder song shelf (10 rows) for a skeleton fixed section; the
+  /// row columns stack these as two columns of five rows.
+  Shelf _placeholderSongShelf() => Shelf('', [
+    for (var i = 0; i < 10; i++)
+      ShelfItem.song(
+        Track(
+          videoId: 'skeleton-$i',
+          title: 'Song title',
+          artists: const [],
+          thumbnails: const [],
+        ),
+      ),
+  ]);
 
   Widget _greeting(
     BuildContext context, {
@@ -381,29 +358,50 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  /// InnerTube's custom mixes (mood playlists plus personalized
-  /// seeds) lifted into one tap-to-play rail. Skeleton placeholders
-  /// while loading so the section never pops the layout.
-  Widget _mixes(BuildContext context, AppState state, bool loading) {
-    final items = loading
-        ? placeholderMixes
-        : AppState.mixesOfShelves(state.home.shelves);
-    if (items.isEmpty) return const SizedBox.shrink();
+  /// "Albums made for you": the feed's recaps (browsable, opens its
+  /// detail page) plus the user's mixes (tap to play), in one rail.
+  /// Skeleton mix placeholders while loading so the section never pops
+  /// the layout.
+  Widget _albumsMadeForYou(
+    BuildContext context,
+    AppState state,
+    bool loading,
+    List<Shelf> recaps,
+  ) {
+    final mixes = loading ? placeholderMixes : state.mixes;
+    final entries = <_MadeForYouEntry>[
+      for (final shelf in recaps)
+        for (final b in shelf.items.whereType<BrowseItem>())
+          _MadeForYouEntry(item: b),
+      for (final m in mixes)
+        _MadeForYouEntry(
+          item: BrowseItem(
+            title: m.title,
+            subtitle: m.subtitle,
+            browseId: m.browseId ?? '',
+            thumbnails: m.thumbnails,
+          ),
+          mix: m,
+        ),
+    ];
+    if (entries.isEmpty) return const SizedBox.shrink();
     return Column(
       children: [
         CardRail(
-          title: 'Mixed for you',
-          itemCount: items.length,
+          title: 'Albums made for you',
+          itemCount: entries.length,
           itemBuilder: (context, i) {
-            final item = items[i];
+            final entry = entries[i];
+            final mix = entry.mix;
             return BrowseCard(
-              item: BrowseItem(
-                title: item.title,
-                subtitle: item.subtitle,
-                browseId: item.browseId ?? '',
-                thumbnails: item.thumbnails,
-              ),
-              onTap: loading ? () {} : () => state.playMix(item),
+              item: entry.item,
+              onTap: () {
+                if (mix != null) {
+                  if (!loading) state.playMix(mix);
+                  return;
+                }
+                state.go(Screen.detail, detail: entry.item);
+              },
             );
           },
         ),
@@ -415,13 +413,13 @@ class HomeScreen extends StatelessWidget {
   Widget _personal(
     BuildContext context,
     AppState state,
-    ({List<ShelfItem> songs, List<ShelfItem> nonSongs}) pools, {
+    List<ShelfItem> songs, {
     List<ShelfItem> pins = const [],
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
-        final grid = _QuickPicksGrid(pools: pools, pins: pins);
+        final grid = _QuickPicksGrid(songs: songs, pins: pins);
         if (!wide) {
           // Narrow: liked list capped at 400px like Kotlin, scrolling inside.
           return Column(
@@ -443,10 +441,7 @@ class HomeScreen extends StatelessWidget {
             Expanded(
               flex: 100,
               child: SizedBox(
-                height: quickPicksHeight(
-                  gridW,
-                  pools.songs.length + pools.nonSongs.length,
-                ),
+                height: quickPicksHeight(gridW, songs.length + pins.length),
                 child: _LikedSideList(liked: state.liked),
               ),
             ),
@@ -517,31 +512,106 @@ double quickPicksHeight(double gridWidth, int pickCount) {
   return 48 + 8 + m.rows * m.tile;
 }
 
-/// True when [track]'s album tile would duplicate its song tile:
-/// only explicit Single releases. Same-named EPs and albums stay —
-/// they are genuinely different releases that happen to share the
-/// track's title.
-bool isSingleRelease(Track track) {
-  final album = track.album;
-  if (album == null) return false;
-  return album.kind == ReleaseKind.single;
+/// Quick-picks source pool in three tiers: replayed songs first
+/// (local or history play count above 1, any source), then recent
+/// songs played at most once, then older songs (liked or history
+/// tracks out of rotation here). Track objects come activity-first
+/// (freshest metadata), then liked, then history. Within each tier,
+/// tracks sort by `(_stableHash(videoId) ^ nonce)` — a stable
+/// pseudo-random order that varies per launch ([nonce] rotates)
+/// without re-dealing when the pool grows: newcomers slot in by
+/// hash rank while existing tiles keep their relative order, so
+/// background refreshes stop scrambling the grid. Capped at [cap]
+/// tracks. Pure for unit tests (also used by the grid tests).
+List<ShelfItem> rankPickSongs({
+  required List<Track> activity,
+  required List<Track> liked,
+  required List<Track> history,
+  required Map<String, int> counts,
+  int cap = 30,
+  int nonce = 0,
+}) {
+  final inActivity = <String>{for (final t in activity) t.videoId};
+  final seen = <String>{};
+  final replayed = <Track>[];
+  final recent = <Track>[];
+  final old = <Track>[];
+  void consider(Track t) {
+    if (t.videoId.isEmpty || !seen.add(t.videoId)) return;
+    if ((counts[t.videoId] ?? 0) > 1) {
+      replayed.add(t);
+    } else if (inActivity.contains(t.videoId)) {
+      recent.add(t);
+    } else {
+      old.add(t);
+    }
+  }
+
+  for (final t in activity) {
+    consider(t);
+  }
+  for (final t in liked) {
+    consider(t);
+  }
+  for (final t in history) {
+    consider(t);
+  }
+  int hashOrder(Track a, Track b) {
+    final c = (_stableHash(a.videoId) ^ nonce).compareTo(
+      _stableHash(b.videoId) ^ nonce,
+    );
+    return c != 0 ? c : a.videoId.compareTo(b.videoId);
+  }
+
+  replayed.sort(hashOrder);
+  recent.sort(hashOrder);
+  old.sort(hashOrder);
+  final ordered = [...replayed, ...recent, ...old].take(cap).toList();
+  return [for (final t in ordered) ShelfItem.song(t)];
 }
 
-/// Final quick-picks order: user pins first (pin order), then the
-/// rotating pools with pinned ids excluded so nothing repeats.
+/// Deterministic string hash (FNV-1a): unlike [String.hashCode],
+/// stable across runs and VMs, so tier orders (and their tests)
+/// don't depend on the runtime.
+int _stableHash(String s) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < s.length; i++) {
+    h ^= s.codeUnitAt(i);
+    h = (h * 0x01000193) & 0xffffffff;
+  }
+  return h;
+}
+
+/// Artwork identity for quick-picks diversity: the same cover is served
+/// at many sizes (`…=w60-h60-l90-rj` vs `…=w540-h540-…`), so the size
+/// suffix is stripped before comparing. Tracks without art key on
+/// their own id so they never collapse each other.
+String pickArtKey(Track track) {
+  final art = track.displayArtwork;
+  if (art == null || art.isEmpty) return 'id:${track.videoId}';
+  return art.replaceFirst(RegExp(r'=w\d+-h\d+.*$'), '');
+}
+
+/// Final quick-picks order: user pins first (pin order), then pool
+/// songs most-recent-first with same-cover tracks held back, then the
+/// held-back tracks to fill leftover slots. The grid therefore never
+/// shows the same cover twice unless sources run dry — and every tile
+/// is a song that plays on tap.
+///
+/// Per-launch variety comes from the ranked pool ([rankPickSongs]
+/// shuffles each tier with the session nonce); this function itself
+/// is deterministic.
 /// Pure for unit tests; the grid subscribes to the inputs.
-List<ShelfItem> buildQuickPickItems({
+List<ShelfItem> orderQuickPicks({
   required List<ShelfItem> pins,
   required List<ShelfItem> songs,
-  required List<ShelfItem> nonSongs,
   required int slots,
-  required Random rng,
 }) {
-  final seen = <String>{};
+  final seenIds = <String>{};
   bool fresh(ShelfItem item) {
     final k = AppState.pickKeyOf(item);
     if (k == null) return true;
-    return seen.add(k);
+    return seenIds.add(k);
   }
 
   final out = <ShelfItem>[];
@@ -551,83 +621,44 @@ List<ShelfItem> buildQuickPickItems({
     out.add(p);
   }
   if (out.length >= slots) return out;
-  out.addAll(
-    fillQuickPicks(
-      [
-        for (final s in songs)
-          if (fresh(s)) s,
-      ],
-      [
-        for (final n in nonSongs)
-          if (fresh(n)) n,
-      ],
-      slots - out.length,
-      rng: rng,
-    ),
-  );
-  return out;
-}
 
-/// Deterministic pseudo-random seed derived from the source identities, so
-/// the grid order is stable across rebuilds and only reshuffles when the
-/// underlying data changes. Callers mix in a per-launch nonce
-/// ([AppState.quickPicksNonce]) so separate app starts rotate.
-int _picksSeed(List<ShelfItem> songs, List<ShelfItem> nonSongs) {
-  var h = 17;
-  for (final item in songs) {
-    h = (h * 31 + (item as SongItem).track.videoId.hashCode) & 0x7fffffff;
-  }
-  for (final item in nonSongs) {
-    h = (h * 31 + (item as BrowseItem).browseId.hashCode) & 0x7fffffff;
-  }
-  return h;
-}
+  final pool = [
+    for (final s in songs)
+      if (fresh(s)) s,
+  ];
 
-/// Fills up to [slots] cells from [songs] and [nonSongs] in pseudo-random
-/// order, never placing two non-song entries (albums/artists/playlists)
-/// adjacent and never repeating an item. Both pools are consumed from the
-/// front (most recent first), so recent songs/albums/artists/playlists are
-/// preferred over older ones; if the pools run dry the grid simply shows
-/// what it has.
-List<ShelfItem> fillQuickPicks(
-  List<ShelfItem> songs,
-  List<ShelfItem> nonSongs,
-  int slots, {
-  required Random rng,
-}) {
-  final out = <ShelfItem>[];
-  var si = 0;
-  var ni = 0;
-  while (out.length < slots && (si < songs.length || ni < nonSongs.length)) {
-    final lastIsNon = out.isNotEmpty && out.last is BrowseItem;
-    final canNon = !lastIsNon && ni < nonSongs.length;
-    final canSong = si < songs.length;
-    // Prefer a non-song when allowed, but ~30% of the time keep the song
-    // run going for pseudo-randomness. A non-song is never placed directly
-    // after a non-song.
-    final takeNon = canNon && !(canSong && rng.nextDouble() < 0.3);
-    if (takeNon) {
-      out.add(nonSongs[ni++]);
-    } else if (canSong) {
-      out.add(songs[si++]);
-    } else if (canNon) {
-      out.add(nonSongs[ni++]);
-    } else {
-      break;
+  // Pinned covers count: a pool song sharing a pin's cover waits for
+  // the fill pass like any other duplicate.
+  final seenArt = <String>{
+    for (final p in out)
+      if (p is SongItem) pickArtKey(p.track),
+  };
+  final heldBack = <ShelfItem>[];
+  for (final item in pool) {
+    if (out.length >= slots) break;
+    if (item is SongItem && !seenArt.add(pickArtKey(item.track))) {
+      heldBack.add(item);
+      continue;
     }
+    out.add(item);
+  }
+  for (final item in heldBack) {
+    if (out.length >= slots) break;
+    out.add(item);
   }
   return out;
 }
 
-/// Responsive quick-picks grid: fills every cell of a 3-row grid (variable
-/// columns) with a pseudo-random mix of songs, albums, artists and
-/// playlists, keeping non-song entries apart.
+/// Responsive quick-picks grid: up to 3 rows of song tiles (variable
+/// columns), art-diverse so the same cover never shows twice, with
+/// user pins first. Play/shuffle follow the displayed order.
 class _QuickPicksGrid extends StatelessWidget {
-  const _QuickPicksGrid({required this.pools, this.pins = const []});
+  const _QuickPicksGrid({required this.songs, this.pins = const []});
 
-  final ({List<ShelfItem> songs, List<ShelfItem> nonSongs}) pools;
+  /// Recent songs, most recent first (duplicates already removed).
+  final List<ShelfItem> songs;
 
-  /// User pins, rendered ahead of the rotating pools. Empty while the
+  /// User pins, rendered ahead of the songs. Empty while the
   /// grid shows skeletons (pins never mix with placeholders).
   final List<ShelfItem> pins;
 
@@ -637,129 +668,126 @@ class _QuickPicksGrid extends StatelessWidget {
     final playingId = context.select<AppState, String?>(
       (s) => s.playerState.current?.videoId,
     );
-    final gridSongs = pools.songs
-        .whereType<SongItem>()
-        .map((e) => e.track)
-        .toList();
-    void open(ShelfItem item) {
-      if (item is SongItem) {
-        var idx = gridSongs.indexWhere((t) => t.videoId == item.track.videoId);
-        if (idx < 0) idx = 0;
-        state.playSongs(gridSongs, idx);
-      } else if (item is BrowseItem) {
-        final id = item.browseId;
-        if (id.startsWith('UC') || id.startsWith('MPRE')) {
-          // Artist (UC) or album (MPRE): both open the detail page.
-          state.go(Screen.detail, detail: item);
-        } else {
-          state.openPlaylistById(id);
-        }
-      }
-    }
-
-    Widget tile(ShelfItem item) {
-      if (item is SongItem) {
-        final t = item.track;
-        return QuickPickCard(
-          title: t.title,
-          subtitle: t.artistNames(),
-          art: t.displayArtwork,
-          playing: t.videoId == playingId,
-          onTap: () => open(item),
-        );
-      }
-      final b = item as BrowseItem;
-      final art = b.thumbnails.isEmpty
-          ? null
-          : b.thumbnails.reduce((a, c) => a.width >= c.width ? a : c).url;
-      return QuickPickCard(
-        title: b.title,
-        subtitle: b.subtitle,
-        art: art,
-        playing: false,
-        onTap: () => open(item),
-      );
-    }
-
-    Widget pickTile(ShelfItem item) {
-      Widget t = tile(item);
-      if (state.isPinned(item)) {
-        final scheme = Theme.of(context).colorScheme;
-        t = Stack(
-          children: [
-            t,
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.9),
-                ),
-                child: Icon(
-                  Icons.push_pin_rounded,
-                  size: 14,
-                  color: scheme.primary,
-                ),
-              ),
-            ),
-          ],
-        );
-      }
-      return GestureDetector(
-        onLongPress: () => state.togglePin(item),
-        child: t,
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Quick picks',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.play_arrow_rounded),
-              tooltip: 'Play quick picks',
-              onPressed: gridSongs.isEmpty
-                  ? null
-                  : () => state.playSongs(gridSongs, 0),
-            ),
-            IconButton(
-              icon: const Icon(Icons.shuffle_rounded),
-              tooltip: 'Shuffle quick picks',
-              onPressed: gridSongs.isEmpty
-                  ? null
-                  : () => state.playShuffled(gridSongs),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final sourceCount = pools.songs.length + pools.nonSongs.length;
-            final m = quickPickMetrics(constraints.maxWidth, sourceCount);
-            // Fill every available cell: pins first, then the pools.
-            // The per-launch nonce rotates the grid every app start;
-            // the data-derived seed keeps it steady within a session.
-            final picks = buildQuickPickItems(
-              pins: pins,
-              songs: pools.songs,
-              nonSongs: pools.nonSongs,
-              slots: m.shown,
-              rng: Random(
-                _picksSeed(pools.songs, pools.nonSongs) ^ state.quickPicksNonce,
-              ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final m = quickPickMetrics(constraints.maxWidth, songs.length);
+        // Pins first, then the ranked pool in order (per-launch
+        // variety already shuffled into it by rankPickSongs).
+        final picks = orderQuickPicks(pins: pins, songs: songs, slots: m.shown);
+        // Playback follows the displayed order (pins included).
+        final playList = [
+          for (final item in picks)
+            if (item is SongItem) item.track,
+        ];
+        void open(ShelfItem item) {
+          if (item is SongItem) {
+            var idx = playList.indexWhere(
+              (t) => t.videoId == item.track.videoId,
             );
+            if (idx < 0) idx = 0;
+            state.playSongs(playList, idx);
+          } else if (item is BrowseItem) {
+            final id = item.browseId;
+            if (id.startsWith('UC') || id.startsWith('MPRE')) {
+              // Artist (UC) or album (MPRE): both open the detail page.
+              state.go(Screen.detail, detail: item);
+            } else {
+              state.openPlaylistById(id);
+            }
+          }
+        }
+
+        Widget tile(ShelfItem item) {
+          if (item is SongItem) {
+            final t = item.track;
+            return QuickPickCard(
+              title: t.title,
+              subtitle: t.artistNames(),
+              art: t.displayArtwork,
+              squareCoverKey: t.videoId,
+              playing: t.videoId == playingId,
+              onTap: () => open(item),
+            );
+          }
+          // Pinned browsable entries (albums, artists, playlists).
+          final b = item as BrowseItem;
+          final art = b.thumbnails.isEmpty
+              ? null
+              : b.thumbnails.reduce((a, c) => a.width >= c.width ? a : c).url;
+          return QuickPickCard(
+            title: b.title,
+            subtitle: b.subtitle,
+            art: art,
+            playing: false,
+            onTap: () => open(item),
+          );
+        }
+
+        Widget pickTile(ShelfItem item) {
+          Widget t = tile(item);
+          if (state.isPinned(item)) {
+            final scheme = Theme.of(context).colorScheme;
+            t = Stack(
+              children: [
+                t,
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: scheme.surfaceContainerHighest.withValues(
+                        alpha: 0.9,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.push_pin_rounded,
+                      size: 14,
+                      color: scheme.primary,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+          return GestureDetector(
+            onLongPress: () => state.togglePin(item),
+            child: t,
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Quick picks',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  tooltip: 'Play quick picks',
+                  onPressed: playList.isEmpty
+                      ? null
+                      : () => state.playSongs(playList, 0),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.shuffle_rounded),
+                  tooltip: 'Shuffle quick picks',
+                  onPressed: playList.isEmpty
+                      ? null
+                      : () => state.playShuffled(playList),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             // Fixed height from the column count so the grid stays lazy:
             // a shrink-wrapped grid would build every tile eagerly.
-            return SizedBox(
+            SizedBox(
               height: m.rows * m.tile,
               child: GridView.builder(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -770,10 +798,10 @@ class _QuickPicksGrid extends StatelessWidget {
                 itemCount: picks.length,
                 itemBuilder: (context, i) => pickTile(picks[i]),
               ),
-            );
-          },
-        ),
-      ],
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -842,12 +870,61 @@ void _playShelfSong(AppState state, List<Track> songs, int index) {
   state.playSongs(songs, index);
 }
 
-/// One home shelf: song-only shelves as a track column, mixed shelves as
-/// a browse rail.
+/// One entry in the "Albums made for you" rail: a recap album (opens
+/// its detail page) or a mix (plays).
+class _MadeForYouEntry {
+  const _MadeForYouEntry({required this.item, this.mix});
+  final BrowseItem item;
+  final HomeMix? mix;
+}
+
+/// First shelf whose lowercased title contains one of [needles]
+/// (lowercased), in shelf order; null when nothing matches.
+Shelf? firstShelfWithTitle(List<Shelf> shelves, List<String> needles) {
+  for (final s in shelves) {
+    final t = s.title.toLowerCase();
+    for (final n in needles) {
+      if (t.contains(n)) return s;
+    }
+  }
+  return null;
+}
+
+/// Whether [title] is a leftover shelf (kept below the pinned fixed
+/// sections) rather than one already rendered above them. The feed's own
+/// "Quick picks" shelf is consumed only when the personal grid stands in
+/// for it ([showingPersonalPicks]).
+bool isLeftoverShelf(String title, {required bool showingPersonalPicks}) {
+  final t = title.toLowerCase();
+  if (t == 'quick picks') return !showingPersonalPicks;
+  return !(t.contains('listen again') ||
+      t.contains('forgotten') ||
+      t.contains('recap') ||
+      t.contains('new album') ||
+      t.contains('new release') ||
+      t.contains('trend') ||
+      t.contains('mix'));
+}
+
+/// One home shelf. Song-only shelves render as columns of rows (about
+/// five per column) that scroll sideways, keeping the section one screen
+/// tall — unless [songRail] asks for the cover treatment: shelves with
+/// browsables always render as a horizontal cover rail.
 class _ShelfSection extends StatelessWidget {
-  const _ShelfSection({required this.shelf});
+  const _ShelfSection({required this.shelf, this.title, this.songRail = false});
 
   final Shelf shelf;
+
+  /// Header override (the pinned sections use their own names); null
+  /// keeps the feed's own shelf title.
+  final String? title;
+
+  /// Render a song-only shelf as a horizontal rail of cover cards
+  /// instead of the multi-column row list. Sections that are a
+  /// collection of the user's own songs (Forgotten favorites) read
+  /// better as covers; long informational lists stay as rows.
+  final bool songRail;
+
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
@@ -859,31 +936,33 @@ class _ShelfSection extends StatelessWidget {
         .map((e) => e.track)
         .toList();
     final browses = shelf.items.whereType<BrowseItem>().toList();
+    final header = title ?? shelf.title;
     if (songs.isNotEmpty && browses.isEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              shelf.title,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+      if (songRail) {
+        return CardRail(
+          title: header,
+          itemCount: songs.length,
+          itemBuilder: (context, i) => TrackRailCard(
+            track: songs[i],
+            playing: songs[i].videoId == playingId,
+            onTap: () => _playShelfSong(state, songs, i),
           ),
-          for (var i = 0; i < songs.length; i++)
-            TrackRow(
-              track: songs[i],
-              playing: songs[i].videoId == playingId,
-              onPlay: () => _playShelfSong(state, songs, i),
-              rateable: true,
-              showPlaylists: true,
-            ),
-        ],
+        );
+      }
+      return TrackColumns(
+        title: header,
+        count: songs.length,
+        itemBuilder: (context, i) => TrackRow(
+          track: songs[i],
+          playing: songs[i].videoId == playingId,
+          onPlay: () => _playShelfSong(state, songs, i),
+          rateable: true,
+          showPlaylists: true,
+        ),
       );
     }
     return CardRail(
-      title: shelf.title,
-      trailing: M3ETextButton(onPressed: () {}, child: const Text('Altro')),
+      title: header,
       itemCount: shelf.items.length,
       itemBuilder: (context, i) {
         final item = shelf.items[i];

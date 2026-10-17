@@ -70,16 +70,16 @@ class _SlowTube extends _FakeTube {
   }
 }
 
-/// Fake backend where only `q2` is liked server-side, exercising the
-/// Up Next batch stamp without network.
+/// Fake backend where only `q2` is liked server-side and only `q2`
+/// reports a length in its watch-next read, so both halves of the Up Next
+/// metadata pass (like states + lengths) are exercised without network.
 class _QueueStampTube extends _FakeTube {
   @override
-  Future<Map<String, RatingStatus>> ratings(
-    List<String> videoIds, {
-    int concurrency = 8,
-  }) async => {
+  Future<Map<String, ({RatingStatus rating, Map<String, int> durations})>>
+  watchInfos(List<String> videoIds, {int concurrency = 8}) async => {
     for (final id in videoIds)
-      if (id == 'q2') id: RatingStatus.like,
+      if (id == 'q2')
+        id: (rating: RatingStatus.like, durations: const {'q2': 245}),
   };
 }
 
@@ -166,7 +166,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('up next queue gets batch-stamped with like states', (
+  testWidgets('up next queue gets batch-stamped with like states and lengths', (
     tester,
   ) async {
     final tube = _QueueStampTube();
@@ -175,7 +175,7 @@ void main() {
     final state = await _boot(tester, tube);
     state.player.playTracks([
       const Track(videoId: 'q1', title: 'One', durationSec: 200),
-      const Track(videoId: 'q2', title: 'Two', durationSec: 200),
+      const Track(videoId: 'q2', title: 'Two'),
     ]);
     // Drain the stamp chain: player stream -> batch fetch -> restamp.
     for (var i = 0; i < 5; i++) {
@@ -184,8 +184,13 @@ void main() {
     expect(state.player.state.queue.length, 2);
     // q1 (current): single-read path reports indifferent…
     expect(state.player.state.queue[0].rating, RatingStatus.indifferent);
-    // …while q2 (up next) is batch-stamped liked.
+    // …while q2 (up next) is batch-stamped liked…
     expect(state.player.state.queue[1].rating, RatingStatus.like);
+    // …and its length rides along on that same read (list rows like home
+    // shelves carry none at all, so unplayed rows would read blank).
+    expect(state.player.state.queue[1].durationSec, 245);
+    // A row that already knows its length keeps it.
+    expect(state.player.state.queue[0].durationSec, 200);
     state.player.dispose();
     await tester.pump();
   });

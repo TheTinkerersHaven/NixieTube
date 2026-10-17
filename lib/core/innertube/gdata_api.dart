@@ -102,7 +102,10 @@ class GDataApi {
   String? _thumbOf(Map? parent) {
     final thumbs = parent?['thumbnails'];
     if (thumbs is! Map) return null;
-    for (final size in ['high', 'medium', 'standard', 'default', 'maxres']) {
+    // Biggest first: maxres exists only when published, and a 480px
+    // high thumb upscaled into a 170px tile is where the grain came
+    // from. Missing sizes fall through to whatever is published.
+    for (final size in ['maxres', 'standard', 'high', 'medium', 'default']) {
       final sizeObj = thumbs[size];
       if (sizeObj is Map) {
         final url = sizeObj['url'];

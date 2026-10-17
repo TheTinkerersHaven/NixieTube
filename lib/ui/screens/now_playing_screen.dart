@@ -308,6 +308,15 @@ class _TransportColumnState extends State<_TransportColumn> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (track.explicit)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(
+                        Icons.explicit,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   for (var i = 0; i < track.artists.length; i++) ...[
                     InkWell(
                       onTap: () {
@@ -318,12 +327,19 @@ class _TransportColumnState extends State<_TransportColumn> {
                         padding: const EdgeInsets.symmetric(horizontal: 2),
                         child: Text(
                           track.artists[i].name,
+                          textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.bodyLarge,
                         ),
                       ),
                     ),
                     if (i != track.artists.length - 1)
-                      Text('•', style: Theme.of(context).textTheme.bodyLarge),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          '•',
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      ),
                   ],
                 ],
               ),
@@ -339,6 +355,7 @@ class _TransportColumnState extends State<_TransportColumn> {
                 child: Text(
                   track.album!.name,
                   style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
                 ),
               ),
             ),
@@ -1010,7 +1027,13 @@ class _LyricsTabState extends State<_LyricsTab> {
             ),
           ],
         ),
-        Expanded(child: _LyricsBody(ctrl: _ctrl, large: false)),
+        Expanded(
+          child: _LyricsBody(
+            ctrl: _ctrl,
+            large: false,
+            tabIndex: _LyricsBody.lyricsTabIndex,
+          ),
+        ),
       ],
     );
   }
@@ -1021,10 +1044,19 @@ class _LyricsTabState extends State<_LyricsTab> {
 /// the loaded list, so content reveals in place), the synced
 /// list when loaded, a static note when nothing was found.
 class _LyricsBody extends StatelessWidget {
-  const _LyricsBody({required this.ctrl, required this.large});
+  const _LyricsBody({required this.ctrl, required this.large, this.tabIndex});
 
   final ScrollController ctrl;
   final bool large;
+
+  /// Tab strip index this instance lives on, when inside the tab
+  /// strip — [lyricsTabIndex] for the Lyrics tab, null in the
+  /// fullscreen view (which always follows playback).
+  final int? tabIndex;
+
+  /// Index of the lyrics tab in the Now Playing tab strip
+  /// (Up next 0, Lyrics 1, Info 2).
+  static const int lyricsTabIndex = 1;
 
   @override
   Widget build(BuildContext context) {
@@ -1041,6 +1073,7 @@ class _LyricsBody extends StatelessWidget {
           positionMs: 0,
           state: state,
           large: large,
+          visibleTabIndex: tabIndex,
         ),
       );
     }
@@ -1066,6 +1099,7 @@ class _LyricsBody extends StatelessWidget {
           positionMs: positionMs,
           state: state,
           large: large,
+          visibleTabIndex: tabIndex,
         );
       },
     );
@@ -1176,6 +1210,14 @@ class _InfoTab extends StatelessWidget {
     final shownMs = durationMs > 0
         ? durationMs
         : (track.durationSec > 0 ? track.durationSec * 1000 : 0);
+    // Opt-in link underlines (accessibility): off by default, links
+    // stay plain primary-colored text.
+    final underlineLinks = context.select<AppState, bool>(
+      (s) => s.config.underlineLinks,
+    );
+    final linkDecoration = underlineLinks
+        ? TextDecoration.underline
+        : TextDecoration.none;
     Widget row(String label, String value, {VoidCallback? onTap}) {
       final scheme = Theme.of(context).colorScheme;
       return Column(
@@ -1198,7 +1240,7 @@ class _InfoTab extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: onTap != null ? scheme.primary : scheme.onSurface,
                       decoration: onTap != null
-                          ? TextDecoration.underline
+                          ? linkDecoration
                           : TextDecoration.none,
                     ),
                   ),
@@ -1249,7 +1291,7 @@ class _InfoTab extends StatelessWidget {
                                       color: Theme.of(context)
                                           .colorScheme
                                           .primary,
-                                      decoration: TextDecoration.underline,
+                                      decoration: linkDecoration,
                                     ),
                               ),
                             ),

@@ -86,11 +86,20 @@ class AppShell extends StatelessWidget {
                       child: Stack(
                         children: [
                           Column(children: [Expanded(child: _Body())]),
+                          // Banners overlay the content (never push the
+                          // layout), stacked so session + backend notes
+                          // can show together.
                           Positioned(
                             top: 0,
                             left: 0,
                             right: 0,
-                            child: _SessionBanner(),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                _SessionBanner(),
+                                _AudioBackendBanner(),
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -227,6 +236,47 @@ class _SessionBanner extends StatelessWidget {
             child: Text(
               'Sign in',
               style: TextStyle(color: scheme.onErrorContainer),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Persistent notice that the native audio backend failed the startup
+/// probe (missing mpv): playback refuses to start with this
+/// explanation instead of hanging. Overlays the content like
+/// [_SessionBanner].
+class _AudioBackendBanner extends StatelessWidget {
+  const _AudioBackendBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final unavailable = context.select<AppState, bool>(
+      (s) => s.audioBackendUnavailable,
+    );
+    if (!unavailable) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: scheme.errorContainer,
+      child: Row(
+        children: [
+          Icon(
+            Icons.volume_off_rounded,
+            size: 20,
+            color: scheme.onErrorContainer,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Playback unavailable — the audio engine (mpv) is '
+              'missing. Install mpv for your distribution, then '
+              'restart NixieTube.',
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: scheme.onErrorContainer),
             ),
           ),
         ],

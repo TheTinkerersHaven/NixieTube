@@ -1,8 +1,10 @@
 // Dynamically rendered app icon: the M3 Expressive 4-sided cookie
 // shape (same SVG path data as [Shapes.c4SidedCookie]) filled with
-// the app's primary color and a rounded play glyph in on-primary.
+// the app's primary color and a center transport glyph in on-primary:
+// pause bars while playing, the rounded play triangle while paused.
 // Rendered for the tray icon and the window icon, and re-rendered
-// whenever the theme changes, so both always match the app.
+// whenever the theme or transport state changes, so both always match
+// the app.
 
 import 'dart:math' show max, min;
 import 'dart:typed_data' show Uint8List;
@@ -14,7 +16,9 @@ import 'dart:ui'
         Offset,
         Paint,
         Path,
-        PictureRecorder;
+        PictureRecorder,
+        RRect,
+        Radius;
 
 import 'package:m3e_core/m3e_core.dart' show Shapes;
 
@@ -141,10 +145,36 @@ Path _roundedPlay(double size, double radius) {
   return path;
 }
 
-/// Renders the cookie app icon at [size] pixels.
+/// Pause bars with fully rounded ends (same corner radius as the
+/// play glyph), in unit coordinates scaled by [size] around the tile
+/// center. Drawn when the player is playing; the play triangle shows
+/// when paused so the tray icon mirrors the transport state.
+Path _roundedPause(double size, double radius) {
+  final path = Path();
+  const barW = 0.11;
+  const gap = 0.09;
+  const halfH = 0.17;
+  for (final cx in [0.5 - gap / 2 - barW / 2, 0.5 + gap / 2 + barW / 2]) {
+    path.addRRect(
+      RRect.fromLTRBR(
+        size * (cx - barW / 2),
+        size * (0.5 - halfH),
+        size * (cx + barW / 2),
+        size * (0.5 + halfH),
+        Radius.circular(radius),
+      ),
+    );
+  }
+  return path;
+}
+
+/// Renders the cookie app icon at [size] pixels. The center glyph
+/// mirrors the transport state: pause bars while playing, the play
+/// triangle while paused.
 Future<Uint8List> renderTrayIcon({
   required Color background,
   required Color foreground,
+  required bool playing,
   int size = 64,
 }) async {
   final recorder = PictureRecorder();
@@ -162,10 +192,12 @@ Future<Uint8List> renderTrayIcon({
   canvas.scale(scale);
   canvas.drawPath(src, Paint()..color = background);
   canvas.restore();
-  // Centered rounded play glyph, filled (corners are geometry,
-  // not strokes, so it stays crisp at tray sizes).
+  // Center glyph, filled (corners are geometry, not strokes, so
+  // it stays crisp at tray sizes).
   canvas.drawPath(
-    _roundedPlay(size.toDouble(), size * 0.055),
+    playing
+        ? _roundedPause(size.toDouble(), size * 0.055)
+        : _roundedPlay(size.toDouble(), size * 0.055),
     Paint()..color = foreground,
   );
   final picture = recorder.endRecording();

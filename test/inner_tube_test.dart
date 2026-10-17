@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/innertube/auth_session.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
+import 'package:nixietube/core/models/models.dart';
 
 import 'mock_dio.dart';
 
@@ -117,6 +118,77 @@ void main() {
     });
   });
 
+  group('explore feed', () {
+    Map<String, dynamic> shelf(String title, String videoId) => {
+      'musicCarouselShelfRenderer': {
+        'header': {
+          'musicCarouselShelfBasicHeaderRenderer': {
+            'title': {
+              'runs': [
+                {'text': title},
+              ],
+            },
+          },
+        },
+        'contents': [
+          {
+            'musicTwoRowItemRenderer': {
+              'title': {
+                'runs': [
+                  {'text': 'Song $videoId'},
+                ],
+              },
+              'navigationEndpoint': {
+                'watchEndpoint': {'videoId': videoId},
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    test('requests FEmusic_explore and parses its shelves', () async {
+      Map<String, dynamic>? sent;
+      final client = mockDio((options) async {
+        sent = jsonDecode(options.data as String) as Map<String, dynamic>;
+        return _envelope({
+          'contents': {
+            'singleColumnBrowseResultsRenderer': {
+              'tabs': [
+                {
+                  'tabRenderer': {
+                    'content': {
+                      'sectionListRenderer': {
+                        'contents': [
+                          shelf('New albums & singles', 'a'),
+                          shelf('Trending', 'b'),
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        });
+      });
+      final tube = InnerTube(dio: client);
+      addTearDown(tube.close);
+
+      final shelves = await tube.explore();
+      expect(sent?['browseId'], 'FEmusic_explore');
+      expect(shelves.map((s) => s.title), ['New albums & singles', 'Trending']);
+      expect((shelves.first.items.single as SongItem).track.videoId, 'a');
+    });
+
+    test('empty when the response has no tabs', () async {
+      final client = mockDio((options) async => _envelope({'contents': {}}));
+      final tube = InnerTube(dio: client);
+      addTearDown(tube.close);
+      expect(await tube.explore(), isEmpty);
+    });
+  });
+
   group('clientVersion', () {
     test('matches 1.YYYYMMDD.01.00', () {
       expect(
@@ -149,6 +221,141 @@ void main() {
       addTearDown(tube2.close);
       expect(tube2.cachedSquareCover('v1'), 'https://x/cover1');
       expect(tube2.cachedSquareCover('v2'), 'https://x/cover2');
+    });
+  });
+
+  group('watch info', () {
+    /// A watch-next body with a like overlay and a two-row queue: the
+    /// same response the queue metadata pass reads per row.
+    Map<String, Object> nextBody() => {
+      'playerOverlays': {
+        'playerOverlayRenderer': {
+          'actions': [
+            {
+              'likeButtonRenderer': {'likeStatus': 'LIKE'},
+            },
+          ],
+        },
+      },
+      'contents': {
+        'singleColumnMusicWatchNextResultsRenderer': {
+          'tabbedRenderer': {
+            'watchNextTabbedResultsRenderer': {
+              'tabs': [
+                {
+                  'tabRenderer': {
+                    'content': {
+                      'musicQueueRenderer': {
+                        'content': {
+                          'playlistPanelRenderer': {
+                            'contents': [
+                              {
+                                'playlistPanelVideoRenderer': {
+                                  'title': {
+                                    'runs': [
+                                      {'text': 'One'},
+                                    ],
+                                  },
+                                  'lengthText': {'simpleText': '3:20'},
+                                  'navigationEndpoint': {
+                                    'watchEndpoint': {'videoId': 'v1'},
+                                  },
+                                },
+                              },
+                              {
+                                'playlistPanelVideoRenderer': {
+                                  'title': {
+                                    'runs': [
+                                      {'text': 'Two'},
+                                    ],
+                                  },
+                                  'lengthText': {'simpleText': '4:00'},
+                                  'navigationEndpoint': {
+                                    'watchEndpoint': {'videoId': 'v2'},
+                                  },
+                                },
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+
+    test('one read yields the like state and the queue lengths', () async {
+      final calls = <String>[];
+      final tube = InnerTube(
+        dio: mockDio((options) async {
+          calls.add(options.path);
+          return _envelope(nextBody());
+        }),
+      );
+      addTearDown(tube.close);
+
+      final info = await tube.watchInfo('v2');
+      expect(info, isNotNull);
+      expect(info!.rating, RatingStatus.like);
+      expect(info.durations, {'v1': 200, 'v2': 240});
+      // The single-read rating path shares the same parse.
+      expect(await tube.rating('v2'), RatingStatus.like);
+      expect(calls, everyElement(contains('/next')));
+    });
+
+    test('a response with no queue panel answers without lengths', () async {
+      final tube = InnerTube(
+        dio: mockDio(
+          (options) async => _envelope({'contents': <String, Object>{}}),
+        ),
+      );
+      addTearDown(tube.close);
+
+      final info = await tube.watchInfo('v1');
+      expect(info, isNotNull);
+      expect(info!.rating, RatingStatus.unknown);
+      expect(info.durations, isEmpty);
+      expect(await tube.rating('v1'), RatingStatus.unknown);
+    });
+
+    test('failed reads return null and empty ids make no request', () async {
+      var calls = 0;
+      final tube = InnerTube(
+        dio: mockDio((options) async {
+          calls++;
+          throw StateError('offline');
+        }),
+      );
+      addTearDown(tube.close);
+
+      expect(await tube.watchInfo(''), isNull);
+      expect(calls, 0);
+      expect(await tube.watchInfo('v1'), isNull);
+      expect(await tube.rating('v1'), RatingStatus.unknown);
+
+      final batch = await tube.watchInfos(['v1', 'v1', ' ']);
+      expect(batch, isEmpty);
+    });
+
+    test('batch reads key by id and skip failed rows', () async {
+      final tube = InnerTube(
+        dio: mockDio((options) async {
+          final body = options.data as String;
+          if (body.contains('"videoId":"v2"')) throw StateError('offline');
+          return _envelope(nextBody());
+        }),
+      );
+      addTearDown(tube.close);
+
+      final batch = await tube.watchInfos(['v1', 'v2', 'v1']);
+      expect(batch.keys, ['v1']);
+      expect(batch['v1']!.rating, RatingStatus.like);
+      expect(batch['v1']!.durations['v2'], 240);
     });
   });
 }

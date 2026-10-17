@@ -101,10 +101,26 @@ class TrackRow extends StatelessWidget {
         style: Theme.of(context).textTheme.titleMedium
             ?.copyWith(color: playing ? scheme.primary : scheme.onSurface),
       ),
-      subtitle: subtitle.isEmpty
+      subtitle: subtitle.isEmpty && !track.explicit
           ? null
-          : Text(
-              subtitle,
+          : Text.rich(
+              TextSpan(
+                children: [
+                  if (track.explicit)
+                    WidgetSpan(
+                      alignment: PlaceholderAlignment.middle,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Icon(
+                          Icons.explicit,
+                          size: 14,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  TextSpan(text: subtitle),
+                ],
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium

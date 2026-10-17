@@ -12,7 +12,7 @@
 import 'dart:async';
 import 'dart:io' show Directory, File, Platform;
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, debugPrint;
 import 'package:material_ui/material_ui.dart' show Color, ColorScheme;
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
@@ -93,24 +93,31 @@ class TrayService with WindowListener {
   TrayMenuKey? _lastKey;
   Color? _lastIconBg;
   Color? _lastIconFg;
+  bool? _lastIconPlaying;
   bool _started = false;
 
   /// Renders the cookie icon for [scheme] (tray + window icon),
-  /// skipping redundant native sets when the colors didn't move.
-  /// Rendered large: the compositor downscales for the tray while
-  /// the window icon stays sharp.
-  Future<void> _renderIcon(ColorScheme scheme) async {
+  /// skipping redundant native sets when neither the colors nor the
+  /// transport state moved. Rendered large: the compositor downscales
+  /// for the tray while the window icon stays sharp.
+  Future<void> _renderIcon(ColorScheme scheme, {required bool playing}) async {
     if (scheme.primary == _lastIconBg &&
         scheme.onPrimary == _lastIconFg &&
+        playing == _lastIconPlaying &&
         _icon != null) {
       return;
     }
     _lastIconBg = scheme.primary;
     _lastIconFg = scheme.onPrimary;
+    _lastIconPlaying = playing;
+    debugPrint(
+      '[tray] rendering icon primary=#${scheme.primary.toARGB32().toRadixString(16).padLeft(8, '0')} playing=$playing',
+    );
     try {
       final bytes = await renderTrayIcon(
         background: scheme.primary,
         foreground: scheme.onPrimary,
+        playing: playing,
         size: 256,
       );
       final file = File('${Directory.systemTemp.path}/nixietube/tray-icon.png');
@@ -139,7 +146,7 @@ class TrayService with WindowListener {
       final icon = TrayIcon.create();
       if (icon == null) return;
       _icon = icon;
-      await _renderIcon(_effectiveScheme);
+      await _renderIcon(_effectiveScheme, playing: _controller.state.playing);
       icon.setTooltip('NixieTube');
       icon.setContextMenuTrigger(ContextMenuTrigger.rightClicked);
       final menu = Menu.create();
@@ -187,7 +194,9 @@ class TrayService with WindowListener {
   }
 
   void _onScheme() {
-    unawaited(_renderIcon(_effectiveScheme));
+    unawaited(
+      _renderIcon(_effectiveScheme, playing: _controller.state.playing),
+    );
   }
 
   void dispose() {
@@ -223,11 +232,23 @@ class TrayService with WindowListener {
   void _onState(PlayerState s) {
     final key = TrayMenuKey.of(s);
     if (key == _lastKey) return;
+    final playingFlipped = _lastKey != null && key.playing != _lastKey!.playing;
     _lastKey = key;
     try {
       _playPauseItem?.label = trayPlayPauseLabel(key.playing);
+      // Some hosts snapshot the menu at open time: re-setting it
+      // pushes the flipped Play/Pause label through. Only on flips,
+      // so an open menu never flickers on track-only changes.
+      if (playingFlipped) {
+        final icon = _icon;
+        final menu = _menu;
+        if (icon != null && menu != null) icon.setContextMenu(menu);
+      }
       _icon?.setTooltip(trayTooltipFor(s.current));
     } catch (_) {}
+    // The center glyph mirrors the transport state; the dedupe
+    // inside skips track-only changes.
+    unawaited(_renderIcon(_effectiveScheme, playing: key.playing));
   }
 
   /// Shows the window when hidden, hides it when visible.

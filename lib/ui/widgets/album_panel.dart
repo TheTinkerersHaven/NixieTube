@@ -176,6 +176,7 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
                         art: effectiveArt,
                         arts: effectiveArts,
                         size: 280,
+                        tracks: widget.tracks,
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -391,22 +392,49 @@ class _PlaylistArt extends StatelessWidget {
     required this.art,
     required this.arts,
     required this.size,
+    this.tracks = const [],
   });
 
   final String? art;
   final List<String> arts;
   final double size;
 
+  /// Tracks behind the collage sources, when known. Cells reuse the
+  /// track tile (square-cover resolution with album-art fallback) so
+  /// small collage sources resolve to sharp art instead of grain;
+  /// unmatched sources render plainly as before.
+  final List<Track> tracks;
+
+  Widget _cell(String? url, double tile, {double? radius, double? iconSize}) {
+    Track? track;
+    if (url != null) {
+      for (final t in tracks) {
+        if (t.displayArtwork == url) {
+          track = t;
+          break;
+        }
+      }
+    }
+    final r = radius ?? 0;
+    final i = iconSize ?? tile / 4;
+    if (track != null) {
+      return ArtworkImage(
+        track.displayArtwork,
+        size: tile,
+        radius: r,
+        iconSize: i,
+        squareCoverKey: track.videoId,
+      );
+    }
+    return ArtworkImage(url, size: tile, radius: r, iconSize: i);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (arts.length > 1) {
       final tile = size / 2;
-      Widget cell(int index) => ArtworkImage(
-        index < arts.length ? arts[index] : null,
-        size: tile,
-        radius: 0,
-        iconSize: tile / 4,
-      );
+      Widget cell(int index) =>
+          _cell(index < arts.length ? arts[index] : null, tile);
       return ClipRRect(
         borderRadius: BorderRadius.circular(cardRadius),
         child: SizedBox(
@@ -435,9 +463,9 @@ class _PlaylistArt extends StatelessWidget {
         ),
       );
     }
-    return ArtworkImage(
+    return _cell(
       arts.isNotEmpty ? arts.first : art,
-      size: size,
+      size,
       radius: cardRadius,
       iconSize: 64,
     );

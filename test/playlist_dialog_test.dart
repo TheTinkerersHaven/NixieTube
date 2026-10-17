@@ -54,6 +54,9 @@ class _FakeTube extends InnerTube {
   Future<({List<String> moods, List<Shelf> shelves})> home() async =>
       (shelves: <Shelf>[], moods: <String>[]);
   @override
+  Future<Map<String, ({RatingStatus rating, Map<String, int> durations})>>
+  watchInfos(List<String> videoIds, {int concurrency = 8}) async => {};
+  @override
   Future<List<Thumbnail>> playlistArtwork(
     String browseId, {
     String? params,

@@ -12,12 +12,14 @@ import 'package:url_launcher/url_launcher.dart';
 import 'core/artwork/artwork_store.dart';
 import 'core/innertube/inner_tube.dart';
 import 'core/innertube/stream_resolver.dart';
+import 'core/player/audio_backend.dart';
 import 'core/player/just_audio_player_engine.dart';
 import 'core/player/player_controller.dart';
 import 'sys/discord.dart';
 import 'sys/google_oauth.dart';
 import 'sys/lastfm.dart';
 import 'sys/mpris.dart';
+import 'sys/sleep_inhibit.dart';
 import 'sys/sys_config.dart';
 import 'sys/tray_service.dart';
 import 'ui/app.dart';
@@ -82,10 +84,17 @@ void main(List<String> args) {
   // Desktop integrations (best-effort; failures never block the UI).
   // Window close hides to the tray (see TrayService); quitting
   // flushes the session first, from either MPRIS or the tray menu.
-  Future<void> quitApp() => player
-      .flushSession()
-      .timeout(const Duration(seconds: 2), onTimeout: () {})
-      .whenComplete(() => exit(0));
+  // Sleep inhibition must drop before exit, or the lock outlives us.
+  final sleepInhibit = SleepInhibitService(controller: player);
+  Future<void> quitApp() async {
+    await sleepInhibit.dispose();
+    await player.flushSession().timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {},
+    );
+    exit(0);
+  }
+
   final mpris = MprisService(controller: player, artworkStore: state.art)
     ..onQuit = () => unawaited(quitApp());
   if (Platform.isLinux && config.mprisEnabled) {
@@ -107,12 +116,30 @@ void main(List<String> args) {
   final lastfm = LastFmService(config: config);
   unawaited(player.states.forEach(lastfm.update));
 
+  // Sleep stays unblocked until the first play takes the lock.
+  unawaited(sleepInhibit.start().catchError((_) {}));
+
+  // Probe the native audio backend before the user plays anything: a
+  // missing mpv otherwise fails on first play with console noise and
+  // a 20s hang that reads as a freeze. Best-effort; the UI reports it.
+  unawaited(_probeAudioBackend(state));
+
   unawaited(player.restoreSession());
   unawaited(state.loadAuth());
   unawaited(state.loadHome());
   runApp(
     NixieTubeApp(state: state, mpris: mpris, discord: discord, lastfm: lastfm),
   );
+}
+
+/// Probes the native audio backend and reports a failure so playback
+/// refuses to start with guidance instead of hanging.
+Future<void> _probeAudioBackend(AppState state) async {
+  final result = await probeAudioBackend();
+  if (result.status == AudioBackendStatus.ok) return;
+  final message = result.message;
+  if (message == null) return;
+  state.reportAudioBackendUnavailable(message);
 }
 
 /// Application root.
@@ -208,6 +235,21 @@ class _ThemedMaterialApp extends StatelessWidget {
     final themeSurface = context.select<AppState, int?>(
       (s) => s.config.themeSurfaceOverride,
     );
+    final rememberedSystem = context.select<AppState, int?>(
+      (s) => s.config.themeSystemPrimary,
+    );
+    // Remember the live desktop accent for the next cold start: the
+    // tray/window icon renders before this async fetch lands, so
+    // without the remembered value it would start on the built-in
+    // fallback every launch. Writes only on change; `set` itself
+    // never notifies, so no build loop.
+    final liveDynamic = darkDynamic;
+    if (liveDynamic != null) {
+      final live = liveDynamic.primary.toARGB32();
+      if (rememberedSystem != live) {
+        context.read<AppState>().config.themeSystemPrimary = live;
+      }
+    }
     final theme = buildTheme(
       highContrast: highContrast,
       scheme: _publishScheme(
@@ -216,6 +258,7 @@ class _ThemedMaterialApp extends StatelessWidget {
           source: ThemeSource.fromKey(themeSource),
           seedColor: themeSeed,
           systemDark: darkDynamic,
+          rememberedSystemPrimary: rememberedSystem,
           primaryOverride: themePrimary,
           secondaryOverride: themeSecondary,
           tertiaryOverride: themeTertiary,

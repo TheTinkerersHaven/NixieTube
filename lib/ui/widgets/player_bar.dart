@@ -121,8 +121,26 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.bodyLarge,
                               ),
-                              Text(
-                                track?.artistNames() ?? '',
+                              Text.rich(
+                                TextSpan(
+                                  children: [
+                                    if (track?.explicit == true)
+                                      WidgetSpan(
+                                        alignment: PlaceholderAlignment.middle,
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            right: 4,
+                                          ),
+                                          child: Icon(
+                                            Icons.explicit,
+                                            size: 14,
+                                            color: scheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      ),
+                                    TextSpan(text: track?.artistNames() ?? ''),
+                                  ],
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.bodySmall

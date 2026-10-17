@@ -176,6 +176,42 @@ void main() {
   });
 
   group('likedVideos', () {
+    test('prefers the biggest published thumbnail', () async {
+      Map<String, dynamic> item(String id, Map<String, dynamic> thumbs) => {
+        'id': id,
+        'snippet': {
+          'title': 'Song',
+          'channelTitle': 'Band - Topic',
+          'categoryId': '10',
+          'thumbnails': thumbs,
+        },
+        'contentDetails': {'duration': 'PT3M00S'},
+        'topicDetails': <String, dynamic>{},
+      };
+      final client = mockDio((options) async {
+        return _ok({
+          'items': [
+            item('M1', {
+              'default': {'url': 'https://x/m1-120.jpg'},
+              'high': {'url': 'https://x/m1-480.jpg'},
+              'maxres': {'url': 'https://x/m1-1280.jpg'},
+            }),
+            item('M2', {
+              'default': {'url': 'https://x/m2-120.jpg'},
+              'high': {'url': 'https://x/m2-480.jpg'},
+            }),
+          ],
+        });
+      });
+      final api = GDataApi(tokenProvider: () async => 'tok', dio: client);
+      final liked = await api.likedVideos();
+      expect(liked.map((t) => t.thumbnails.single.url), [
+        'https://x/m1-1280.jpg',
+        'https://x/m2-480.jpg',
+      ]);
+      api.close();
+    });
+
     test('keeps music, drops vlogs', () async {
       final client = mockDio((options) async {
         return _ok({

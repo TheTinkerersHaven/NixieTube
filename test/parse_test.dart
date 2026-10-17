@@ -62,6 +62,7 @@ void main() {
       expect(t.radioPlaylistId, 'RDAMVMVID123');
       expect(t.artistId, 'UCABC');
       expect(t.displayArtwork, 'https://x/a.jpg');
+      expect(t.explicit, isFalse);
     });
 
     test('plain artist/album inference without endpoints', () {
@@ -112,6 +113,7 @@ void main() {
       expect(t.album!.browseId, 'MPRE999');
       expect(t.durationSec, 241);
       expect(t.radioPlaylistId, 'RDAMVMPV1');
+      expect(t.explicit, isFalse);
     });
 
     test('plain byline infers artist then album', () {
@@ -129,6 +131,113 @@ void main() {
       final t = parsePanelVideo(item)!;
       expect(t.artists.map((a) => a.name), ['Mystery Act']);
       expect(t.album!.name, 'Hidden Gem');
+    });
+  });
+
+  group('parseExplicit', () {
+    Map<String, dynamic> badge(String iconType) => {
+      'musicInlineBadgeRenderer': {
+        'icon': {'iconType': iconType},
+        'accessibilityData': {
+          'accessibilityData': {'label': 'Explicit'},
+        },
+      },
+    };
+
+    test('explicit badge reads true', () {
+      expect(
+        parseExplicit({
+          'badges': [badge('MUSIC_EXPLICIT_BADGE')],
+        }),
+        isTrue,
+      );
+    });
+
+    test('other badges read false', () {
+      expect(
+        parseExplicit({
+          'badges': [badge('MUSIC_VERIFIED_BADGE')],
+        }),
+        isFalse,
+      );
+    });
+
+    test('missing or malformed badges read false, never throw', () {
+      expect(parseExplicit({}), isFalse);
+      expect(parseExplicit({'badges': 'nope'}), isFalse);
+      expect(
+        parseExplicit({
+          'badges': [{}],
+        }),
+        isFalse,
+      );
+      expect(
+        parseExplicit({
+          'badges': [
+            {
+              'musicInlineBadgeRenderer': {'icon': {}},
+            },
+          ],
+        }),
+        isFalse,
+      );
+      expect(parseExplicit(null), isFalse);
+    });
+
+    test('list rows carry the badge through', () {
+      final li = {
+        'flexColumns': [
+          _col([_run('Bold Song', videoId: 'E1')]),
+          _col([_run('Loud Act')]),
+        ],
+        'badges': [badge('MUSIC_EXPLICIT_BADGE')],
+      };
+      expect(parseListItem(li)!.explicit, isTrue);
+    });
+
+    test('panel rows carry the badge through', () {
+      final item = {
+        'title': {
+          'runs': [_run('Queue Song')],
+        },
+        'navigationEndpoint': {
+          'watchEndpoint': {'videoId': 'E2'},
+        },
+        'longBylineText': {
+          'runs': [_run('Loud Act')],
+        },
+        'badges': [badge('MUSIC_EXPLICIT_BADGE')],
+      };
+      expect(parsePanelVideo(item)!.explicit, isTrue);
+    });
+
+    test('two-row cards carry the badge through', () {
+      final el = {
+        'musicTwoRowItemRenderer': {
+          'title': {
+            'runs': [_run('Card Song')],
+          },
+          'subtitle': {
+            'runs': [_run('Loud Act')],
+          },
+          'navigationEndpoint': {
+            'watchEndpoint': {'videoId': 'E3'},
+          },
+          'thumbnail': {
+            'musicThumbnailRenderer': {
+              'thumbnail': {
+                'thumbnails': [
+                  {'url': 'https://x/e.jpg', 'width': 60, 'height': 60},
+                ],
+              },
+            },
+          },
+          'badges': [badge('MUSIC_EXPLICIT_BADGE')],
+        },
+      };
+      final parsed = parseShelfItem(el);
+      expect(parsed, isA<SongItem>());
+      expect((parsed as SongItem).track.explicit, isTrue);
     });
   });
 
@@ -825,6 +934,7 @@ void main() {
         rating: RatingStatus.like,
         likeCount: 42,
         dislikeCount: 1,
+        explicit: true,
       );
       final encoded = jsonEncode(original.toJson());
       final decoded = Track.fromJson(
@@ -842,6 +952,19 @@ void main() {
       expect(decoded.playlistId, 'RDEMxyz');
       expect(decoded.rating, RatingStatus.like);
       expect(decoded.likeCount, 42);
+      expect(decoded.explicit, isTrue);
+      expect(decoded, original);
+    });
+
+    test('explicit defaults to false and participates in equality', () {
+      const clean = Track(videoId: 'v', title: 't');
+      expect(clean.explicit, isFalse);
+      expect(Track.fromJson({}).explicit, isFalse);
+      expect(clean.toJson().containsKey('explicit'), isFalse);
+      const flagged = Track(videoId: 'v', title: 't', explicit: true);
+      expect(flagged, isNot(clean));
+      expect(flagged.copyWith(), flagged);
+      expect(flagged.copyWith(explicit: false), clean);
     });
 
     test('junk decodes degrade without throwing', () {
@@ -856,6 +979,101 @@ void main() {
 
       expect(decode('junk'), isNull);
       expect(decode({})?.videoId, '');
+    });
+  });
+
+  group('parseHistoryCounts', () {
+    Map<String, dynamic> historyItem(String? videoId) => {
+      'musicResponsiveListItemRenderer': {
+        if (videoId != null) 'playlistItemData': {'videoId': videoId},
+        'flexColumns': [
+          _col([_run('Some Song')]),
+        ],
+      },
+    };
+
+    Map<String, dynamic> historyPage(List<Map<String, dynamic>> items) => {
+      'contents': {
+        'singleColumnBrowseResultsRenderer': {
+          'tabs': [
+            {
+              'tabRenderer': {
+                'content': {
+                  'sectionListRenderer': {
+                    'contents': [
+                      {
+                        'itemSectionRenderer': {
+                          'contents': [
+                            {
+                              'musicShelfRenderer': {
+                                'title': {
+                                  'runs': [_run('Today')],
+                                },
+                                'contents': items,
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    test('repeats count per play', () {
+      final res = historyPage([
+        historyItem('a'),
+        historyItem('b'),
+        historyItem('a'),
+        historyItem('a'),
+        historyItem('c'),
+      ]);
+      expect(parseHistoryCounts(res), {'a': 3, 'b': 1, 'c': 1});
+    });
+
+    test('items without ids bound the walk but never count', () {
+      final res = historyPage([historyItem(null), historyItem('a')]);
+      expect(parseHistoryCounts(res), {'a': 1});
+      expect(parseHistoryCounts(res, maxItems: 1), isEmpty);
+    });
+
+    test('sign-in wall and junk yield empty counts', () {
+      expect(parseHistoryCounts({'error': 'x'}), isEmpty);
+      expect(parseHistoryCounts(null), isEmpty);
+      expect(parseHistoryCounts('junk'), isEmpty);
+      expect(parseHistoryCounts({'contents': []}), isEmpty);
+    });
+
+    test('tracks parse most-recent-first, deduped', () {
+      Map<String, dynamic> item(String id, String title) => {
+        'musicResponsiveListItemRenderer': {
+          'playlistItemData': {'videoId': id},
+          'flexColumns': [
+            _col([_run(title, videoId: id)]),
+            _col([_run('Some Artist')]),
+          ],
+        },
+      };
+      final res = {
+        'contents': [
+          item('a', 'Song A'),
+          item('b', 'Song B'),
+          item('a', 'Song A'),
+          {
+            'musicResponsiveListItemRenderer': {'flexColumns': []},
+          },
+        ],
+      };
+      final tracks = parseHistoryTracks(res);
+      expect(tracks.map((t) => t.videoId), ['a', 'b']);
+      expect(tracks.first.title, 'Song A');
+      expect(tracks.first.artistNames(), contains('Some Artist'));
+      expect(parseHistoryTracks({'error': 'x'}), isEmpty);
     });
   });
 }

@@ -464,6 +464,47 @@ void main() {
       expect(c.updateTrackRatings({}), 0);
     });
 
+    test('bulk lengths fill only rows that have none', () async {
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      c.playTracks([_track('v1', secs: 0), _track('v2', secs: 0)]);
+      await _settle();
+      // The current row is also queue[0], so it tallies twice — the same
+      // count bulk ratings report.
+      final changed = c.updateTrackDurations({'v1': 145, 'v2': 222});
+      expect(changed, 3);
+      expect(c.state.current?.durationSec, 145);
+      expect(c.state.queue[0].durationSec, 145);
+      expect(c.state.queue[1].durationSec, 222);
+      // Known lengths are never overwritten; junk and empties are no-ops.
+      expect(c.updateTrackDurations({'v1': 55}), 0);
+      expect(c.state.queue[0].durationSec, 145);
+      expect(c.updateTrackDurations({'v1': 0, 'v2': -3, 'v9': 30}), 0);
+      expect(c.updateTrackDurations(<String, int>{}), 0);
+    });
+
+    test('a resolved stream length lands on its queue row', () async {
+      final engine = FakeEngine();
+      final c = _controller(
+        engine,
+        streams: {
+          'v1': const ResolvedStream(
+            url: 'https://x/v1',
+            bitrate: 128000,
+            durationSec: 187,
+          ),
+        },
+      );
+      c.playTracks([_track('v1', secs: 0), _track('v2', secs: 0)]);
+      await _settle();
+      // Sources like home shelves ship no length, so the player response
+      // is the only place this row's duration can come from.
+      expect(c.state.current?.durationSec, 187);
+      expect(c.state.queue[0].durationSec, 187);
+      // A row that never resolved yet keeps its unknown length.
+      expect(c.state.queue[1].durationSec, 0);
+    });
+
     test('stats never overwrite known counts with -1', () async {
       final engine = FakeEngine();
       final c = _controller(engine);
@@ -494,6 +535,26 @@ void main() {
       expect(t.artistNames(), 'Real');
       expect(t.album?.kind, ReleaseKind.single);
       expect(t.thumbnails.map((e) => e.url), ['https://x/a.jpg']);
+    });
+
+    test('metadata backfills duration and ORs explicit', () async {
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      c.playTracks([
+        const Track(videoId: 'v1', title: 'T', durationSec: 0),
+        const Track(videoId: 'v2', title: 'U', durationSec: 200),
+      ]);
+      await _settle();
+      // Search rows carry no length: the panel duration fills it in.
+      c.updateTrackMetadata('v1', durationSec: 178, explicit: true);
+      expect(c.state.queue[0].durationSec, 178);
+      expect(c.state.queue[0].explicit, isTrue);
+      // Catalog durations win over later panel values.
+      c.updateTrackMetadata('v2', durationSec: 178);
+      expect(c.state.queue[1].durationSec, 200);
+      // Explicit never unmarks.
+      c.updateTrackMetadata('v1', durationSec: 178);
+      expect(c.state.queue[0].explicit, isTrue);
     });
 
     test('album kind merges, incoming name wins when set', () async {
@@ -829,7 +890,6 @@ void main() {
       expect(c.state.stopped, isFalse);
     });
   });
-
   group('sleep timer', () {
     Future<PlayerController> playing(
       FakeEngine engine,
@@ -925,6 +985,36 @@ void main() {
       expect(c.state.sleepTimerMode, SleepTimerMode.off);
       await Future<void>.delayed(const Duration(milliseconds: 120));
       expect(c.state.stopped, isTrue);
+    });
+  });
+
+  group('missing audio backend', () {
+    test('play refuses to start and explains, without the engine', () async {
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      // What a failed startup probe does before any play attempt.
+      c.backendUnavailable = true;
+      c.backendUnavailableReason = 'Install mpv, then restart.';
+      c.playTracks([_track('v1')]);
+      await _settle();
+      expect(c.state.playing, isFalse);
+      expect(c.state.loading, isFalse);
+      expect(c.state.error, 'Install mpv, then restart.');
+      // The engine is never touched: no open, no 20s hang.
+      expect(engine.playedUrls, isEmpty);
+    });
+
+    test('a later play also fails fast while unavailable', () async {
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      c.playTracks([_track('v1'), _track('v2')]);
+      await _settle();
+      c.backendUnavailable = true;
+      c.backendUnavailableReason = 'No backend.';
+      c.next();
+      await _settle();
+      expect(c.state.playing, isFalse);
+      expect(c.state.error, 'No backend.');
     });
   });
 }

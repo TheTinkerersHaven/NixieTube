@@ -257,12 +257,13 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
 
 /// Resolves the effective dark scheme for the theme settings,
 /// or null to keep the built-in hand-tuned scheme exactly:
-/// system source without platform colors, or custom source
-/// with the default seed and no manual overrides.
+/// system source without platform colors (live or remembered),
+/// or custom source with the default seed and no manual overrides.
 ColorScheme? resolveColorScheme({
   required ThemeSource source,
   required int seedColor,
   ColorScheme? systemDark,
+  int? rememberedSystemPrimary,
   int? primaryOverride,
   int? secondaryOverride,
   int? tertiaryOverride,
@@ -271,6 +272,14 @@ ColorScheme? resolveColorScheme({
   ColorScheme? base;
   if (source == ThemeSource.system && systemDark != null) {
     base = systemDark;
+  } else if (source == ThemeSource.system && rememberedSystemPrimary != null) {
+    // The platform fetch hasn't landed yet (cold start): seed from
+    // the remembered accent so the first frame — and the tray icon
+    // rendered from it — already follow the system color.
+    base = ColorScheme.fromSeed(
+      seedColor: Color(rememberedSystemPrimary & 0xffffffff),
+      brightness: Brightness.dark,
+    );
   } else if (source == ThemeSource.custom &&
       (seedColor & 0xffffffff) != defaultSeedColor) {
     base = ColorScheme.fromSeed(

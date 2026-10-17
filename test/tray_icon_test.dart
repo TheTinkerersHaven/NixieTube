@@ -36,6 +36,7 @@ void main() {
       () => renderTrayIcon(
         background: const Color(0xFFE7BDB7),
         foreground: const Color(0xFF4A2C28),
+        playing: false,
       ),
     );
     final image = img.decodePng(Uint8List.fromList(bytes!));
@@ -50,17 +51,38 @@ void main() {
     expect(glyph.r.toInt(), lessThan(120));
   });
 
+  testWidgets('pause bars replace the triangle while playing', (tester) async {
+    Future<Uint8List?> render(bool playing) => tester.runAsync(
+      () => renderTrayIcon(
+        background: const Color(0xFFE7BDB7),
+        foreground: const Color(0xFF4A2C28),
+        playing: playing,
+      ),
+    );
+    final paused = await render(false);
+    final playing = await render(true);
+    expect(paused, isNot(equals(playing)));
+    final image = img.decodePng(Uint8List.fromList(playing!))!;
+    // Bar gap at the center: background shows through.
+    expect(image.getPixel(32, 32).r.toInt(), greaterThan(200));
+    // Bars themselves: dark foreground on both sides of the gap.
+    expect(image.getPixel(26, 32).r.toInt(), lessThan(120));
+    expect(image.getPixel(38, 32).r.toInt(), lessThan(120));
+  });
+
   testWidgets('different themes render different icons', (tester) async {
     final a = await tester.runAsync(
       () => renderTrayIcon(
         background: const Color(0xFFFF0000),
         foreground: const Color(0xFFFFFFFF),
+        playing: false,
       ),
     );
     final b = await tester.runAsync(
       () => renderTrayIcon(
         background: const Color(0xFF0000FF),
         foreground: const Color(0xFF000000),
+        playing: false,
       ),
     );
     expect(a, isNot(equals(b)));
