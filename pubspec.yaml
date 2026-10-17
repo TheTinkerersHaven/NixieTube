@@ -29,7 +29,7 @@ dependencies:
   # Pinned exact: flutter_discord_rpc 1.1.0 was generated with frb codegen
   # 2.11.1 and refuses a newer runtime ("should be the same as runtime
   # version"). Unpin only when the discord package is regenerated.
-  flutter_rust_bridge: 2.11.1
+  flutter_rust_bridge: 2.13.0
   material_ui: ^1.7.0
   # Loading skeletons for the home feed (replaces the spinner while shelves
   # resolve, so the layout is stable and content reveals in place).
