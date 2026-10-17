@@ -22,6 +22,15 @@ const lastfmApiUrl = 'https://ws.audioscrobbler.com/2.0/';
 /// Browser URL where the user approves a request token.
 const lastfmAuthUrl = 'https://www.last.fm/api/auth/';
 
+/// Built-in shared Last.fm API credentials, used whenever the settings
+/// fields are left empty so connecting needs no last.fm/api application
+/// of your own. A custom key/secret in Settings always overrides these.
+/// The secret lives in the binary like in every client that ships one —
+/// acceptable for a free non-commercial app, and the override is there
+/// if this key is ever revoked or rate-limited.
+const defaultLastfmApiKey = '38d8a6ea0a40c47f428cbe7b887480f4';
+const defaultLastfmSecret = '0dc85259b68c9164d18b490b04812857';
+
 /// Minimum track length worth scrobbling, in seconds (Last.fm rule).
 const minScrobbleDurationSec = 30;
 
@@ -69,10 +78,11 @@ String cleanScrobbleTitle(String title) =>
 
 /// Last.fm client: web-auth handshake, now-playing updates, and scrobbles.
 ///
-/// API key/secret come from the user's own last.fm/api application stored in
-/// [SysConfig]; the session key persists there after the browser approval.
-/// All network use is opt-in via `SysConfig.lastfmEnabled`. A [ChangeNotifier]
-/// so the Settings card can watch [status].
+/// API key/secret come from Settings, falling back to the bundled
+/// [defaultLastfmApiKey]/[defaultLastfmSecret] when the fields are left
+/// empty; the session key persists in [SysConfig] after the browser
+/// approval. All network use is opt-in via `SysConfig.lastfmEnabled`.
+/// A [ChangeNotifier] so the Settings card can watch [status].
 class LastFmService extends ChangeNotifier {
   LastFmService({required SysConfig config, Dio? dio}) {
     _config = config;
@@ -93,12 +103,23 @@ class LastFmService extends ChangeNotifier {
   /// Currently linked Last.fm username, or empty when logged out.
   String get username => _config.lastfmUsername;
 
-  /// True when scrobbling can run: enabled, keyed, and holding a session.
+  /// Effective API key: the Settings value, or the bundled shared
+  /// credentials when the field is empty.
+  String get _apiKey {
+    final custom = _config.lastfmApiKey.trim();
+    return custom.isEmpty ? defaultLastfmApiKey : custom;
+  }
+
+  /// Effective shared secret: same fallback rule as [_apiKey].
+  String get _secret {
+    final custom = _config.lastfmSecret.trim();
+    return custom.isEmpty ? defaultLastfmSecret : custom;
+  }
+
+  /// True when scrobbling can run: enabled and holding a session. The
+  /// key is always effectively present via the built-in fallback.
   bool ready() =>
-      _config.lastfmEnabled &&
-      _config.lastfmApiKey.trim().isNotEmpty &&
-      _config.lastfmSecret.trim().isNotEmpty &&
-      _config.lastfmSessionKey.trim().isNotEmpty;
+      _config.lastfmEnabled && _config.lastfmSessionKey.trim().isNotEmpty;
 
   void _setStatus(String value) {
     if (_status != value) {
@@ -109,19 +130,13 @@ class LastFmService extends ChangeNotifier {
 
   /// Requests a fresh auth token for the browser approval step.
   ///
-  /// Returns the token, or null when the key/secret are missing or rejected.
+  /// Returns the token, or null when it is missing or rejected.
   Future<String?> requestToken() async {
-    final key = _config.lastfmApiKey.trim();
-    final secret = _config.lastfmSecret.trim();
-    if (key.isEmpty || secret.isEmpty) {
-      _setStatus('error: API key and secret are required');
-      return null;
-    }
     try {
       final el = await _signedCall({
         'method': 'auth.getToken',
-        'api_key': key,
-      }, secret);
+        'api_key': _apiKey,
+      }, _secret);
       final token = el['token'] as String?;
       if (token == null || token.trim().isEmpty) {
         _setStatus('error: ${_lastfmError(el)}');
@@ -136,24 +151,22 @@ class LastFmService extends ChangeNotifier {
 
   /// Browser URL where the user approves [token].
   String authorizeUrl(String token) =>
-      '$lastfmAuthUrl?api_key=${_config.lastfmApiKey.trim()}&token=$token';
+      '$lastfmAuthUrl?api_key=$_apiKey&token=$token';
 
   /// Exchanges an approved request [token] for a session, persisting it.
   ///
   /// Returns true when a session was stored.
   Future<bool> completeAuth(String token) async {
-    final key = _config.lastfmApiKey.trim();
-    final secret = _config.lastfmSecret.trim();
-    if (key.isEmpty || secret.isEmpty || token.trim().isEmpty) {
-      _setStatus('error: API key and secret are required');
+    if (token.trim().isEmpty) {
+      _setStatus('error: approval token is missing — restart the login');
       return false;
     }
     try {
       final el = await _signedCall({
         'method': 'auth.getSession',
-        'api_key': key,
+        'api_key': _apiKey,
         'token': token,
-      }, secret);
+      }, _secret);
       final session = el['session'];
       final sessionKey = session is Map
           ? (session['key'] as String?)?.trim() ?? ''
@@ -186,9 +199,6 @@ class LastFmService extends ChangeNotifier {
   void refreshStatus() {
     if (!_config.lastfmEnabled) {
       _setStatus('disabled');
-    } else if (_config.lastfmApiKey.trim().isEmpty ||
-        _config.lastfmSecret.trim().isEmpty) {
-      _setStatus('signed out');
     } else if (_config.lastfmSessionKey.trim().isEmpty) {
       _setStatus('signed out');
     } else {
@@ -214,7 +224,7 @@ class LastFmService extends ChangeNotifier {
           album,
           durationSec,
         ),
-        _config.lastfmSecret.trim(),
+        _secret,
       );
       if (el['error'] != null) _setStatus('error: ${_lastfmError(el)}');
     } catch (e) {
@@ -241,7 +251,7 @@ class LastFmService extends ChangeNotifier {
           album,
           durationSec,
         ),
-        _config.lastfmSecret.trim(),
+        _secret,
       );
       if (el['error'] != null) {
         _setStatus('error: ${_lastfmError(el)}');
@@ -264,7 +274,7 @@ class LastFmService extends ChangeNotifier {
   ) {
     return {
       'method': method,
-      'api_key': _config.lastfmApiKey.trim(),
+      'api_key': _apiKey,
       'sk': _config.lastfmSessionKey,
       'artist': artist,
       'track': track,

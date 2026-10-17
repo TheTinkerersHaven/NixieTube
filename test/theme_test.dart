@@ -51,6 +51,39 @@ void main() {
       );
     });
 
+    test('remembered system primary seeds a dark scheme', () {
+      final scheme = resolveColorScheme(
+        source: ThemeSource.system,
+        seedColor: defaultSeedColor,
+        systemDark: null,
+        rememberedSystemPrimary: 0xff2196f3,
+      );
+      expect(scheme, isNotNull);
+      expect(scheme!.brightness, Brightness.dark);
+    });
+
+    test('live platform colors win over the remembered primary', () {
+      const systemScheme = ColorScheme.dark(primary: Color(0xff9e9e9e));
+      final scheme = resolveColorScheme(
+        source: ThemeSource.system,
+        seedColor: defaultSeedColor,
+        systemDark: systemScheme,
+        rememberedSystemPrimary: 0xff2196f3,
+      );
+      expect(scheme, same(systemScheme));
+    });
+
+    test('remembered primary is ignored for the custom source', () {
+      expect(
+        resolveColorScheme(
+          source: ThemeSource.custom,
+          seedColor: defaultSeedColor,
+          rememberedSystemPrimary: 0xff2196f3,
+        ),
+        isNull,
+      );
+    });
+
     test('system source with platform colors uses them as-is', () {
       const systemScheme = ColorScheme(
         brightness: Brightness.dark,

@@ -91,7 +91,7 @@ class _MprisObject extends DBusObject {
     final remote = track.displayArtwork;
     if (remote == null || remote.isEmpty) return null;
     try {
-      final path = _art.croppedFilePath(remote);
+      final path = _art.tileFilePath(remote);
       final file = File(path);
       if (file.existsSync() && file.lengthSync() > 0) {
         return 'file://$path';
@@ -358,27 +358,56 @@ void _mprisLog(String line) {
   } catch (_) {}
 }
 
+/// Builds the session-bus client for one connect attempt. Injectable so
+/// tests exercise the retry loop without touching a live session bus.
+typedef MprisClientFactory = DBusClient Function();
+
+/// How often the service re-attempts a connect that failed, and pings a
+/// connection it owns. It never gives up on its own: the session bus can
+/// come up late, and another instance can release the name at any time.
+const mprisRetryInterval = Duration(seconds: 10);
+
+/// Liveness ping budget. A session bus that went away leaves our client
+/// dead without telling us, so a ping that does not come back in time
+/// counts as a lost connection.
+const _mprisPingTimeout = Duration(seconds: 5);
+
 /// MPRIS D-Bus service: exports the player, diffs property updates and
 /// emits Seeked signals. Linux only.
 class MprisService extends ChangeNotifier {
   MprisService({
     required PlayerController controller,
     ArtworkStore? artworkStore,
+    MprisClientFactory? clientFactory,
+    this.retryInterval = mprisRetryInterval,
   }) {
     _controller = controller;
     _artworkStore = artworkStore;
+    _newClient = clientFactory ?? DBusClient.session;
     _sub = _controller.states.listen(_onState);
   }
 
   late final PlayerController _controller;
   ArtworkStore? _artworkStore;
+  late final MprisClientFactory _newClient;
   late final StreamSubscription<PlayerState> _sub;
+
+  /// How often a failed connect is re-attempted and an owned connection
+  /// is pinged, while the service is enabled.
+  final Duration retryInterval;
 
   DBusClient? _client;
   _MprisObject? _object;
+
+  /// Artwork store created on demand when none was injected; kept for the
+  /// service's lifetime so a series of failed connects doesn't leak one
+  /// Dio per attempt.
+  ArtworkStore? _inlineArt;
   bool _enabled = true;
   bool _active = false;
   String? _lastError;
+  Timer? _retryTimer;
+  bool _busy = false;
   int _lastSeekEpoch = -1;
   int _lastPositionEmitMs = 0;
   Map<String, String> _lastProps = {};
@@ -403,75 +432,22 @@ class MprisService extends ChangeNotifier {
     _artworkStore = art;
   }
 
-  /// Starts the service, reconnecting with backoff while enabled.
+  /// Starts the service: claims the bus name now, then keeps retrying on
+  /// a timer while enabled — a connect that fails (no session bus yet, or
+  /// another instance still owning the name) is re-attempted, and a
+  /// connection that drops later is claimed again. Returns whether the
+  /// name is ours at this moment.
   Future<bool> start() async {
     final gen = ++_connectGen;
-    var delayMs = 1000;
-    for (var attempt = 0; attempt < 60; attempt++) {
-      if (gen != _connectGen || !_enabled) return false;
-      DBusClient? client;
-      try {
-        client = DBusClient.session();
-        final object = _MprisObject(
-          controller: _controller,
-          artworkStore: _artworkStore ?? ArtworkStore(),
-          onQuit: _quitRequested,
-        );
-        await client.registerObject(object);
-        // doNotQueue turns a name already held by another
-        // instance into an immediate `exists` reply instead of
-        // queueing, so a stale instance cannot hold us in a
-        // minutes-long retry loop.
-        final reply = await client.requestName(
-          mprisBusName,
-          flags: const {DBusRequestNameFlag.doNotQueue},
-        );
-        if (reply == DBusRequestNameReply.primaryOwner ||
-            reply == DBusRequestNameReply.alreadyOwner) {
-          if (gen != _connectGen || !_enabled) {
-            await client.close();
-            return false;
-          }
-          _client = client;
-          _object = object;
-          _active = true;
-          _lastError = null;
-          _lastProps = {};
-          notifyListeners();
-          unawaited(_pushFullState());
-          return true;
-        }
-        await client.close();
-        client = null;
-        // Another live connection owns the MPRIS name. Retrying
-        // cannot succeed until it exits, so stop instead of
-        // hammering the bus; surface a clear, actionable reason.
-        if (reply == DBusRequestNameReply.exists ||
-            reply == DBusRequestNameReply.inQueue) {
-          _active = false;
-          _lastError = 'another NixieTube instance owns the MPRIS name';
-          _mprisLog('start aborted: $_lastError');
-          notifyListeners();
-          return false;
-        }
-        throw StateError('name not acquired: $reply');
-      } catch (e) {
-        try {
-          await client?.close();
-        } catch (_) {}
-        _mprisLog('start attempt $attempt failed: $e');
-        _lastError = '$e';
-        notifyListeners();
-      }
-      await Future<void>.delayed(Duration(milliseconds: delayMs));
-      delayMs = (delayMs * 2).clamp(1000, 5000);
-    }
-    return false;
+    final active = await _connect(gen);
+    if (_enabled && gen == _connectGen) _armRetry();
+    return active;
   }
 
-  /// Stops the service and releases the bus name.
+  /// Stops the service, releasing the bus name and ending the retries.
   Future<void> stop() async {
     _connectGen++;
+    _cancelRetry();
     _active = false;
     notifyListeners();
     try {
@@ -479,6 +455,136 @@ class MprisService extends ChangeNotifier {
     } catch (_) {}
     _client = null;
     _object = null;
+    try {
+      _inlineArt?.close();
+    } catch (_) {}
+    _inlineArt = null;
+  }
+
+  /// Keeps the service reachable while enabled.
+  void _armRetry() {
+    _retryTimer ??= Timer.periodic(
+      retryInterval,
+      (_) => unawaited(_retryTick()),
+    );
+  }
+
+  void _cancelRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
+  Future<void> _retryTick() async {
+    if (!_enabled) {
+      _cancelRetry();
+      return;
+    }
+    if (_busy) return;
+    final client = _client;
+    if (client == null) {
+      await _connect(_connectGen);
+      return;
+    }
+    _busy = true;
+    var alive = true;
+    try {
+      await client.ping().timeout(_mprisPingTimeout);
+    } catch (e) {
+      alive = false;
+      _mprisLog('liveness ping failed: $e');
+    } finally {
+      _busy = false;
+    }
+    if (!alive) {
+      await _dropConnection();
+      await _connect(_connectGen);
+    }
+  }
+
+  /// One connect attempt: exports the player object and requests the
+  /// MPRIS name. Returns whether the name is now ours; failures surface
+  /// through [lastError] for the next retry tick to pick up.
+  Future<bool> _connect(int gen) async {
+    if (_busy) return false;
+    _busy = true;
+    DBusClient? client;
+    try {
+      if (gen != _connectGen || !_enabled) return false;
+      client = _newClient();
+      final artStore = _artworkStore ?? (_inlineArt ??= ArtworkStore());
+      final object = _MprisObject(
+        controller: _controller,
+        artworkStore: artStore,
+        onQuit: _quitRequested,
+      );
+      await client.registerObject(object);
+      // doNotQueue turns a name already held by another instance into an
+      // immediate `exists` reply instead of queueing, so the retry timer
+      // stays in charge of when to try again.
+      final reply = await client.requestName(
+        mprisBusName,
+        flags: const {DBusRequestNameFlag.doNotQueue},
+      );
+      if (reply == DBusRequestNameReply.primaryOwner ||
+          reply == DBusRequestNameReply.alreadyOwner) {
+        if (gen != _connectGen || !_enabled) {
+          await client.close();
+          return false;
+        }
+        _client = client;
+        _object = object;
+        _active = true;
+        _lastError = null;
+        _lastProps = {};
+        notifyListeners();
+        unawaited(_pushFullState());
+        return true;
+      }
+      await client.close();
+      client = null;
+      // Another live connection owns the MPRIS name. This cannot succeed
+      // until it exits, so report why and let the timer look again rather
+      // than hammering the bus.
+      if (reply == DBusRequestNameReply.exists ||
+          reply == DBusRequestNameReply.inQueue) {
+        _fail('another NixieTube instance owns the MPRIS name');
+        return false;
+      }
+      throw StateError('name not acquired: $reply');
+    } catch (e) {
+      try {
+        await client?.close();
+      } catch (_) {}
+      _mprisLog('connect failed: $e');
+      _fail('$e');
+      return false;
+    } finally {
+      _busy = false;
+    }
+  }
+
+  /// Records a failed connect, notifying only when the reason actually
+  /// changes: the retry timer would otherwise rebuild the UI every tick.
+  void _fail(String reason) {
+    final changed = _active || _lastError != reason;
+    _active = false;
+    _lastError = reason;
+    if (changed) notifyListeners();
+  }
+
+  /// Marks the owned connection dead, so the retry timer claims the name
+  /// again on its next tick.
+  Future<void> _dropConnection() async {
+    final client = _client;
+    _client = null;
+    _object = null;
+    _active = false;
+    _lastProps = {};
+    _lastError = 'session bus connection lost';
+    notifyListeners();
+    try {
+      await client?.close();
+    } catch (_) {}
   }
 
   @override

@@ -29,6 +29,7 @@ class ResolvedStream {
     this.codec,
     this.likes = -1,
     this.dislikes = -1,
+    this.durationSec = 0,
   });
 
   final String url;
@@ -38,6 +39,12 @@ class ResolvedStream {
   /// Public like count, or -1 when unknown.
   final int likes;
   final int dislikes;
+
+  /// Track length from the same player response, or 0 when absent. The
+  /// player's `videoDetails` carries it, so a resolved track's queue row
+  /// gets its length for free; that is the only source signed-out
+  /// sessions have (list rows themselves never carry one).
+  final int durationSec;
 }
 
 String? _codecOf(String mime) {
@@ -174,6 +181,9 @@ class StreamResolver {
       if (refresh) break;
     }
     if (res == null) return null;
+    final length = int.tryParse(
+      str(nav(res, const ['videoDetails', 'lengthSeconds'])) ?? '',
+    );
     ResolvedStream? best;
     for (final key in ['adaptiveFormats', 'formats']) {
       final formats = nav(res, ['streamingData', key]);
@@ -190,6 +200,7 @@ class StreamResolver {
           url: url,
           bitrate: bitrate,
           codec: _codecOf(mime),
+          durationSec: length ?? 0,
         );
       }
     }

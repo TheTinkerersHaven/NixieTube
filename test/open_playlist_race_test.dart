@@ -53,6 +53,9 @@ class _QuietTube extends InnerTube {
     int concurrency = 8,
   }) async => {};
   @override
+  Future<Map<String, ({RatingStatus rating, Map<String, int> durations})>>
+  watchInfos(List<String> videoIds, {int concurrency = 8}) async => {};
+  @override
   Future<Track> enrichTrack(Track track) async => track;
   @override
   Future<RatingStatus> rating(String videoId) async => RatingStatus.unknown;

@@ -148,6 +148,14 @@ class PlayerController implements PlayerEngineListener {
   /// Injectable for tests; production always uses the default.
   final Duration playTimeout;
 
+  /// Set by the startup probe when the native audio backend cannot be
+  /// used (missing mpv/libmpv). Every start path then fails instantly
+  /// with guidance instead of spinning until [playTimeout].
+  bool backendUnavailable = false;
+
+  /// User-facing explanation for [backendUnavailable].
+  String backendUnavailableReason = '';
+
   PlayerState _state = const PlayerState();
   final _states = StreamController<PlayerState>.broadcast(sync: true);
 
@@ -240,6 +248,25 @@ class PlayerController implements PlayerEngineListener {
     unawaited(handleEngineError(message));
   }
 
+  /// Resolves [videoId] and folds the track length the player response
+  /// carries into its queue row. Most list sources (home shelves, album
+  /// and artist pages) ship no length at all, and the signed-in queue
+  /// pass only runs the reads it needs for like state — so for anyone
+  /// else this is where a row's duration comes from, at no extra
+  /// request. Never throws.
+  Future<ResolvedStream?> _resolveStreamAndLength(String videoId) async {
+    ResolvedStream? stream;
+    try {
+      stream = await _resolveStream(videoId);
+    } catch (_) {
+      return null;
+    }
+    if (stream != null && stream.durationSec > 0) {
+      updateTrackDurations({videoId: stream.durationSec});
+    }
+    return stream;
+  }
+
   /// Re-resolves [videoId] under fresh visitor/session state, so a retry
   /// mints a new URL family instead of another dead URL from the same
   /// poisoned resolve context. Never throws.
@@ -248,7 +275,7 @@ class PlayerController implements PlayerEngineListener {
       await _refreshStream?.call();
     } catch (_) {}
     try {
-      return await _resolveStream(videoId);
+      return await _resolveStreamAndLength(videoId);
     } catch (_) {
       return null;
     }
@@ -294,7 +321,7 @@ class PlayerController implements PlayerEngineListener {
     }
     ResolvedStream? stream;
     try {
-      stream = await _resolveStream(track.videoId);
+      stream = await _resolveStreamAndLength(track.videoId);
     } catch (_) {
       stream = null;
     }
@@ -941,12 +968,16 @@ class PlayerController implements PlayerEngineListener {
     AlbumRef? album,
     List<Thumbnail> thumbnails = const [],
     String? title,
+    int durationSec = 0,
+    bool explicit = false,
   }) {
     final incomingTitle = title?.trim();
     final hasNoUpdates =
         artists.isEmpty &&
         album == null &&
         thumbnails.isEmpty &&
+        durationSec <= 0 &&
+        !explicit &&
         (incomingTitle == null || incomingTitle.isEmpty);
     if (hasNoUpdates) return;
     Track fix(Track t) {
@@ -1038,6 +1069,14 @@ class PlayerController implements PlayerEngineListener {
             : t.artists,
         album: finalAlbum,
         thumbnails: mergedThumbnails,
+        // Fill-if-missing: list sources often lack durations (search
+        // rows carry no length); catalog values always win.
+        durationSec: t.durationSec > 0
+            ? t.durationSec
+            : (durationSec > 0 ? durationSec : t.durationSec),
+        // OR, never overwrite: a missing badge means "not marked",
+        // not "clean".
+        explicit: t.explicit || explicit,
       );
     }
 
@@ -1073,6 +1112,29 @@ class PlayerController implements PlayerEngineListener {
       if (rating == null || rating == track.rating) return track;
       changed++;
       return track.copyWith(rating: rating);
+    }
+
+    final current = _state.current;
+    final queue = _state.queue.map(update).toList();
+    final fixedCurrent = current == null ? null : update(current);
+    if (changed == 0) return 0;
+    _update(_state.copyWith(current: () => fixedCurrent, queue: queue));
+    return changed;
+  }
+
+  /// Stamps known track lengths (seconds) into current/queue entries that
+  /// have none. Most list sources (home shelves, album pages, artist
+  /// pages) carry no length at all, so the queue metadata pass fills them
+  /// from its per-row reads; known lengths always win, and a short value
+  /// never overwrites a catalog one.
+  int updateTrackDurations(Map<String, int> durations) {
+    if (durations.isEmpty) return 0;
+    var changed = 0;
+    Track update(Track track) {
+      final secs = durations[track.videoId];
+      if (secs == null || secs <= 0 || track.durationSec > 0) return track;
+      changed++;
+      return track.copyWith(durationSec: secs);
     }
 
     final current = _state.current;
@@ -1137,6 +1199,23 @@ class PlayerController implements PlayerEngineListener {
     final queue = _state.queue;
     final index = _state.index;
     if (index < 0 || index >= queue.length) return;
+    if (backendUnavailable) {
+      // Never touch the engine: a missing backend hangs the open until
+      // the play timeout, which reads as a frozen app.
+      _playToken++;
+      _ticker?.cancel();
+      _ticker = null;
+      _update(
+        _state.copyWith(
+          loading: false,
+          playing: false,
+          error: () => backendUnavailableReason.isEmpty
+              ? 'Audio backend unavailable.'
+              : backendUnavailableReason,
+        ),
+      );
+      return;
+    }
     final track = queue[index];
     final token = ++_playToken;
     _streamRetries = 0;
@@ -1182,7 +1261,7 @@ class PlayerController implements PlayerEngineListener {
     ResolvedStream? stream = reused;
     if (stream == null) {
       try {
-        stream = await _resolveStream(track.videoId);
+        stream = await _resolveStreamAndLength(track.videoId);
       } catch (_) {
         stream = null;
       }
@@ -1310,7 +1389,7 @@ class PlayerController implements PlayerEngineListener {
   ) async {
     ResolvedStream? stream;
     try {
-      stream = await _resolveStream(videoId);
+      stream = await _resolveStreamAndLength(videoId);
     } catch (_) {
       return;
     }

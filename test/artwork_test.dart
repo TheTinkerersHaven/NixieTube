@@ -1,5 +1,6 @@
-// Artwork pipeline tests: square crops, border stripping, palette bands,
-// URL upgrades, and the end-to-end disk-cache path with seeded bytes.
+// Artwork pipeline tests: whole-frame decodes (no client crop), border
+// stripping, palette bands, URL upgrades, and the end-to-end disk-cache
+// path with seeded bytes.
 
 import 'dart:convert';
 import 'dart:io';
@@ -8,6 +9,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:nixietube/core/artwork/artwork_store.dart';
+import 'package:nixietube/sys/http_client.dart';
 
 img.Image _solid(int w, int h, int r, int g, int b) {
   final image = img.Image(width: w, height: h);
@@ -20,53 +22,39 @@ img.Image _solid(int w, int h, int r, int g, int b) {
 }
 
 void main() {
-  group('centerSquare', () {
-    test('keeps full height on landscape', () {
-      final raw = _solid(200, 100, 255, 255, 255);
-      for (var x = 0; x < 200; x++) {
-        for (var y = 0; y < 10; y++) {
-          raw.setPixelRgb(x, y, 0, 0, 0);
-          raw.setPixelRgb(x, 99 - y, 0, 0, 0);
-        }
-      }
-      final out = centerSquare(raw);
-      expect(out.width, 100);
-      expect(out.height, 100);
-      // Full height kept: top/bottom border rows included.
-      expect(out.getPixel(0, 0).r, 0);
-      expect(out.getPixel(50, 50).r, 255);
+  group('decode keeps frames whole', () {
+    test('non-square frames are never center-cropped', () async {
+      // Square tiles resolve YouTube's own square art (or fetched
+      // album art) instead: the pipeline keeps the source geometry
+      // and the UI cover-fit handles tile boxes.
+      final dir = await Directory.systemTemp.createTemp('nt-artwork-test');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      const url = 'https://artwork.invalid/cover.jpg';
+      final hex = _shaForTest(url);
+      await File('${dir.path}/$hex.img4')
+          .writeAsBytes(img.encodeJpg(_solid(200, 100, 255, 255, 255)));
+      final image = await store.image(url);
+      expect(image, isNotNull);
+      expect(image!.width, 200);
+      expect(image.height, 100);
     });
 
-    test('keeps square thumbnails untouched', () {
-      // Already square: no cropping, no shaving — returned as-is.
-      final raw = _solid(100, 100, 200, 30, 30);
-      for (var x = 0; x < 100; x++) {
-        for (var y = 0; y < 10; y++) {
-          raw.setPixelRgb(x, y, 0, 0, 0);
-        }
-      }
-      final out = centerSquare(raw);
-      expect(out.width, 100);
-      expect(out.height, 100);
-      // The white margin is part of the cover and survives.
-      expect(out.getPixel(50, 0).r, 0);
-      expect(out.getPixel(50, 50).r, 200);
-    });
-
-    test('portrait center-squares to full width', () {
-      final raw = _solid(100, 200, 255, 255, 255);
-      for (var y = 0; y < 200; y++) {
-        for (var x = 0; x < 10; x++) {
-          raw.setPixelRgb(x, y, 0, 0, 0);
-          raw.setPixelRgb(99 - x, y, 0, 0, 0);
-        }
-      }
-      final out = centerSquare(raw);
-      expect(out.width, 100);
-      expect(out.height, 100);
-      // Full width kept: left/right border columns included.
-      expect(out.getPixel(0, 0).r, 0);
-      expect(out.getPixel(50, 50).r, 255);
+    test('square thumbnails pass through untouched', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-artwork-test');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      const url = 'https://artwork.invalid/square.jpg';
+      final hex = _shaForTest(url);
+      await File('${dir.path}/$hex.img4')
+          .writeAsBytes(img.encodeJpg(_solid(100, 100, 200, 30, 30)));
+      final image = await store.image(url);
+      expect(image, isNotNull);
+      expect(image!.width, 100);
+      expect(image.height, 100);
+      expect(image.getPixel(50, 50).r, 200);
     });
   });
 
@@ -132,23 +120,88 @@ void main() {
       // Square source stays square (kept as-is downstream).
       expect(
         upgradeArt('https://x/y=w120-h120-p-l90-rj'),
-        'https://x/y=w540-h540-p-l90-rj',
+        'https://x/y=w1080-h1080-p-l90-rj',
       );
       // Non-square source keeps its ratio: the server must not
-      // pre-crop it to a square, the client center-square does that.
+      // pre-crop it to a square, square tiles resolve YouTube's own
+      // square art (or fetched album art) instead.
       expect(
         upgradeArt('https://x/y=w976-h549-l90-rj'),
-        'https://x/y=w540-h304-l90-rj',
+        'https://x/y=w1080-h608-l90-rj',
       );
-      expect(upgradeArt('https://x/y=w600-h300'), 'https://x/y=w540-h270');
+      expect(upgradeArt('https://x/y=w600-h300'), 'https://x/y=w1080-h540');
       expect(upgradeArt('https://x/plain.jpg'), 'https://x/plain.jpg');
       expect(upscaleArtworkUrl('https://x/y=w60', 1920), 'https://x/y=w1920');
       expect(upscaleArtworkUrl('https://x/y=w2000', 1920), 'https://x/y=w2000');
     });
   });
 
+  group('maxResGuess', () {
+    test('rewrites ytimg stills to maxres', () {
+      expect(
+        maxResGuess('https://i.ytimg.com/vi/ABC123/hqdefault.jpg'),
+        'https://i.ytimg.com/vi/ABC123/maxresdefault.jpg',
+      );
+      expect(
+        maxResGuess('https://i.ytimg.com/vi/ABC123/sddefault.jpg'),
+        'https://i.ytimg.com/vi/ABC123/maxresdefault.jpg',
+      );
+    });
+
+    test('leaves maxres and non-ytimg urls alone', () {
+      expect(
+        maxResGuess('https://i.ytimg.com/vi/ABC123/maxresdefault.jpg'),
+        isNull,
+      );
+      expect(
+        maxResGuess('https://lh3.googleusercontent.com/x=w60-h60-l90-rj'),
+        isNull,
+      );
+      expect(maxResGuess('https://x/plain.jpg'), isNull);
+      expect(maxResGuess(''), isNull);
+    });
+  });
+
+  group('error-page rejection', () {
+    test('text error bodies never pass as art', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-ctype');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final good = img.encodePng(_solid(64, 64, 10, 200, 30));
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      server.listen((request) {
+        if (request.uri.path.endsWith('/missing.jpg')) {
+          request.response
+            ..statusCode = HttpStatus.notFound
+            ..headers.contentType = ContentType.html
+            ..write('<html><body>Not found</body></html>')
+            ..close();
+        } else {
+          request.response
+            ..headers.contentType = ContentType('image', 'png')
+            ..add(good)
+            ..close();
+        }
+      });
+      addTearDown(() => server.close(force: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      // The HTML error page is rejected even though it is long enough
+      // to pass the completeness check (non-JPEG always passes it).
+      expect(
+        await store.image('http://127.0.0.1:${server.port}/missing.jpg'),
+        isNull,
+      );
+      // Real images (even non-JPEG content types) still decode.
+      final image = await store.image(
+        'http://127.0.0.1:${server.port}/good.png',
+      );
+      expect(image, isNotNull);
+      expect(image!.width, 64);
+    });
+  });
+
   group('store disk path', () {
-    test('seeded raw bytes decode to a square crop', () async {
+    test('seeded raw bytes decode whole with a stable tile render', () async {
       final dir = await Directory.systemTemp.createTemp('nt-artwork-test');
       addTearDown(() => dir.delete(recursive: true));
       final raw = _solid(200, 100, 255, 255, 255);
@@ -158,22 +211,61 @@ void main() {
       addTearDown(store.close);
       const url = 'https://artwork.invalid/cover.jpg';
       final hex = _shaForTest(url);
-      await File('${dir.path}/$hex.img3').writeAsBytes(jpeg);
+      await File('${dir.path}/$hex.img4').writeAsBytes(jpeg);
       final image = await store.image(url);
       expect(image, isNotNull);
-      expect(image!.width, image.height);
-      expect(image.width, 100);
+      expect(image!.width, 200);
+      expect(image.height, 100);
       // Second call is served from memory.
       final again = await store.image(url);
-      expect(again!.width, 100);
-      // Stable cropped file renders on demand.
+      expect(again!.width, 200);
+      // Stable tile render on demand (full frame, new generation).
       final file = await store.file(url);
       expect(file, isNotNull);
       expect(file!.existsSync(), isTrue);
+      expect(file.path.endsWith('.tile7.png'), isTrue);
       // cachedFile resolves the same on-disk render.
       final cached = await store.cachedFile(url);
       expect(cached, isNotNull);
       expect(cached!.path, file.path);
+    });
+
+    test('a cover with its own black border is kept whole', () async {
+      // Square art printed with a black frame: the frame IS the artwork,
+      // not letterboxing. The client must not trim it away.
+      final dir = await Directory.systemTemp.createTemp('nt-art-border');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final framed = _solid(120, 120, 200, 30, 30);
+      void black(int x1, int y1, int x2, int y2) => img.fillRect(
+        framed,
+        x1: x1,
+        y1: y1,
+        x2: x2,
+        y2: y2,
+        color: img.ColorRgb8(0, 0, 0),
+      );
+      black(0, 0, 119, 9);
+      black(0, 110, 119, 119);
+      black(0, 0, 9, 119);
+      black(110, 0, 119, 119);
+      const url = 'https://artwork.invalid/framed.jpg';
+      final hex = _shaForTest(url);
+      await File('${dir.path}/$hex.img4').writeAsBytes(img.encodePng(framed));
+      final image = await store.image(url);
+      expect(image, isNotNull);
+      expect(image!.width, 120);
+      expect(image.height, 120);
+      // The rendered tile keeps the whole frame: border included.
+      final file = await store.file(url);
+      expect(file, isNotNull);
+      final rendered = img.decodePng(file!.readAsBytesSync());
+      expect(rendered, isNotNull);
+      expect(rendered!.width, 120);
+      expect(rendered.height, 120);
+      expect(rendered.getPixel(0, 0).r.toInt(), lessThan(20));
+      expect(rendered.getPixel(60, 60).r.toInt(), greaterThan(180));
     });
 
     test('worker pool serves more decodes than its size', () async {
@@ -189,12 +281,12 @@ void main() {
         // Distinct solid color per URL; PNG keeps it lossless.
         final raw = _solid(64 + i, 64 + i, 30 * (i + 1), 20, 10);
         final hex = _shaForTest(urls[i]);
-        await File('${dir.path}/$hex.img3').writeAsBytes(img.encodePng(raw));
+        await File('${dir.path}/$hex.img4').writeAsBytes(img.encodePng(raw));
       }
       final squares = await Future.wait([for (final u in urls) store.image(u)]);
       for (var i = 0; i < squares.length; i++) {
         expect(squares[i], isNotNull, reason: 'square decode $i');
-        expect(squares[i]!.width, squares[i]!.height);
+        expect(squares[i]!.width, 64 + i);
         // The returned cover belongs to THIS url.
         expect(
           squares[i]!.getPixel(0, 0).r.toInt(),
@@ -204,7 +296,7 @@ void main() {
       }
       final files = await Future.wait([for (final u in urls) store.file(u)]);
       for (var i = 0; i < files.length; i++) {
-        expect(files[i], isNotNull, reason: 'crop render $i');
+        expect(files[i], isNotNull, reason: 'tile render $i');
       }
     });
 
@@ -215,19 +307,19 @@ void main() {
       addTearDown(store.close);
       const url = 'https://artwork.invalid/clear.jpg';
       final hex = _shaForTest(url);
-      await File('${dir.path}/$hex.img3')
+      await File('${dir.path}/$hex.img4')
           .writeAsBytes(img.encodePng(_solid(80, 40, 10, 200, 30)));
-      // Renders the on-disk crop from the seeded raw bytes.
+      // Renders the on-disk tile file from the seeded raw bytes.
       final file = await store.file(url);
       expect(file, isNotNull);
-      expect(File('${dir.path}/$hex.crop5.png').existsSync(), isTrue);
+      expect(File('${dir.path}/$hex.tile7.png').existsSync(), isTrue);
       // Clearing removes every cached artwork file.
       store.clearCache();
-      expect(File('${dir.path}/$hex.img3').existsSync(), isFalse);
-      expect(File('${dir.path}/$hex.crop5.png').existsSync(), isFalse);
+      expect(File('${dir.path}/$hex.img4').existsSync(), isFalse);
+      expect(File('${dir.path}/$hex.tile7.png').existsSync(), isFalse);
     });
 
-    test('clearCache resets failure skips so urls retry', () async {
+    test('transient failures retry, and clearCache resets the skips', () async {
       final dir = await Directory.systemTemp.createTemp('nt-art-fails');
       addTearDown(() => dir.delete(recursive: true));
       var requests = 0;
@@ -248,15 +340,28 @@ void main() {
         }
       });
       addTearDown(() => server.close(force: true));
-      final store = ArtworkStore(cacheDirPath: dir.path);
+      // The real retrying client, with waits shrunk to nothing so the
+      // test exercises the retry ladder instead of waiting it out.
+      final store = ArtworkStore(
+        cacheDirPath: dir.path,
+        dio: newResilientClient(
+          policy: const RetryPolicy(
+            maxAttempts: 3,
+            baseDelay: Duration(milliseconds: 1),
+            maxDelay: Duration(milliseconds: 2),
+          ),
+        ),
+      );
       addTearDown(store.close);
       final url = 'http://127.0.0.1:${server.port}/flaky.jpg';
-      // Three consecutive failures trip the skip-list.
-      for (var i = 0; i < 4; i++) {
+      // One call spends its whole retry budget on the 503s before
+      // counting as a failure, and a url is benched only after five
+      // such failures: a flaky backend is given every chance.
+      for (var i = 0; i < 5; i++) {
         expect(await store.image(url), isNull);
       }
       final afterSkips = requests;
-      expect(afterSkips, 3);
+      expect(afterSkips, 15);
       // Still skipped: no further requests.
       expect(await store.image(url), isNull);
       expect(requests, afterSkips);
@@ -355,99 +460,6 @@ void main() {
         ),
         isFalse,
       );
-    });
-  });
-
-  group('removeLetterbox', () {
-    img.Image bars({
-      required int w,
-      required int h,
-      int top = 0,
-      int bottom = 0,
-      int left = 0,
-      int right = 0,
-    }) {
-      final image = _solid(w, h, 200, 30, 30);
-      if (top > 0) {
-        img.fillRect(
-          image,
-          x1: 0,
-          y1: 0,
-          x2: w - 1,
-          y2: top - 1,
-          color: img.ColorRgb8(0, 0, 0),
-        );
-      }
-      if (bottom > 0) {
-        img.fillRect(
-          image,
-          x1: 0,
-          y1: h - bottom,
-          x2: w - 1,
-          y2: h - 1,
-          color: img.ColorRgb8(0, 0, 0),
-        );
-      }
-      if (left > 0) {
-        img.fillRect(
-          image,
-          x1: 0,
-          y1: 0,
-          x2: left - 1,
-          y2: h - 1,
-          color: img.ColorRgb8(0, 0, 0),
-        );
-      }
-      if (right > 0) {
-        img.fillRect(
-          image,
-          x1: w - right,
-          y1: 0,
-          x2: w - 1,
-          y2: h - 1,
-          color: img.ColorRgb8(0, 0, 0),
-        );
-      }
-      return image;
-    }
-
-    test('trims facing top/bottom bars to the content box', () {
-      final out = removeLetterbox(bars(w: 100, h: 100, top: 20, bottom: 20));
-      expect(out.width, 100);
-      expect(out.height, 60);
-      // Content survives: the middle row is still red.
-      final px = out.getPixel(50, 30);
-      expect(px.r.toInt(), 200);
-    });
-
-    test('trims facing left/right pillarbox bars', () {
-      final out = removeLetterbox(bars(w: 100, h: 100, left: 15, right: 15));
-      expect(out.width, 70);
-      expect(out.height, 100);
-    });
-
-    test('plain frames pass through untouched', () {
-      final out = removeLetterbox(_solid(90, 60, 200, 30, 30));
-      expect(out.width, 90);
-      expect(out.height, 60);
-    });
-
-    test('all-black covers are kept, not collapsed', () {
-      final out = removeLetterbox(_solid(50, 50, 0, 0, 0));
-      expect(out.width, 50);
-      expect(out.height, 50);
-    });
-
-    test('single-edge darkness never trims', () {
-      final out = removeLetterbox(bars(w: 100, h: 100, bottom: 20));
-      expect(out.width, 100);
-      expect(out.height, 100);
-    });
-
-    test('dark-but-not-black content is kept', () {
-      final out = removeLetterbox(_solid(80, 80, 30, 30, 30));
-      expect(out.width, 80);
-      expect(out.height, 80);
     });
   });
 }

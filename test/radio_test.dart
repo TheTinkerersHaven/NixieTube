@@ -85,6 +85,10 @@ class _FakeRadioTube extends InnerTube {
   Future<List<Shelf>> Function()? homeHook;
   int homeCalls = 0;
 
+  /// Scripted Explore shelves; [exploreHook] overrides (and can throw).
+  List<Shelf> exploreShelves = const [];
+  Future<List<Shelf>> Function()? exploreHook;
+
   @override
   Future<List<Track>> upNext(String videoId, {String? playlistId}) async {
     final gate = mixGates[videoId];
@@ -106,6 +110,28 @@ class _FakeRadioTube extends InnerTube {
       return (shelves: await hook(), moods: <String>[]);
     }
     return (shelves: <Shelf>[], moods: <String>[]);
+  }
+
+  @override
+  Future<List<Shelf>> explore() async {
+    final hook = exploreHook;
+    if (hook != null) return hook();
+    return exploreShelves;
+  }
+
+  /// Scripted Charts read (country label + worldwide chart); [chartsHook]
+  /// overrides (and can throw).
+  ({String? country, List<Track> tracks}) chartsFeed = (
+    country: null,
+    tracks: const <Track>[],
+  );
+  Future<({String? country, List<Track> tracks})> Function()? chartsHook;
+
+  @override
+  Future<({String? country, List<Track> tracks})> charts() async {
+    final hook = chartsHook;
+    if (hook != null) return hook();
+    return chartsFeed;
   }
 }
 
@@ -360,6 +386,73 @@ void main() {
       expect(env.state.home.loading, isFalse);
       expect(env.state.home.error, contains('boom'));
       expect(env.state.home.shelves, isEmpty);
+    });
+
+    test('explore shelves load alongside the home feed', () async {
+      final env = _app();
+      env.tube.homeHook = () async => [
+        Shelf('For you', [SongItem(_track('h'))]),
+      ];
+      env.tube.exploreShelves = [
+        Shelf('New albums & singles', [SongItem(_track('n'))]),
+        Shelf('Trending', [SongItem(_track('t'))]),
+      ];
+
+      await env.state.loadHome();
+      expect(env.state.home.error, isNull);
+      expect(env.state.home.shelves.map((s) => s.title), ['For you']);
+      expect(env.state.home.explore.map((s) => s.title), [
+        'New albums & singles',
+        'Trending',
+      ]);
+    });
+
+    test('a failing explore feed never sinks the home feed', () async {
+      final env = _app();
+      env.tube.homeHook = () async => [Shelf('For you', const [])];
+      env.tube.exploreHook = () => throw Exception('explore down');
+
+      await env.state.loadHome();
+      expect(env.state.home.error, isNull);
+      expect(env.state.home.shelves.map((s) => s.title), ['For you']);
+      expect(env.state.home.explore, isEmpty);
+    });
+
+    test('charts country and worldwide chart land in the home state', () async {
+      final env = _app();
+      env.tube.homeHook = () async => [Shelf('For you', const [])];
+      env.tube.chartsFeed = (
+        country: 'Italy',
+        tracks: [_track('g1'), _track('g2')],
+      );
+
+      await env.state.loadHome();
+      expect(env.state.home.country, 'Italy');
+      expect(env.state.home.globalTrending.map((t) => t.videoId), ['g1', 'g2']);
+    });
+
+    test('the worldwide chart row carries a preview, not the chart', () async {
+      final env = _app();
+      env.tube.homeHook = () async => [Shelf('For you', const [])];
+      env.tube.chartsFeed = (
+        country: null,
+        tracks: [for (var i = 0; i < 100; i++) _track('g$i')],
+      );
+
+      await env.state.loadHome();
+      expect(env.state.home.globalTrending, hasLength(25));
+    });
+
+    test('a failing charts feed never sinks the home feed', () async {
+      final env = _app();
+      env.tube.homeHook = () async => [Shelf('For you', const [])];
+      env.tube.chartsHook = () => throw Exception('charts down');
+
+      await env.state.loadHome();
+      expect(env.state.home.error, isNull);
+      expect(env.state.home.shelves.map((s) => s.title), ['For you']);
+      expect(env.state.home.country, isNull);
+      expect(env.state.home.globalTrending, isEmpty);
     });
   });
 }

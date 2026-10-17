@@ -117,6 +117,7 @@ class Track {
     this.rating = RatingStatus.unknown,
     this.likeCount = -1,
     this.dislikeCount = -1,
+    this.explicit = false,
   });
 
   final String videoId;
@@ -137,27 +138,37 @@ class Track {
   /// Public dislike count, or -1 when unknown.
   final int dislikeCount;
 
+  /// Flagged explicit by the backend (`MUSIC_EXPLICIT_BADGE`). UI-only
+  /// badge data from list/queue responses — never from `videoDetails`,
+  /// so a track fetched by id alone reads false.
+  final bool explicit;
+
   /// Comma-joined artist names for display rows.
   String artistNames() => artists.map((a) => a.name).join(', ');
 
   /// Largest thumbnail by width, regardless of shape. Banners, MPRIS
   /// and Discord use this; square tiles prefer [displayArtwork].
+  /// Ties (including missing dimensions) go to the LAST thumb:
+  /// YouTube orders sizes ascending, so the final entry is the
+  /// biggest.
   String? get bestArtwork {
     if (thumbnails.isEmpty) return null;
     var best = thumbnails.first;
     for (final t in thumbnails.skip(1)) {
-      if (t.width > best.width) best = t;
+      if (t.width >= best.width) best = t;
     }
     return best.url;
   }
 
   /// Song display art: prefer a true 1:1 cover over a larger 16:9 video
-  /// frame. Falls back to the largest available.
+  /// frame. Falls back to the largest available. Ties (including
+  /// missing dimensions) go to the LAST square thumb for the same
+  /// ascending-order reason as [bestArtwork].
   String? get displayArtwork {
     String? best;
     var bestW = -1;
     for (final t in thumbnails) {
-      if (t.isSquare && t.width > bestW) {
+      if (t.isSquare && t.width >= bestW) {
         bestW = t.width;
         best = t.url;
       }
@@ -179,6 +190,7 @@ class Track {
     RatingStatus? rating,
     int? likeCount,
     int? dislikeCount,
+    bool? explicit,
   }) {
     return Track(
       videoId: videoId ?? this.videoId,
@@ -196,6 +208,7 @@ class Track {
       rating: rating ?? this.rating,
       likeCount: likeCount ?? this.likeCount,
       dislikeCount: dislikeCount ?? this.dislikeCount,
+      explicit: explicit ?? this.explicit,
     );
   }
 
@@ -214,7 +227,8 @@ class Track {
       other.views == views &&
       other.rating == rating &&
       other.likeCount == likeCount &&
-      other.dislikeCount == dislikeCount;
+      other.dislikeCount == dislikeCount &&
+      other.explicit == explicit;
 
   @override
   int get hashCode => Object.hash(
@@ -231,6 +245,7 @@ class Track {
     rating,
     likeCount,
     dislikeCount,
+    explicit,
   );
 
   Map<String, dynamic> toJson() => {
@@ -247,6 +262,7 @@ class Track {
     'rating': rating.name,
     'likeCount': likeCount,
     'dislikeCount': dislikeCount,
+    if (explicit) 'explicit': true,
   };
 
   factory Track.fromJson(Map<String, dynamic> json) => Track(
@@ -277,6 +293,7 @@ class Track {
     rating: _ratingFromName(json['rating'] as String?),
     likeCount: (json['likeCount'] as num?)?.toInt() ?? -1,
     dislikeCount: (json['dislikeCount'] as num?)?.toInt() ?? -1,
+    explicit: json['explicit'] == true,
   );
 }
 

@@ -4,9 +4,10 @@
 // Keys: discord.appId, discord.enabled, discord.statusText, mpris.enabled,
 // google.clientId, google.clientSecret, lastfm.enabled, lastfm.apiKey,
 // lastfm.secret, lastfm.sessionKey, lastfm.username, reportPlayback,
-// a11y.highContrast, a11y.reducedMotion, lyrics.source, theme.source,
+// a11y.highContrast, a11y.reducedMotion, a11y.underlineLinks,
+// lyrics.source, theme.source,
 // theme.seedColor, theme.primary, theme.secondary, theme.tertiary,
-// theme.surface.
+// theme.surface, theme.systemPrimary.
 
 import 'dart:io' show File;
 
@@ -192,13 +193,15 @@ class SysConfig {
   String get lyricsSource => get('lyrics.source', 'lrclib');
   set lyricsSource(String v) => set('lyrics.source', v);
 
-  /// Accessibility (a11y). Both default to off so the app keeps its
+  /// Accessibility (a11y). All default to off so the app keeps its
   /// full-fidelity look until the user opts in.
   bool get highContrast => getBool('a11y.highContrast');
   bool get reducedMotion => getBool('a11y.reducedMotion');
+  bool get underlineLinks => getBool('a11y.underlineLinks');
 
   set highContrast(bool v) => setBool('a11y.highContrast', v);
   set reducedMotion(bool v) => setBool('a11y.reducedMotion', v);
+  set underlineLinks(bool v) => setBool('a11y.underlineLinks', v);
 
   /// Theme (appearance). `theme.source` is `system` (desktop accent
   /// via dynamic_color, when the platform reports one) or `custom`
@@ -236,6 +239,13 @@ class SysConfig {
   set themePrimaryOverride(int? v) => _setThemeOverride('primary', v);
   int? get themeSecondaryOverride => _themeOverride('secondary');
   set themeSecondaryOverride(int? v) => _setThemeOverride('secondary', v);
+
+  /// Last-seen system (desktop accent) primary, remembered so the
+  /// tray/window icon follows it from the first frame — before the
+  /// async platform fetch lands — and across restarts. Null (absent
+  /// key) means no system color has ever been reported.
+  int? get themeSystemPrimary => _themeOverride('systemPrimary');
+  set themeSystemPrimary(int? v) => _setThemeOverride('systemPrimary', v);
   int? get themeTertiaryOverride => _themeOverride('tertiary');
   set themeTertiaryOverride(int? v) => _setThemeOverride('tertiary', v);
   int? get themeSurfaceOverride => _themeOverride('surface');

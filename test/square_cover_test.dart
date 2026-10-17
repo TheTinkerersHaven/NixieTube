@@ -129,7 +129,7 @@ const List<Map<String, dynamic>> _square = [
 ];
 
 void main() {
-  test('album art wins over panel thumbs', () async {
+  test('own-row square wins without an album call', () async {
     final paths = <String>[];
     final tube = await _tube(
       _watchResponse([
@@ -139,15 +139,15 @@ void main() {
       _albumResponse(),
       paths,
     );
-    // The album header beats even the own row's square thumbs, which
-    // may hide letterboxing inside a square canvas.
+    // The row's own final thumb is the square hi-res art: taken
+    // as-is, no ranking and no album detour.
     expect(
       await tube.squareCoverOf('v1', albumId: 'MPRE1'),
-      'https://x/album.jpg',
+      'https://x/s2.jpg',
     );
-    expect(paths.where((p) => p.endsWith('/browse')), hasLength(1));
-    // Cached: no second request (album served it; panel untouched).
-    expect(await tube.squareCoverOf('v1'), 'https://x/album.jpg');
+    expect(paths, ['/youtubei/v1/next']);
+    // Cached: no second request.
+    expect(await tube.squareCoverOf('v1'), 'https://x/s2.jpg');
     expect(paths.length, 1);
   });
 
@@ -166,6 +166,7 @@ void main() {
       await tube.squareCoverOf('v1', albumId: 'MPRE1'),
       'https://x/s2.jpg',
     );
+    expect(paths, ['/youtubei/v1/next']);
   });
 
   test('16:9-only panel falls back to the album art', () async {
@@ -198,6 +199,29 @@ void main() {
     expect(paths, ['/youtubei/v1/next']);
   });
 
+  test('a miss without album retries once the album is known', () async {
+    final paths = <String>[];
+    final tube = await _tube(
+      _watchResponse([_panelRow('v1', _frame)]),
+      _albumResponse(),
+      paths,
+    );
+    expect(await tube.squareCoverOf('v1'), isNull);
+    // Same miss repeats free…
+    expect(await tube.squareCoverOf('v1'), isNull);
+    // …but a newly known album id re-attempts through the album page
+    // (checking its own row first, as always).
+    expect(
+      await tube.squareCoverOf('v1', albumId: 'MPRE1'),
+      'https://x/album.jpg',
+    );
+    expect(paths, [
+      '/youtubei/v1/next',
+      '/youtubei/v1/next',
+      '/youtubei/v1/browse',
+    ]);
+  });
+
   test('one album browse serves every track off it', () async {
     final paths = <String>[];
     final tube = await _tube(
@@ -213,9 +237,13 @@ void main() {
       await tube.squareCoverOf('v2', albumId: 'MPRE1'),
       'https://x/album.jpg',
     );
-    // A single album browse total — and neither track paid for a
-    // panel call, since the album answered first.
-    expect(paths, ['/youtubei/v1/browse']);
+    // Each track checks its own row first (16:9, no square), then a
+    // single shared album browse answers both.
+    expect(paths, [
+      '/youtubei/v1/next',
+      '/youtubei/v1/browse',
+      '/youtubei/v1/next',
+    ]);
   });
 
   Future<InnerTube> tubeWith(
@@ -255,18 +283,39 @@ void main() {
     expect(paths, ['/youtubei/v1/next', '/youtubei/v1/next']);
   });
 
-  test('a dying panel gives up after retries and stays missing', () async {
+  test('a dying panel never condemns the track, so a retry re-spends', () async {
     var nextCalls = 0;
     final tube = await tubeWith((options) async {
       nextCalls++;
       throw _blip();
     });
     expect(await tube.squareCoverOf('v1'), isNull);
-    // 3 attempts (each retried once inside post), then missing
-    // with no second wave.
+    // 3 attempts (each retried once inside post), then no answer at all.
     expect(nextCalls, 6);
+    // A blip is not proof of absence: the track is deliberately not
+    // remembered as coverless, so a later ask spends a fresh budget.
     expect(await tube.squareCoverOf('v1'), isNull);
-    expect(nextCalls, 6);
+    expect(nextCalls, 12);
+  });
+
+  test('a throttled panel (error body) does not condemn the track', () async {
+    var nextCalls = 0;
+    final tube = await tubeWith((options) async {
+      nextCalls++;
+      // YouTube answers throttling with an error body, not a panel.
+      return (
+        429,
+        jsonEncode({
+          'error': {'code': 429, 'message': 'quota exceeded'},
+        }),
+      );
+    });
+    expect(await tube.squareCoverOf('v1'), isNull);
+    expect(nextCalls, 1);
+    // Throttling says nothing about this video's art, so the next ask
+    // goes back to the network instead of trusting the miss.
+    expect(await tube.squareCoverOf('v1'), isNull);
+    expect(nextCalls, 2);
   });
 
   test('an album blip retries too', () async {
@@ -286,7 +335,40 @@ void main() {
       'https://x/album.jpg',
     );
     expect(browseCalls, 2);
-    // The album answered, so the panel was never fetched.
-    expect(paths, ['/youtubei/v1/browse', '/youtubei/v1/browse']);
+    // The row is checked first (16:9, no square), then the album
+    // browse blips once and retries.
+    expect(paths, [
+      '/youtubei/v1/next',
+      '/youtubei/v1/browse',
+      '/youtubei/v1/browse',
+    ]);
+  });
+
+  test('dimension-less panel thumbs resolve to the last one', () async {
+    // Some responses omit width/height: with no numbers to rank,
+    // the final entry wins (YouTube orders sizes ascending).
+    Map<String, dynamic> dimlessRow(String videoId) => {
+      'playlistPanelVideoRenderer': {
+        'title': {
+          'runs': [
+            {'text': 'Title $videoId'},
+          ],
+        },
+        'navigationEndpoint': {
+          'watchEndpoint': {'videoId': videoId},
+        },
+        'thumbnail': {
+          'thumbnails': [
+            {'url': 'https://x/a.jpg=w60-h60-l90-rj'},
+            {'url': 'https://x/a.jpg=w120-h120-l90-rj'},
+            {'url': 'https://x/a.jpg=w544-h544-l90-rj'},
+          ],
+        },
+      },
+    };
+    final paths = <String>[];
+    final tube = await _tube(_watchResponse([dimlessRow('v1')]), null, paths);
+    expect(await tube.squareCoverOf('v1'), 'https://x/a.jpg=w544-h544-l90-rj');
+    expect(paths, ['/youtubei/v1/next']);
   });
 }

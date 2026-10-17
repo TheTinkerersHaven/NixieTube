@@ -21,6 +21,7 @@ class LyricsList extends StatefulWidget {
     required this.positionMs,
     required this.state,
     this.large = false,
+    this.visibleTabIndex,
   });
 
   final ScrollController ctrl;
@@ -30,6 +31,12 @@ class LyricsList extends StatefulWidget {
 
   /// Full-screen presentation: bigger type and airier rows.
   final bool large;
+
+  /// Tab index this list lives on, when inside a tab strip. The
+  /// auto-scroll only runs while that tab is selected: scrolling an
+  /// offstage list would page the TabBarView back to it. Null (the
+  /// fullscreen view) always follows.
+  final int? visibleTabIndex;
 
   @override
   State<LyricsList> createState() => _LyricsListState();
@@ -78,6 +85,16 @@ class _LyricsListState extends State<LyricsList> {
       _autoIndex = currentIndex;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
+        // Off-tab lists highlight but never scroll: the lines keep
+        // tracking (so the tab is current on return), but scrolling
+        // an ancestor PageView would page the TabBarView back here.
+        final tabIndex = widget.visibleTabIndex;
+        if (tabIndex != null) {
+          final tabs = DefaultTabController.maybeOf(context);
+          if (tabs == null || tabs.index != tabIndex || tabs.indexIsChanging) {
+            return;
+          }
+        }
         // The lyrics may have swapped since this frame was scheduled;
         // the fresh key list may no longer cover the stale index.
         if (currentIndex < 0 || currentIndex >= _rowKeys.length) return;

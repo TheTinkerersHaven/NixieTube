@@ -133,6 +133,21 @@ void main() {
     await tester.pump();
   }
 
+  /// Opens the Last.fm custom-credentials modal via the card's cog.
+  Future<void> openKeysModal(WidgetTester tester) async {
+    final cog = find.descendant(
+      of: find.ancestor(
+        of: find.text('Scrobble plays'),
+        matching: find.byType(Card),
+      ),
+      matching: find.byTooltip('Advanced settings'),
+    );
+    await reveal(tester, cog);
+    await tester.tap(cog);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
   testWidgets('Last.fm card renders, toggle and credentials persist', (
     tester,
   ) async {
@@ -156,10 +171,12 @@ void main() {
     await tester.tap(switchFinder);
     await tester.pump();
     expect(config.lastfmEnabled, isTrue);
-    // Key/secret are still empty, so the status reads "signed out".
+    // No session yet, so the status reads "signed out" (empty fields
+    // fall back to the built-in key — only the session is missing).
     expect(find.textContaining('Status: signed out'), findsOneWidget);
 
-    // Typing credentials persists them.
+    // Typing credentials (behind the cog) persists them.
+    await openKeysModal(tester);
     await tester.enterText(
       find.widgetWithText(TextField, 'Last.fm API key'),
       'apikey',
@@ -190,6 +207,7 @@ void main() {
     );
     await tester.tap(switchFinder);
     await tester.pump();
+    await openKeysModal(tester);
     await tester.enterText(
       find.widgetWithText(TextField, 'Last.fm API key'),
       'apikey',
@@ -204,6 +222,10 @@ void main() {
     expect(config.lastfmApiKey, 'apikey');
     expect(config.lastfmSecret, 'secret');
     expect(config.lastfmEnabled, isTrue);
+
+    // Dismiss the modal so the card's Connect button is tappable.
+    await tester.tap(find.text('Close'));
+    await tester.pump();
 
     // Connect: request token + open the browser approval URL. Dio's
     // interceptor chain runs on event-queue turns, which FakeAsync
@@ -234,5 +256,64 @@ void main() {
     await tester.pump();
     expect(config.lastfmSessionKey, '');
     expect(find.textContaining('Status: signed out'), findsOneWidget);
+  });
+
+  testWidgets('connect works with empty fields via the built-in key',
+      (tester) async {
+    await pumpSettings(tester);
+    await tester.pump();
+    await reveal(tester, find.text('Last.fm scrobbling'));
+
+    // Toggle on, leave both credential fields empty.
+    final switchFinder = find.descendant(
+      of: find.ancestor(
+        of: find.text('Scrobble plays'),
+        matching: find.byType(Card),
+      ),
+      matching: find.byType(Switch),
+    );
+    await tester.tap(switchFinder);
+    await tester.pump();
+
+    // Connect is actionable without custom credentials; the browser
+    // approval URL carries the built-in key.
+    await reveal(tester, find.text('Connect with last.fm'));
+    await tester.tap(find.text('Connect with last.fm'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+    expect(opened, isNotNull);
+    expect(opened, contains('api_key=$defaultLastfmApiKey'));
+    expect(opened, contains('token=tok123'));
+  });
+
+  testWidgets('cog opens the custom-credentials modal', (tester) async {
+    await pumpSettings(tester);
+    await tester.pump();
+    await reveal(tester, find.text('Last.fm scrobbling'));
+
+    // Fields live behind the Last.fm card's cog, not inline.
+    expect(find.widgetWithText(TextField, 'Last.fm API key'), findsNothing);
+    await openKeysModal(tester);
+    expect(
+      find.widgetWithText(TextField, 'Last.fm API key'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(TextField, 'Last.fm shared secret'),
+      findsOneWidget,
+    );
+
+    // Typing a custom key persists it.
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Last.fm API key'),
+      'apikey',
+    );
+    await tester.pump();
+    expect(config.lastfmApiKey, 'apikey');
+
+    // Closing the modal keeps the card usable.
+    await tester.tap(find.text('Close'));
+    await tester.pump();
+    expect(find.text('Connect with last.fm'), findsOneWidget);
   });
 }

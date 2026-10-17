@@ -16,6 +16,7 @@ import '../../sys/http_client.dart';
 import '../../sys/paths.dart';
 import 'auth_session.dart';
 import 'json.dart';
+import 'metadata.dart';
 import 'parse.dart';
 
 const _base = 'https://music.youtube.com/youtubei/v1';
@@ -86,13 +87,31 @@ class WatchtimeContext {
   final String? ptrackingUrl;
 }
 
+/// Thrown when a cover lookup could not reach a verdict (transport
+/// failure, throttling, error body) — distinct from a lookup that
+/// answered "no square art exists for this video".
+class _CoverLookupUnavailable implements Exception {
+  const _CoverLookupUnavailable();
+}
+
 /// InnerTube client: anonymous by default, authenticated via [AuthSession].
 class InnerTube {
   InnerTube({
     this.auth = const AuthSession.anonymous(),
     Dio? dio,
     String? squareCoversPath,
-  }) : _dio = dio ?? newHttpClient(),
+  }) : _dio =
+           dio ??
+           newResilientClient(
+             // Cover lookups already retry at the call level (and a
+             // burst of tiles resolves at once), so keep the wire
+             // budget small here: the layers must not multiply into a
+             // storm when the backend is throttling.
+             policy: const RetryPolicy(
+               maxAttempts: 3,
+               maxDelay: Duration(seconds: 5),
+             ),
+           ),
        _squareCoversFile = squareCoversPath == null
            ? null
            : File(squareCoversPath);
@@ -131,6 +150,12 @@ class InnerTube {
   final Map<String, String> _squareCovers = {};
   final Map<String, Future<String?>> _squareCoverInflight = {};
   final Set<String> _squareCoverMissing = {};
+
+  /// Missing-cover key: the video plus its known album (empty when
+  /// unknown), so gaining an album id retries a track condemned
+  /// without one.
+  static String _missingKey(String videoId, String? albumId) =>
+      '$videoId|${(albumId != null && albumId.isNotEmpty) ? albumId : ''}';
   File? _squareCoversFile;
   Timer? _squareCoverSaveTimer;
   bool _squareCoversLoaded = false;
@@ -218,12 +243,15 @@ class InnerTube {
   /// Resolves and caches the square cover for [videoId] (one album
   /// call on miss when the album id is known, else one `next` call),
   /// coalescing concurrent lookups and bounding concurrency.
-  /// Tracks with no square cover are remembered so they aren't retried.
+  /// Tracks with no square cover are remembered per (video, album)
+  /// so a retry with a newly known album id re-attempts, while
+  /// identical repeats never refetch.
   Future<String?> squareCoverOf(String videoId, {String? albumId}) async {
     _loadSquareCovers();
     final cached = _squareCovers[videoId];
     if (cached != null) return cached;
-    if (_squareCoverMissing.contains(videoId)) return null;
+    final missingKey = _missingKey(videoId, albumId);
+    if (_squareCoverMissing.contains(missingKey)) return null;
     final inflight = _squareCoverInflight[videoId];
     if (inflight != null) return inflight;
     final future = _resolveSquareCoverBounded(videoId, albumId: albumId);
@@ -233,9 +261,14 @@ class InnerTube {
       if (url != null && url.isNotEmpty) {
         noteSquareCover(videoId, url);
       } else {
-        _squareCoverMissing.add(videoId);
+        _squareCoverMissing.add(missingKey);
       }
       return url;
+    } on _CoverLookupUnavailable {
+      // The lookup itself failed, so nothing can be concluded about
+      // this track's art: it is deliberately not remembered as
+      // missing, and the next tile to ask tries again.
+      return null;
     } finally {
       _squareCoverInflight.remove(videoId);
     }
@@ -260,17 +293,25 @@ class InnerTube {
     }
   }
 
-  /// Resolves the square cover for [videoId]: the album page art
-  /// first, the panel's own row as fallback. Panel thumbs sometimes
-  /// report square dimensions around letterboxed content, so they
-  /// can't be trusted; the album header is the only always-true
-  /// square. Only the row's own art ever counts — the first panel
-  /// track carrying square art is often a *different* song, and
-  /// stamping that as this video's cover would be wrong, not just
-  /// letterboxed. Transport blips (not error bodies or empty parses,
-  /// which are deterministic) retry with backoff instead of
-  /// condemning the track on one hiccup.
+  /// Resolves the square cover for [videoId] from the watch-next
+  /// panel's own row: for songs its last thumbnail is the square
+  /// hi-res art, taken as-is — no ranking, no detour. Taken only
+  /// when square (explicit dimensions or the `=w-h` URL shape):
+  /// music-video rows end in a 16:9 still, which falls through to
+  /// the fetched album art, then to missing. Only the row's own art
+  /// ever counts — the first panel track carrying square art is
+  /// often a *different* song, and stamping that as this video's
+  /// cover would be wrong, not just letterboxed. A lookup that never
+  /// answered (throttled, timed out, error body) throws instead of
+  /// answering, so one hiccup cannot condemn the track for the
+  /// session; only a real panel that carries no square art does.
   Future<String?> _resolveSquareCover(String videoId, {String? albumId}) async {
+    final res = await _fetchWithRetry(() => _nextResponse(videoId));
+    if (res == null || _isErrorResponse(res)) {
+      throw const _CoverLookupUnavailable();
+    }
+    final url = _ownRowLastThumb(res, videoId);
+    if (url != null) return url;
     if (albumId != null && albumId.isNotEmpty) {
       final detail = await _fetchWithRetry(() => _albumForCover(albumId));
       if (detail != null) {
@@ -278,13 +319,47 @@ class InnerTube {
         if (url != null) return url;
       }
     }
-    final res = await _fetchWithRetry(() => _nextResponse(videoId));
-    if (res != null && !_isErrorResponse(res)) {
-      for (final p in panelsOf(res)) {
-        if (p.videoId != videoId) continue;
-        final url = _largestSquareThumb(p.thumbnails);
-        if (url != null) return url;
-      }
+    return null;
+  }
+
+  /// Last thumbnail of the watch-next row for [videoId], or null
+  /// unless it is square. Reads the raw response (not the merged
+  /// track thumbs) so the pick is exactly the row's final entry.
+  static String? _ownRowLastThumb(dynamic res, String videoId) {
+    final contents = nav(res, const [
+      'contents',
+      'singleColumnMusicWatchNextResultsRenderer',
+      'tabbedRenderer',
+      'watchNextTabbedResultsRenderer',
+      'tabs',
+      0,
+      'tabRenderer',
+      'content',
+      'musicQueueRenderer',
+      'content',
+      'playlistPanelRenderer',
+      'contents',
+    ]);
+    if (contents is! List) return null;
+    for (final entry in contents) {
+      final row = nav(entry, const ['playlistPanelVideoRenderer']);
+      if (row is! Map) continue;
+      final id = str(
+        nav(row, const ['navigationEndpoint', 'watchEndpoint', 'videoId']),
+      );
+      if (id != videoId) continue;
+      final thumbs = nav(row, const ['thumbnail', 'thumbnails']);
+      if (thumbs is! List || thumbs.isEmpty) return null;
+      final last = thumbs.last;
+      if (last is! Map) return null;
+      final url = str(last['url']);
+      if (url == null || url.isEmpty) return null;
+      final thumb = Thumbnail(
+        url,
+        width: (last['width'] as num?)?.toInt() ?? 0,
+        height: (last['height'] as num?)?.toInt() ?? 0,
+      );
+      return thumb.isSquare ? url : null;
     }
     return null;
   }
@@ -337,10 +412,13 @@ class InnerTube {
   }
 
   static String? _largestSquareThumb(List<Thumbnail> thumbs) {
+    // Last wins ties (including missing dimensions): YouTube orders
+    // thumbnail sizes ascending, so the final square entry is the
+    // biggest — the `thumbnails[-1]` rule for song rows.
     Thumbnail? best;
     var bestW = -1;
     for (final t in thumbs) {
-      if (t.isSquare && t.width > bestW) {
+      if (t.isSquare && t.width >= bestW) {
         bestW = t.width;
         best = t;
       }
@@ -472,7 +550,9 @@ class InnerTube {
         response = await _request(path, bodyString, candidate);
       } catch (_) {
         // Transport blips (timeout, reset) throw; auth verdicts come back
-        // as error bodies. Retry the transport once, then propagate.
+        // as error bodies. Retry the transport once, then propagate — the
+        // Dio retry interceptor already front-loads resilience, and cover
+        // lookups have their own [_fetchWithRetry] ladder.
         response = await _request(path, bodyString, candidate);
       }
       if (!_isErrorResponse(response)) {
@@ -541,26 +621,165 @@ class InnerTube {
   /// (chipCloudRenderer titles), empty when the response has no tabs.
   Future<({List<Shelf> shelves, List<String> moods})> home() async {
     final res = await post('browse', _bodyWith({'browseId': 'FEmusic_home'}));
+    return (shelves: _browseShelvesFrom(res), moods: parseHomeMoods(res));
+  }
+
+  /// Loads YouTube's Explore feed. Unlike the personalized home feed,
+  /// which rotates and routinely omits sections, Explore carries stable
+  /// editorial shelves ("New albums & singles", "Trending", "Moods &
+  /// genres", …) that the home screen pins as fixed sections. Empty
+  /// when the response has no tabs.
+  Future<List<Shelf>> explore() async {
+    final res = await post(
+      'browse',
+      _bodyWith({'browseId': 'FEmusic_explore'}),
+    );
+    return _browseShelvesFrom(res);
+  }
+
+  /// YouTube's Charts feed: per-country and worldwide music charts.
+  static const _chartsBrowseId = 'FEmusic_charts';
+
+  /// Region code the Charts feed gives its worldwide (global) chart.
+  static const _globalChartCode = 'ZZ';
+
+  /// The home screen's trending sources, read from the Charts feed: the
+  /// display name of the user's own country plus the worldwide chart's
+  /// tracks.
+  ///
+  /// Explore's "Trending" shelf is region-derived (it follows the
+  /// region the request comes from), so only the country row can use
+  /// it; the worldwide chart lives on the Charts page behind its
+  /// country filter, which starts on the request's region and lists the
+  /// worldwide chart only once switched to Global. So this reads the
+  /// filter first (the country's name and the Global option), switches
+  /// the filter to Global and loads the chart playlist the feed then
+  /// offers. Either half comes back empty when the feed, the option or
+  /// the playlist is unavailable — the row just loses its name/hides.
+  Future<({String? country, List<Track> tracks})> charts() async {
+    final options = _chartCountryOptions(
+      await post('browse', _bodyWith({'browseId': _chartsBrowseId})),
+    );
+    String? country;
+    String? globalKey;
+    final region = systemRegion();
+    for (final option in options) {
+      if (option.code == region) country = option.title;
+      if (option.code == _globalChartCode) globalKey = option.key;
+    }
+    return (country: country, tracks: await _globalChartTracks(globalKey));
+  }
+
+  /// Selectable chart regions in a Charts response: each option's region
+  /// code, display name and the key to submit when switching to it.
+  static List<({String code, String title, String key})> _chartCountryOptions(
+    dynamic res,
+  ) {
+    final options = nav(res, const [
+      'contents',
+      'singleColumnBrowseResultsRenderer',
+      'tabs',
+      0,
+      'tabRenderer',
+      'content',
+      'sectionListRenderer',
+      'contents',
+      0,
+      'musicShelfRenderer',
+      'subheaders',
+      0,
+      'musicSideAlignedItemRenderer',
+      'startItems',
+      0,
+      'musicSortFilterButtonRenderer',
+      'menu',
+      'musicMultiSelectMenuRenderer',
+      'options',
+    ]);
+    if (options is! List) return const [];
+    const item = 'musicMultiSelectMenuItemRenderer';
+    final out = <({String code, String title, String key})>[];
+    for (final option in options) {
+      final title = runsText(nav(option, const [item, 'title', 'runs']));
+      final key =
+          nav(option, const [item, 'formItemEntityKey'])?.toString() ?? '';
+      final code = _chartCountryCode(key);
+      if (title.isEmpty || code == null) continue;
+      out.add((code: code, title: title, key: key));
+    }
+    return out;
+  }
+
+  /// Region code a chart country option encodes in its key: the key is
+  /// base64 of an opaque form id ending in the region's ISO code
+  /// ("ZZ" for the worldwide chart).
+  static String? _chartCountryCode(String key) {
+    if (key.isEmpty) return null;
+    try {
+      final text = utf8.decode(
+        base64.decode(Uri.decodeComponent(key)),
+        allowMalformed: true,
+      );
+      final tail = text.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+      if (tail.length < 2) return null;
+      final code = tail.substring(tail.length - 2).toUpperCase();
+      return RegExp(r'^[A-Z]{2}$').hasMatch(code) ? code : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Tracks of the worldwide chart: switch the Charts country filter to
+  /// the option [globalKey] stands for, then load the chart playlist the
+  /// feed lists (it names worldwide charts in its own words, so match
+  /// "global" and prefer the top-100 chart).
+  Future<List<Track>> _globalChartTracks(String? globalKey) async {
+    if (globalKey == null) return const [];
+    final res = await post('browse', {
+      'context': _contextBlock()['context'],
+      'browseId': _chartsBrowseId,
+      'formData': {
+        'selectedValues': [globalKey],
+      },
+    });
+    final candidates = [
+      for (final shelf in _browseShelvesFrom(res))
+        for (final item in shelf.items.whereType<BrowseItem>())
+          if (item.browseId.isNotEmpty &&
+              item.title.toLowerCase().contains('global'))
+            item,
+    ];
+    for (final candidate in candidates) {
+      if (candidate.title.toLowerCase().contains('top 100')) {
+        return (await playlist(candidate.browseId))?.tracks ?? const [];
+      }
+    }
+    if (candidates.isEmpty) return const [];
+    return (await playlist(candidates.first.browseId))?.tracks ?? const [];
+  }
+
+  /// Parses the section list of a `browse` response into shelves; the
+  /// shared shape behind [home] and [explore].
+  static List<Shelf> _browseShelvesFrom(dynamic res) {
     final tabs = nav(res, const [
       'contents',
       'singleColumnBrowseResultsRenderer',
       'tabs',
     ]);
-    if (tabs is! List) return (shelves: <Shelf>[], moods: <String>[]);
-    if (tabs.isEmpty) return (shelves: <Shelf>[], moods: <String>[]);
+    if (tabs is! List || tabs.isEmpty) return const [];
     final content = nav(tabs.first, const [
       'tabRenderer',
       'content',
       'sectionListRenderer',
       'contents',
     ]);
-    if (content is! List) return (shelves: <Shelf>[], moods: <String>[]);
+    if (content is! List) return const [];
     final out = <Shelf>[];
     for (final el in content) {
       final shelf = parseShelf(el);
       if (shelf != null) out.add(shelf);
     }
-    return (shelves: out, moods: parseHomeMoods(res));
+    return out;
   }
 
   /// Searches YouTube Music and normalizes results into stable categories
@@ -863,6 +1082,33 @@ class InnerTube {
     return panelsOf(res);
   }
 
+  /// Reads the YTM watch-history page (`FEmusic_history`): per-video
+  /// play counts plus the parsed tracks (most recent first) so heavy
+  /// rotation from other sessions can join the quick-picks pool on
+  /// this device. History lists every play, so repeats count like
+  /// the local play-count map does. Empty when signed out or on any
+  /// failure — callers keep existing counts then. One page only
+  /// (a few hundred entries); no continuation chasing.
+  Future<({Map<String, int> counts, List<Track> tracks})> historySnapshot({
+    int maxItems = 500,
+  }) async {
+    try {
+      final res = await post(
+        'browse',
+        _bodyWith({'browseId': 'FEmusic_history'}),
+      );
+      if (_isErrorResponse(res)) {
+        return (counts: <String, int>{}, tracks: <Track>[]);
+      }
+      return (
+        counts: parseHistoryCounts(res, maxItems: maxItems),
+        tracks: parseHistoryTracks(res, maxItems: maxItems),
+      );
+    } catch (_) {
+      return (counts: <String, int>{}, tracks: <Track>[]);
+    }
+  }
+
   /// Resolves full metadata (artists/album/artwork/like-state) for one
   /// track without playing it: one watch-next call carries the canonical
   /// panel data plus the like state, then the album page fills kind/year.
@@ -983,6 +1229,14 @@ class InnerTube {
             : result.artists,
         album: preferredAlbum,
         thumbnails: thumbs,
+        // Panel badge/duration fill what's missing: list sources often
+        // lack both (search rows carry no length, Data API no badges).
+        // OR, never overwrite — a missing badge means "not marked",
+        // not "clean", and catalog durations beat panel ones.
+        explicit: result.explicit || p.explicit,
+        durationSec: result.durationSec > 0
+            ? result.durationSec
+            : p.durationSec,
       );
       // Remember the resolved square cover so lists can show it too.
       final sqCover = _largestSquareThumb(result.thumbnails);
@@ -1037,36 +1291,86 @@ class InnerTube {
     return tracks.map((t) => enriched[t.videoId] ?? t).toList();
   }
 
-  /// Reads the like state of a video from the player overlay or queue panel.
-  Future<RatingStatus> rating(String videoId) async {
-    if (videoId.trim().isEmpty) return RatingStatus.unknown;
+  /// One watch-next read for [videoId]: its like state plus the lengths of
+  /// every queue row the response carries.
+  ///
+  /// The signed-in queue pass already makes this call per row to read like
+  /// states, and those responses carry the queue's `lengthText` values
+  /// (always for the row itself, and for album/playlist/radio plays for
+  /// the whole context) — so queue durations cost no extra request.
+  ///
+  /// Returns null when the request itself failed; a result with an unknown
+  /// rating and no entry for [videoId] means the response carried no
+  /// length for that row.
+  Future<({RatingStatus rating, Map<String, int> durations})?> watchInfo(
+    String videoId,
+  ) async {
+    if (videoId.trim().isEmpty) return null;
+    dynamic res;
     try {
-      final res = await post(
+      res = await post(
         'next',
         _bodyWith({'videoId': videoId, 'queueContext': ''}),
       );
-      final overlay = str(
-        nav(res, const [
-          'playerOverlays',
-          'playerOverlayRenderer',
-          'actions',
-          0,
-          'likeButtonRenderer',
-          'likeStatus',
-        ]),
-      );
-      if (overlay != null && overlay.trim().isNotEmpty) {
-        return RatingStatus.fromValue(overlay);
-      }
-      for (final panel in findAll(res, 'playlistPanelVideoRenderer')) {
-        final t = parsePanelVideo(panel);
-        if (t != null && t.videoId == videoId) return t.rating;
-      }
-      return RatingStatus.unknown;
     } catch (_) {
-      return RatingStatus.unknown;
+      return null;
     }
+    if (res == null || _isErrorResponse(res)) return null;
+    final durations = <String, int>{};
+    var rating = RatingStatus.unknown;
+    for (final panel in findAll(res, 'playlistPanelVideoRenderer')) {
+      final t = parsePanelVideo(panel);
+      if (t == null) continue;
+      if (t.durationSec > 0) durations[t.videoId] = t.durationSec;
+      if (t.videoId == videoId) rating = t.rating;
+    }
+    final overlay = str(
+      nav(res, const [
+        'playerOverlays',
+        'playerOverlayRenderer',
+        'actions',
+        0,
+        'likeButtonRenderer',
+        'likeStatus',
+      ]),
+    );
+    if (overlay != null && overlay.trim().isNotEmpty) {
+      rating = RatingStatus.fromValue(overlay);
+    }
+    return (rating: rating, durations: durations);
   }
+
+  /// Batch [watchInfo] reads with bounded concurrency, keyed by the
+  /// requested id. Failed reads are absent from the map, so callers keep
+  /// their current state instead of caching a gap.
+  Future<Map<String, ({RatingStatus rating, Map<String, int> durations})>>
+  watchInfos(List<String> videoIds, {int concurrency = 8}) async {
+    final seen = <String>{};
+    final ids = <String>[];
+    for (final id in videoIds.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+      if (seen.add(id)) ids.add(id);
+    }
+    final out = <String, ({RatingStatus rating, Map<String, int> durations})>{};
+    if (ids.isEmpty) return out;
+    final c = concurrency < 1 ? 1 : concurrency;
+    for (var i = 0; i < ids.length; i += c) {
+      final end = (i + c < ids.length) ? i + c : ids.length;
+      final values = await Future.wait(
+        ids
+            .sublist(i, end)
+            .map((id) async => MapEntry(id, await watchInfo(id))),
+      );
+      for (final e in values) {
+        final info = e.value;
+        if (info != null) out[e.key] = info;
+      }
+    }
+    return out;
+  }
+
+  /// Reads the like state of a video from the player overlay or queue panel.
+  Future<RatingStatus> rating(String videoId) async =>
+      (await watchInfo(videoId))?.rating ?? RatingStatus.unknown;
 
   /// Reads like states for many videos concurrently, skipping unknown ones.
   Future<Map<String, RatingStatus>> ratings(

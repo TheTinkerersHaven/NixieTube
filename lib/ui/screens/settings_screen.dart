@@ -40,6 +40,14 @@ class SettingsScreen extends StatelessWidget {
     final reducedMotion = context.select<AppState, bool>(
       (s) => s.config.reducedMotion,
     );
+    final underlineLinks = context.select<AppState, bool>(
+      (s) => s.config.underlineLinks,
+    );
+    // Drives the ordered sign-in: the cookie card unlocks once the
+    // Google (OAuth) sign-in is done.
+    final oauthSignedIn = context.select<AppState, bool>(
+      (s) => s.oauthSignedIn,
+    );
     final state = context.read<AppState>();
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -58,20 +66,25 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: 16),
         ],
         // --- Data API / OAuth ---
-        // Independent from the cookie session below: a Google OAuth
-        // token unlocks playlists, liked songs, recent activity and
-        // followed artists. A browser cookie will not work for these.
+        // First in order: the cookie session below stays disabled until
+        // this Google (OAuth) sign-in is done. A Google OAuth token
+        // unlocks playlists, liked songs, recent activity and followed
+        // artists; a browser cookie will not work for these.
         const _SectionTitle('YouTube Data API'),
         const SizedBox(height: 8),
         _SettingsCard(child: const _GoogleSignInCard()),
         const SizedBox(height: 24),
         // --- InnerTube / cookie ---
-        // Separate from OAuth above: a browser cookie unlocks playback,
-        // listening history (watchtime) and the InnerTube library.
-        // An OAuth token will not work for these.
+        // Second in order: the cookie session below is disabled until
+        // the Google (OAuth) sign-in above is done, so the two steps
+        // are completed in order rather than half-configured.
         const _SectionTitle('InnerTube (cookie)'),
         const SizedBox(height: 8),
-        _SettingsCard(child: const _CookieSignInCard()),
+        _SettingsCard(
+          child: oauthSignedIn
+              ? const _CookieSignInCard()
+              : const _LoginOrderNotice(),
+        ),
         const SizedBox(height: 24),
         const _SectionTitle('Playback'),
         const SizedBox(height: 8),
@@ -119,6 +132,18 @@ class SettingsScreen extends StatelessWidget {
                 value: reducedMotion,
                 onChanged: (v) {
                   state.config.reducedMotion = v;
+                  state.refreshConfig();
+                },
+              ),
+              const Divider(),
+              _ToggleRow(
+                title: 'Underline links',
+                subtitle:
+                    'Underlines tappable links in the info tab. '
+                    'Off keeps them plain primary-colored text.',
+                value: underlineLinks,
+                onChanged: (v) {
+                  state.config.underlineLinks = v;
                   state.refreshConfig();
                 },
               ),
@@ -186,7 +211,9 @@ class _SettingsCard extends StatelessWidget {
 }
 
 /// A uniform settings toggle row: a title, an optional
-/// description, and a trailing switch. Every toggle in the
+/// description, a trailing switch, and an optional cog button that
+/// opens a modal with the row's advanced fields (custom keys live
+/// there so the card stays uncluttered). Every toggle in the
 /// settings screen uses this so they read identically.
 class _ToggleRow extends StatelessWidget {
   const _ToggleRow({
@@ -196,6 +223,7 @@ class _ToggleRow extends StatelessWidget {
     this.subtitle,
     this.subtitleColor,
     this.enabled = true,
+    this.onSettings,
   });
 
   final String title;
@@ -204,6 +232,9 @@ class _ToggleRow extends StatelessWidget {
   final bool value;
   final bool enabled;
   final ValueChanged<bool> onChanged;
+
+  /// Opens the advanced-fields modal, or null when the row has none.
+  final VoidCallback? onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -227,7 +258,43 @@ class _ToggleRow extends StatelessWidget {
             ],
           ),
         ),
+        if (onSettings != null)
+          IconButton(
+            icon: const Icon(Icons.settings_rounded),
+            tooltip: 'Advanced settings',
+            onPressed: onSettings,
+          ),
         Switch(value: value, onChanged: enabled ? onChanged : null),
+      ],
+    );
+  }
+}
+
+/// Modal shell for a row's advanced fields: title on top, fields
+/// below, and a single Close action. Content scrolls if the window
+/// is short.
+class _SettingsModal extends StatelessWidget {
+  const _SettingsModal({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(title),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      ),
+      actions: [
+        M3ETextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
       ],
     );
   }
@@ -527,22 +594,6 @@ class _IntegrationsCard extends StatefulWidget {
 }
 
 class _IntegrationsCardState extends State<_IntegrationsCard> {
-  late final TextEditingController _appId;
-
-  @override
-  void initState() {
-    super.initState();
-    _appId = TextEditingController(
-      text: context.read<AppState>().config.discordAppId,
-    );
-  }
-
-  @override
-  void dispose() {
-    _appId.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
@@ -583,8 +634,49 @@ class _IntegrationsCardState extends State<_IntegrationsCard> {
             discord.setEnabled(v);
             state.refreshConfig();
           },
+          onSettings: () => showDialog(
+            context: context,
+            builder: (context) => const _DiscordAppIdDialog(),
+          ),
         ),
-        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+/// Custom Discord application ID, kept behind the integration row's
+/// cog. Empty means the built-in ID.
+class _DiscordAppIdDialog extends StatefulWidget {
+  const _DiscordAppIdDialog();
+
+  @override
+  State<_DiscordAppIdDialog> createState() => _DiscordAppIdDialogState();
+}
+
+class _DiscordAppIdDialogState extends State<_DiscordAppIdDialog> {
+  late final TextEditingController _appId;
+
+  @override
+  void initState() {
+    super.initState();
+    _appId = TextEditingController(
+      text: context.read<AppState>().config.discordAppId,
+    );
+  }
+
+  @override
+  void dispose() {
+    _appId.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+    final discord = context.read<DiscordPresence>();
+    return _SettingsModal(
+      title: 'Discord application ID',
+      children: [
         TextField(
           controller: _appId,
           decoration: const InputDecoration(
@@ -596,6 +688,65 @@ class _IntegrationsCardState extends State<_IntegrationsCard> {
             state.config.set('discord.appId', v);
             discord.setAppId(v);
           },
+        ),
+      ],
+    );
+  }
+}
+
+/// Placeholder for the InnerTube card while the Google (OAuth) sign-in
+/// is still missing: sign-ins happen in a fixed order, and the second
+/// step is not offered until the first is done.
+class _LoginOrderNotice extends StatelessWidget {
+  const _LoginOrderNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Complete the Google sign-in above first.',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Sign-ins run in order: 1) the Google account (Data API), '
+          '2) the browser cookie (InnerTube). This step unlocks once '
+          'the first is done.',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 12),
+        // Grayed-out preview of the gated card, so the shape of the
+        // next step is visible (but inert) before it unlocks.
+        Opacity(
+          opacity: 0.4,
+          child: IgnorePointer(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Browser cookie — InnerTube',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Unlocks playback, listening history (watchtime) and '
+                  'the InnerTube library.',
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 12),
+                M3EFilledButton.icon(
+                  onPressed: null,
+                  icon: const Icon(Icons.lock_rounded),
+                  label: const Text('Log in with browser'),
+                ),
+              ],
+            ),
+          ),
         ),
       ],
     );
@@ -1012,8 +1163,6 @@ class _LastFmCard extends StatefulWidget {
 
 class _LastFmCardState extends State<_LastFmCard> {
   late bool _enabled;
-  late final TextEditingController _apiKey;
-  late final TextEditingController _secret;
   bool _busy = false;
   bool _failed = false;
   String? _token;
@@ -1021,39 +1170,17 @@ class _LastFmCardState extends State<_LastFmCard> {
   @override
   void initState() {
     super.initState();
-    final config = context.read<AppState>().config;
-    _enabled = config.lastfmEnabled;
-    _apiKey = TextEditingController(text: config.lastfmApiKey);
-    _secret = TextEditingController(text: config.lastfmSecret);
+    _enabled = context.read<AppState>().config.lastfmEnabled;
   }
 
-  @override
-  void dispose() {
-    _apiKey.dispose();
-    _secret.dispose();
-    super.dispose();
-  }
-
-  /// Persists credentials and the toggle; changing key/secret signs out the
-  /// stored session since it belongs to the previous application.
-  void _save({String? apiKey, String? secret, bool? enabled}) {
+  /// Persists the toggle.
+  void _save({bool? enabled}) {
     final config = context.read<AppState>().config;
-    final lastfm = context.read<LastFmService>();
-    final nextKey = apiKey ?? _apiKey.text;
-    final nextSecret = secret ?? _secret.text;
-    if (nextKey.trim() != config.lastfmApiKey ||
-        nextSecret.trim() != config.lastfmSecret) {
-      lastfm.logout();
-    }
-    config.lastfmApiKey = nextKey.trim();
-    config.lastfmSecret = nextSecret.trim();
     if (enabled != null) {
       _enabled = enabled;
       config.lastfmEnabled = enabled;
     }
-    lastfm.refreshStatus();
-    // Rebuild so the enable switch and the Connect button's apiKeyReady
-    // reflect the edited credentials.
+    context.read<LastFmService>().refreshStatus();
     setState(() {});
   }
 
@@ -1072,26 +1199,17 @@ class _LastFmCardState extends State<_LastFmCard> {
           subtitleColor: status.startsWith('error') ? scheme.error : null,
           value: _enabled,
           onChanged: (v) => _save(enabled: v),
+          onSettings: () => showDialog(
+            context: context,
+            builder: (context) => const _LastFmKeysDialog(),
+          ),
         ),
         const SizedBox(height: 8),
-        TextField(
-          controller: _apiKey,
-          decoration: const InputDecoration(
-            labelText: 'Last.fm API key',
-            helperText: 'From a last.fm/api application you create',
-            border: OutlineInputBorder(),
-          ),
-          onChanged: (v) => _save(apiKey: v),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _secret,
-          decoration: const InputDecoration(
-            labelText: 'Last.fm shared secret',
-            border: OutlineInputBorder(),
-          ),
-          obscureText: true,
-          onChanged: (v) => _save(secret: v),
+        Text(
+          'Empty credential fields use the built-in shared key — fill '
+          'them only to use your own last.fm/api application.',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 12),
         if (_failed) ...[
@@ -1117,9 +1235,6 @@ class _LastFmCardState extends State<_LastFmCard> {
           _LastFmAuthActions(
             token: _token,
             busy: _busy,
-            apiKeyReady:
-                _apiKey.text.trim().isNotEmpty &&
-                _secret.text.trim().isNotEmpty,
             onStart: () => setState(() {
               _failed = false;
               _busy = true;
@@ -1141,12 +1256,84 @@ class _LastFmCardState extends State<_LastFmCard> {
   }
 }
 
+/// Custom Last.fm API key/secret, kept behind the card's cog. Empty
+/// means the built-in shared credentials; saving different values
+/// signs out the previous application's session.
+class _LastFmKeysDialog extends StatefulWidget {
+  const _LastFmKeysDialog();
+
+  @override
+  State<_LastFmKeysDialog> createState() => _LastFmKeysDialogState();
+}
+
+class _LastFmKeysDialogState extends State<_LastFmKeysDialog> {
+  late final TextEditingController _apiKey;
+  late final TextEditingController _secret;
+
+  @override
+  void initState() {
+    super.initState();
+    final config = context.read<AppState>().config;
+    _apiKey = TextEditingController(text: config.lastfmApiKey);
+    _secret = TextEditingController(text: config.lastfmSecret);
+  }
+
+  @override
+  void dispose() {
+    _apiKey.dispose();
+    _secret.dispose();
+    super.dispose();
+  }
+
+  void _save({String? apiKey, String? secret}) {
+    final config = context.read<AppState>().config;
+    final lastfm = context.read<LastFmService>();
+    final nextKey = apiKey ?? _apiKey.text;
+    final nextSecret = secret ?? _secret.text;
+    if (nextKey.trim() != config.lastfmApiKey ||
+        nextSecret.trim() != config.lastfmSecret) {
+      lastfm.logout();
+    }
+    config.lastfmApiKey = nextKey.trim();
+    config.lastfmSecret = nextSecret.trim();
+    lastfm.refreshStatus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsModal(
+      title: 'Last.fm API credentials',
+      children: [
+        TextField(
+          controller: _apiKey,
+          decoration: const InputDecoration(
+            labelText: 'Last.fm API key',
+            helperText: 'Empty means the built-in shared key',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (v) => _save(apiKey: v),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _secret,
+          decoration: const InputDecoration(
+            labelText: 'Last.fm shared secret',
+            helperText: 'Empty means the built-in shared secret',
+            border: OutlineInputBorder(),
+          ),
+          obscureText: true,
+          onChanged: (v) => _save(secret: v),
+        ),
+      ],
+    );
+  }
+}
+
 /// Last.fm browser-approval flow: connect, confirm, or reopen.
 class _LastFmAuthActions extends StatelessWidget {
   const _LastFmAuthActions({
     required this.token,
     required this.busy,
-    required this.apiKeyReady,
     required this.onStart,
     required this.onBusyChange,
     required this.onFailed,
@@ -1156,7 +1343,6 @@ class _LastFmAuthActions extends StatelessWidget {
 
   final String? token;
   final bool busy;
-  final bool apiKeyReady;
   final VoidCallback onStart;
   final ValueChanged<bool> onBusyChange;
   final VoidCallback onFailed;
@@ -1197,9 +1383,7 @@ class _LastFmAuthActions extends StatelessWidget {
       return Row(
         children: [
           M3EFilledButton(
-            onPressed: busy || !apiKeyReady
-                ? null
-                : () => _requestToken(context),
+            onPressed: busy ? null : () => _requestToken(context),
             child: Text(busy ? 'Requesting…' : 'Connect with last.fm'),
           ),
         ],

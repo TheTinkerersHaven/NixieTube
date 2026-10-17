@@ -81,6 +81,22 @@ void main() {
       expect(t.displayArtwork, 'https://x/wide.jpg');
     });
 
+    test('missing dimensions resolve to the last thumb', () {
+      // No width/height anywhere (some responses omit them): YouTube
+      // orders sizes ascending, so the final entry is the biggest.
+      const t = Track(
+        videoId: 'v',
+        title: 't',
+        thumbnails: [
+          Thumbnail('https://x/a.jpg=w60-h60-l90-rj'),
+          Thumbnail('https://x/a.jpg=w120-h120-l90-rj'),
+          Thumbnail('https://x/a.jpg=w544-h544-l90-rj'),
+        ],
+      );
+      expect(t.displayArtwork, 'https://x/a.jpg=w544-h544-l90-rj');
+      expect(t.bestArtwork, 'https://x/a.jpg=w544-h544-l90-rj');
+    });
+
     test('artistNames joins with commas', () {
       const t = Track(
         videoId: 'v',

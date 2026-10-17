@@ -5,6 +5,10 @@
 // override, so the DiscordStatusText modes (app/song/artists) have no
 // visible effect — presence always renders the standard app/song/artist
 // shape. The setting is still persisted for forward compatibility.
+//
+// The IPC link is best-effort: Discord is often started after us, or
+// restarted while we run, so a periodic retry re-attempts the handshake
+// and re-pushes the current activity once it lands.
 
 import 'dart:async';
 
@@ -74,31 +78,83 @@ RPCActivity? presenceActivity(PlayerState s) {
   );
 }
 
+/// How often the presence re-attempts a handshake that is not up yet.
+const discordRetryInterval = Duration(seconds: 10);
+
+/// The native RPC operations the presence drives. Injectable so tests
+/// exercise the retry loop without the Rust library or a live Discord.
+abstract interface class DiscordRpc {
+  /// Whether the IPC link is up. Only meaningful once [initialize] has
+  /// succeeded.
+  bool get isConnected;
+
+  Future<void> initialize(String appId);
+  Future<void> connect();
+  Future<void> setActivity(RPCActivity activity);
+  Future<void> clearActivity();
+  Future<void> disconnect();
+}
+
+/// The real `flutter_discord_rpc` client.
+class _NativeDiscordRpc implements DiscordRpc {
+  @override
+  bool get isConnected => FlutterDiscordRPC.instance.isConnected;
+
+  @override
+  Future<void> initialize(String appId) => FlutterDiscordRPC.initialize(appId);
+
+  @override
+  Future<void> connect() => FlutterDiscordRPC.instance.connect();
+
+  @override
+  Future<void> setActivity(RPCActivity activity) =>
+      FlutterDiscordRPC.instance.setActivity(activity: activity);
+
+  @override
+  Future<void> clearActivity() => FlutterDiscordRPC.instance.clearActivity();
+
+  @override
+  Future<void> disconnect() => FlutterDiscordRPC.instance.disconnect();
+}
+
 /// Discord Rich Presence client: IPC lifecycle plus presence pushes.
 class DiscordPresence extends ChangeNotifier {
   DiscordPresence({
     String appId = '',
     bool enabled = false,
     DiscordStatusText statusText = DiscordStatusText.app,
+    DiscordRpc? rpc,
+    this.retryInterval = discordRetryInterval,
   }) {
     _appId = appId;
     _enabled = enabled;
     _statusText = statusText;
+    _rpc = rpc ?? _NativeDiscordRpc();
   }
 
   late String _appId;
   late bool _enabled;
   late DiscordStatusText _statusText;
+  late final DiscordRpc _rpc;
   String _status = 'disabled';
   String _dedup = '';
   bool _initialized = false;
   Future<void>? _initFuture;
   String? _firstInitError;
+  Timer? _retryTimer;
+  PlayerState? _last;
+
+  /// How often a handshake that is not up yet is re-attempted while the
+  /// presence is enabled.
+  final Duration retryInterval;
 
   String get status => _status;
   bool get enabled => _enabled;
   String get appId => _appId;
   DiscordStatusText get statusText => _statusText;
+
+  /// Whether the IPC link is up; false before the client even exists.
+  bool get _connected => _initialized && _rpc.isConnected;
 
   void _setStatus(String value) {
     if (_status != value) {
@@ -124,9 +180,13 @@ class DiscordPresence extends ChangeNotifier {
     _enabled = value;
     _dedup = '';
     if (!value) {
+      _cancelRetry();
       unawaited(shutdown());
     } else {
       _setStatus('idle');
+      _armRetry();
+      final last = _last;
+      if (last != null) unawaited(update(last));
     }
     notifyListeners();
   }
@@ -150,7 +210,7 @@ class DiscordPresence extends ChangeNotifier {
 
   Future<void> _doInit() async {
     try {
-      await FlutterDiscordRPC.initialize(
+      await _rpc.initialize(
         _appId.trim().isEmpty ? defaultDiscordAppId : _appId.trim(),
       );
       _initialized = true;
@@ -167,43 +227,53 @@ class DiscordPresence extends ChangeNotifier {
     }
   }
 
-  /// Pushes presence for [s], clearing when there is no track.
-  Future<void> update(PlayerState s) async {
-    if (!_enabled) {
-      if (_status != 'disabled') _setStatus('disabled');
-      return;
-    }
-    final track = s.current;
-    final key =
-        '${track?.videoId}:${s.playing}:${track?.rating.index}:${s.positionMs ~/ 15}';
-    if (key == _dedup) return;
+  /// Makes sure the RPC client exists and its IPC link is up. Returns
+  /// whether the link is usable; failures have already been folded into
+  /// [status] for the settings row.
+  Future<bool> _ensureConnected() async {
     try {
       await _ensureInitialized();
     } catch (_) {
       // Init failure already surfaced as an error status; retry later.
+      return false;
+    }
+    if (_connected) return true;
+    try {
+      await _rpc.connect();
+    } catch (_) {
+      // No Discord client around; stay idle and retry on the timer.
+      _setStatus('idle');
+      return false;
+    }
+    return _connected;
+  }
+
+  /// Pushes presence for [s], clearing when there is no track.
+  Future<void> update(PlayerState s) async {
+    _last = s;
+    if (!_enabled) {
+      _cancelRetry();
+      if (_status != 'disabled') _setStatus('disabled');
       return;
     }
+    _armRetry();
+    final track = s.current;
+    final key =
+        '${track?.videoId}:${s.playing}:${track?.rating.index}:${s.positionMs ~/ 15}';
+    if (key == _dedup) return;
+    if (!await _ensureConnected()) return;
     try {
       if (track == null) {
-        if (FlutterDiscordRPC.instance.isConnected) {
-          await FlutterDiscordRPC.instance.clearActivity();
+        if (_connected) {
+          await _rpc.clearActivity();
         }
         _dedup = key;
         _setStatus('idle');
         return;
       }
-      if (!FlutterDiscordRPC.instance.isConnected) {
-        try {
-          await FlutterDiscordRPC.instance.connect();
-        } catch (_) {
-          // No Discord client around; stay idle and retry on a later key.
-          _setStatus('idle');
-          return;
-        }
-      }
       final activity = presenceActivity(s);
       if (activity == null) return;
-      await FlutterDiscordRPC.instance.setActivity(activity: activity);
+      await _rpc.setActivity(activity);
       _dedup = key;
       _setStatus('active');
     } catch (e) {
@@ -211,20 +281,49 @@ class DiscordPresence extends ChangeNotifier {
     }
   }
 
-  /// Tears down the IPC connection.
+  /// Keeps the handshake ready while the presence is enabled. A tick
+  /// that finds the link up (or no player state yet) does nothing, so
+  /// a healthy session pays only a timer wake-up.
+  void _armRetry() {
+    _retryTimer ??= Timer.periodic(retryInterval, (_) => unawaited(_retry()));
+  }
+
+  void _cancelRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
+  Future<void> _retry() async {
+    if (!_enabled) {
+      _cancelRetry();
+      return;
+    }
+    if (_connected) return;
+    final last = _last;
+    if (last == null) return;
+    // Forget the last push: the reconnected client must re-render the
+    // activity instead of believing it is already on screen.
+    _dedup = '';
+    await update(last);
+  }
+
+  /// Tears down the IPC connection. State is settled synchronously (so
+  /// callers see the new status at once) and only the teardown awaits.
   Future<void> shutdown() async {
     _dedup = '';
-    if (_initialized) {
-      try {
-        await FlutterDiscordRPC.instance.disconnect();
-      } catch (_) {}
-    }
+    final wasInitialized = _initialized;
     _initialized = false;
     _setStatus(_enabled ? 'idle' : 'disabled');
+    if (wasInitialized) {
+      try {
+        await _rpc.disconnect();
+      } catch (_) {}
+    }
   }
 
   @override
   void dispose() {
+    _cancelRetry();
     unawaited(shutdown());
     super.dispose();
   }

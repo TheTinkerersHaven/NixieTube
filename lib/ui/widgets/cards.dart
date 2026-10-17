@@ -91,10 +91,28 @@ class TrackRailCard extends StatelessWidget {
                 color: playing ? scheme.primary : scheme.onSurface,
               ),
             ),
-            Text(
-              track.artistNames().isEmpty
-                  ? (track.album?.name ?? '')
-                  : track.artistNames(),
+            Text.rich(
+              TextSpan(
+                children: [
+                  if (track.explicit)
+                    WidgetSpan(
+                      alignment: PlaceholderAlignment.middle,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Icon(
+                          Icons.explicit,
+                          size: 13,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  TextSpan(
+                    text: track.artistNames().isEmpty
+                        ? (track.album?.name ?? '')
+                        : track.artistNames(),
+                  ),
+                ],
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodySmall
@@ -116,6 +134,7 @@ class QuickPickCard extends StatelessWidget {
     required this.subtitle,
     required this.art,
     this.playing = false,
+    this.squareCoverKey,
     required this.onTap,
   });
 
@@ -123,6 +142,12 @@ class QuickPickCard extends StatelessWidget {
   final String subtitle;
   final String? art;
   final bool playing;
+
+  /// `videoId` used to resolve the square cover when [art] is a
+  /// recognizably 16:9 still (`i.ytimg.com`): quick-pick tiles are
+  /// square, so they show the true `yt3.googleusercontent.com` square
+  /// art instead of a cropped frame (same rule as [TrackRailCard]).
+  final String? squareCoverKey;
   final VoidCallback onTap;
 
   @override
@@ -139,7 +164,13 @@ class QuickPickCard extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                ArtworkImage(art, size: 200, radius: 0, iconSize: 48),
+                ArtworkImage(
+                  art,
+                  size: 200,
+                  radius: 0,
+                  iconSize: 48,
+                  squareCoverKey: squareCoverKey,
+                ),
                 const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
