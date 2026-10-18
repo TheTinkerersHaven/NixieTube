@@ -93,9 +93,7 @@ Future<AudioBackendProbe> probeAudioBackend({
     final dir = await Directory.systemTemp.createTemp('nixietube-audio-probe');
     wav = File('${dir.path}/silence.wav');
     await wav.writeAsBytes(silentWavBytes(), flush: true);
-    await player
-        .setUrl(Uri.file(wav.path).toString())
-        .timeout(timeout);
+    await player.setUrl(Uri.file(wav.path).toString()).timeout(timeout);
     return const AudioBackendProbe(AudioBackendStatus.ok, null);
   } on TimeoutException {
     return const AudioBackendProbe(

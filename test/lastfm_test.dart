@@ -81,26 +81,28 @@ void main() {
     expect(defaultLastfmSecret.trim(), isNotEmpty);
   });
 
-  test('requestToken falls back to the built-in key when fields are empty',
-      () async {
-    startService(
-      handler: (r) async => (200, jsonEncode({'token': 'token123'})),
-    );
-    config.lastfmApiKey = '';
-    config.lastfmSecret = '';
-    final token = await service.requestToken();
-    expect(token, 'token123');
-    expect(calls, hasLength(1));
-    final fields = form(calls.first);
-    // Built-in key sent, signed with the built-in secret.
-    expect(fields['api_key'], defaultLastfmApiKey);
-    expect(fields['api_key'], isNot(_key));
-    final base =
-        'api_key$defaultLastfmApiKey'
-        'methodauth.getToken'
-        '$defaultLastfmSecret';
-    expect(fields['api_sig'], md5.convert(utf8.encode(base)).toString());
-  });
+  test(
+    'requestToken falls back to the built-in key when fields are empty',
+    () async {
+      startService(
+        handler: (r) async => (200, jsonEncode({'token': 'token123'})),
+      );
+      config.lastfmApiKey = '';
+      config.lastfmSecret = '';
+      final token = await service.requestToken();
+      expect(token, 'token123');
+      expect(calls, hasLength(1));
+      final fields = form(calls.first);
+      // Built-in key sent, signed with the built-in secret.
+      expect(fields['api_key'], defaultLastfmApiKey);
+      expect(fields['api_key'], isNot(_key));
+      final base =
+          'api_key$defaultLastfmApiKey'
+          'methodauth.getToken'
+          '$defaultLastfmSecret';
+      expect(fields['api_sig'], md5.convert(utf8.encode(base)).toString());
+    },
+  );
 
   test('custom credentials override the built-in key', () async {
     startService(
@@ -172,8 +174,7 @@ void main() {
     expect(service.ready(), isFalse);
   });
 
-  test('ready() gates on enabled and session (key always resolves)',
-      () async {
+  test('ready() gates on enabled and session (key always resolves)', () async {
     startService();
     expect(service.ready(), isTrue);
     config.lastfmEnabled = false;

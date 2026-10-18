@@ -283,20 +283,23 @@ void main() {
     expect(paths, ['/youtubei/v1/next', '/youtubei/v1/next']);
   });
 
-  test('a dying panel never condemns the track, so a retry re-spends', () async {
-    var nextCalls = 0;
-    final tube = await tubeWith((options) async {
-      nextCalls++;
-      throw _blip();
-    });
-    expect(await tube.squareCoverOf('v1'), isNull);
-    // 3 attempts (each retried once inside post), then no answer at all.
-    expect(nextCalls, 6);
-    // A blip is not proof of absence: the track is deliberately not
-    // remembered as coverless, so a later ask spends a fresh budget.
-    expect(await tube.squareCoverOf('v1'), isNull);
-    expect(nextCalls, 12);
-  });
+  test(
+    'a dying panel never condemns the track, so a retry re-spends',
+    () async {
+      var nextCalls = 0;
+      final tube = await tubeWith((options) async {
+        nextCalls++;
+        throw _blip();
+      });
+      expect(await tube.squareCoverOf('v1'), isNull);
+      // 3 attempts (each retried once inside post), then no answer at all.
+      expect(nextCalls, 6);
+      // A blip is not proof of absence: the track is deliberately not
+      // remembered as coverless, so a later ask spends a fresh budget.
+      expect(await tube.squareCoverOf('v1'), isNull);
+      expect(nextCalls, 12);
+    },
+  );
 
   test('a throttled panel (error body) does not condemn the track', () async {
     var nextCalls = 0;

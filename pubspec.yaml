@@ -1,7 +1,7 @@
 name: nixietube
 description: "NixieTube — YouTube Music desktop client. Flutter port of the Kotlin/Compose client."
 publish_to: 'none'
-version: 0.1.2+3
+version: 0.2.0+3
 
 environment:
   sdk: ^3.13.5
@@ -25,11 +25,8 @@ dependencies:
   just_audio_media_kit: ^2.1.0
   media_kit_libs_linux: ^1.2.1
   dbus: ^0.8.0
-  flutter_discord_rpc: ^1.1.0
-  # Pinned exact: flutter_discord_rpc 1.1.0 was generated with frb codegen
-  # 2.11.1 and refuses a newer runtime ("should be the same as runtime
-  # version"). Unpin only when the discord package is regenerated.
-  flutter_rust_bridge: 2.11.1
+  # Discord Rich Presence is a pure-Dart IPC client (lib/sys/discord_ipc.dart),
+  # so there is no RPC SDK dependency and no Rust/native bridge.
   material_ui: ^1.7.0
   # Loading skeletons for the home feed (replaces the spinner while shelves
   # resolve, so the layout is stable and content reveals in place).

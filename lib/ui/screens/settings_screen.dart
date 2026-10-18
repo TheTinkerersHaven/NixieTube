@@ -17,6 +17,7 @@ import '../../sys/browser_cookies.dart';
 import '../../sys/discord.dart';
 import '../../sys/lastfm.dart';
 import '../../sys/mpris.dart';
+import '../../sys/sys_config.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/browser_login_dialog.dart';
@@ -675,8 +676,17 @@ class _DiscordAppIdDialogState extends State<_DiscordAppIdDialog> {
     final state = context.read<AppState>();
     final discord = context.read<DiscordPresence>();
     return _SettingsModal(
-      title: 'Discord application ID',
+      title: 'Discord Rich Presence',
       children: [
+        Text('Status line', style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          'The line Discord shows for the activity.',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        _DiscordStatusLinePicker(config: state.config),
+        const SizedBox(height: 16),
         TextField(
           controller: _appId,
           decoration: const InputDecoration(
@@ -689,6 +699,38 @@ class _DiscordAppIdDialogState extends State<_DiscordAppIdDialog> {
             discord.setAppId(v);
           },
         ),
+      ],
+    );
+  }
+}
+
+/// Status-line choice: app name, song title, song artist or song album.
+///
+/// Watches the presence rather than reading it once: the dialog itself
+/// only `read`s it, so a read-only pick would keep painting the old
+/// selection until the dialog was reopened.
+class _DiscordStatusLinePicker extends StatelessWidget {
+  const _DiscordStatusLinePicker({required this.config});
+
+  final SysConfig config;
+
+  @override
+  Widget build(BuildContext context) {
+    final discord = context.watch<DiscordPresence>();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final mode in DiscordStatusText.values)
+          ChoiceChip(
+            label: Text(discordStatusTextLabel(mode)),
+            selected: discord.statusText == mode,
+            onSelected: (v) {
+              if (!v) return;
+              config.set('discord.statusText', discordStatusTextKey(mode));
+              discord.setStatusText(mode);
+            },
+          ),
       ],
     );
   }

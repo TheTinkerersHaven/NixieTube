@@ -8,7 +8,6 @@
 import 'dart:io';
 
 import 'package:dbus/dbus.dart';
-import 'package:flutter_discord_rpc/flutter_discord_rpc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -49,11 +48,22 @@ class _FakeRpc implements DiscordRpc {
     initializes++;
     final error = initError;
     if (error != null) throw error;
+    if (singletonTaken && initializes > 1) {
+      // The real client sets its singleton before failing, so every
+      // re-initialize after a disconnect reports this.
+      throw StateError('RPC client already been initialized');
+    }
   }
+
+  /// Emulates the native client keeping its singleton across reconnects.
+  bool singletonTaken = false;
 
   @override
   Future<void> connect() async {
     connects++;
+    if (connectAlwaysFails) {
+      throw Exception('Discord is not running');
+    }
     if (connectFailures > 0) {
       connectFailures--;
       throw Exception('Discord is not running');
@@ -61,8 +71,12 @@ class _FakeRpc implements DiscordRpc {
     connected = true;
   }
 
+  /// Makes every connect fail, as a native client that never finished
+  /// standing up would.
+  bool connectAlwaysFails = false;
+
   @override
-  Future<void> setActivity(RPCActivity activity) async {
+  Future<void> setActivity(DiscordActivity activity) async {
     activities++;
   }
 
@@ -191,11 +205,14 @@ void main() {
         enabled: true,
         rpc: rpc,
         retryInterval: _retry,
+        reconnectInterval: _retry,
       );
       addTearDown(discord.dispose);
       await discord.update(_playing());
-      // Discord is not running: idle, nothing pushed, no key cached.
-      expect(discord.status, 'idle');
+      // Discord is not running: idle (with the cause, so the settings row
+      // can explain it), nothing pushed, no key cached.
+      expect(discord.status, startsWith('idle'));
+      expect(discord.status, contains('Discord is not running'));
       expect(rpc.activities, 0);
       await Future<void>.delayed(_settle);
       // First update plus two failed ticks, third attempt lands.
@@ -214,6 +231,7 @@ void main() {
         enabled: true,
         rpc: rpc,
         retryInterval: _retry,
+        reconnectInterval: _retry,
       );
       addTearDown(discord.dispose);
       await discord.update(_playing());
@@ -228,12 +246,109 @@ void main() {
       expect(discord.status, 'active');
     });
 
+    test('a half-built client is never mistaken for a working one', () async {
+      // The package assigns its Dart singleton before it stands the
+      // native client up, so an attempt that fails partway leaves the
+      // singleton behind: every retry then answers "already been
+      // initialized" while connect can never succeed. Treating that
+      // message as success would report a live presence that is not
+      // there, so the real cause has to survive.
+      final rpc = _FakeRpc()..initError = StateError('no IPC socket');
+      final discord = DiscordPresence(
+        enabled: true,
+        rpc: rpc,
+        retryInterval: _retry,
+        reconnectInterval: _retry,
+      );
+      addTearDown(discord.dispose);
+      await discord.update(_playing());
+      expect(discord.status, 'error: Bad state: no IPC socket');
+
+      // Retries now hit the leftover singleton, and the link stays dead.
+      rpc.initError = null;
+      rpc.singletonTaken = true;
+      rpc.connectAlwaysFails = true;
+      await Future<void>.delayed(_settle * 2);
+      // The client never came up, so the link is never even attempted:
+      // poking a dead client would only add noise.
+      expect(rpc.connects, 0);
+      expect(discord.status, isNot('active'));
+      // The original cause is kept, not masked by the singleton message.
+      expect(discord.status, contains('no IPC socket'));
+    });
+
+    test('disabling and re-enabling the presence works again', () async {
+      final rpc = _FakeRpc()..singletonTaken = true;
+      final discord = DiscordPresence(
+        enabled: true,
+        rpc: rpc,
+        retryInterval: _retry,
+        reconnectInterval: _retry,
+      );
+      addTearDown(discord.dispose);
+      await discord.update(_playing());
+      expect(discord.status, 'active');
+      expect(rpc.initializes, 1);
+
+      // Off: the IPC link drops and the status settles synchronously.
+      discord.setEnabled(false);
+      expect(discord.status, 'disabled');
+      await Future<void>.delayed(_settle);
+      expect(rpc.disconnects, 1);
+      expect(discord.statusText, DiscordStatusText.app);
+
+      // Back on. The cached init future must not be reused: the client
+      // has to be initialized again, and the native singleton answers
+      // "already been initialized" — which has to count as success or
+      // the presence would stay dead until the app restarts.
+      discord.setEnabled(true);
+      await Future<void>.delayed(_settle);
+      expect(rpc.initializes, 2, reason: 'initialize must run again');
+      expect(discord.status, 'active');
+      expect(rpc.connects, 2);
+      expect(rpc.activities, 2);
+
+      // And the status line still applies after the round trip.
+      discord.setStatusText(DiscordStatusText.song);
+      await Future<void>.delayed(_settle);
+      expect(discord.status, 'active');
+      expect(rpc.activities, 3);
+    });
+
+    test('switching the status line re-pushes the same track', () async {
+      final rpc = _FakeRpc();
+      final discord = DiscordPresence(
+        enabled: true,
+        rpc: rpc,
+        retryInterval: _retry,
+        reconnectInterval: _retry,
+      );
+      addTearDown(discord.dispose);
+      await discord.update(_playing());
+      expect(discord.status, 'active');
+      expect(rpc.activities, 1);
+      expect(discord.statusText, DiscordStatusText.app);
+
+      // The dedup key would otherwise swallow the new mode: nothing about
+      // the player changed, so only an explicit clear re-pushes.
+      discord.setStatusText(DiscordStatusText.album);
+      expect(discord.statusText, DiscordStatusText.album);
+      await Future<void>.delayed(_settle);
+      expect(rpc.activities, 2);
+
+      // Same mode again is a no-op.
+      discord.setStatusText(DiscordStatusText.album);
+      await Future<void>.delayed(_settle);
+      expect(rpc.activities, 2);
+    });
+
     test('reports a failing initialize and recovers from it', () async {
       final rpc = _FakeRpc()..initError = StateError('no RPC library');
       final discord = DiscordPresence(
         enabled: true,
         rpc: rpc,
         retryInterval: _retry,
+        reconnectInterval: _retry,
       );
       addTearDown(discord.dispose);
       await discord.update(_playing());
@@ -245,12 +360,48 @@ void main() {
       expect(rpc.activities, 1);
     });
 
+    test('a lost link waits out Discord\'s refusal window', () async {
+      // Discord refuses a new handshake for roughly half a minute after a
+      // session ends (measured against the live client). A retry faster
+      // than that window only lands inside it, so the presence would sit
+      // there reporting itself connected and never come back — the status
+      // line picker then looks like it does nothing. So once a link has
+      // been up, the retry floor is the window, not the fast cadence.
+      final rpc = _FakeRpc();
+      final discord = DiscordPresence(
+        enabled: true,
+        rpc: rpc,
+        retryInterval: const Duration(milliseconds: 5),
+        reconnectInterval: const Duration(milliseconds: 300),
+      );
+      addTearDown(discord.dispose);
+      await discord.update(_playing());
+      expect(discord.status, 'active');
+      expect(rpc.connects, 1);
+      // Let the tick that was armed before the link came up run, so the
+      // timer is re-armed at the window rather than at the fast cadence.
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(rpc.connects, 1, reason: 'a tick on a live link does nothing');
+
+      // The link dies. The fast cadence must not be used any more.
+      rpc.connected = false;
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(rpc.connects, 1, reason: 'no attempt inside the refusal window');
+
+      // Past the window the retry runs and the presence recovers.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(rpc.connects, greaterThan(1));
+      expect(discord.status, 'active');
+      discord.setEnabled(false);
+    });
+
     test('disabling stops the retries and the pushes', () async {
       final rpc = _FakeRpc()..connectFailures = 1000;
       final discord = DiscordPresence(
         enabled: true,
         rpc: rpc,
         retryInterval: _retry,
+        reconnectInterval: _retry,
       );
       addTearDown(discord.dispose);
       await discord.update(_playing());

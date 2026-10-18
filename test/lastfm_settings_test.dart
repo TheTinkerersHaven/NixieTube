@@ -258,8 +258,9 @@ void main() {
     expect(find.textContaining('Status: signed out'), findsOneWidget);
   });
 
-  testWidgets('connect works with empty fields via the built-in key',
-      (tester) async {
+  testWidgets('connect works with empty fields via the built-in key', (
+    tester,
+  ) async {
     await pumpSettings(tester);
     await tester.pump();
     await reveal(tester, find.text('Last.fm scrobbling'));
@@ -294,10 +295,7 @@ void main() {
     // Fields live behind the Last.fm card's cog, not inline.
     expect(find.widgetWithText(TextField, 'Last.fm API key'), findsNothing);
     await openKeysModal(tester);
-    expect(
-      find.widgetWithText(TextField, 'Last.fm API key'),
-      findsOneWidget,
-    );
+    expect(find.widgetWithText(TextField, 'Last.fm API key'), findsOneWidget);
     expect(
       find.widgetWithText(TextField, 'Last.fm shared secret'),
       findsOneWidget,

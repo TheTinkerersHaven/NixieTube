@@ -99,6 +99,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Checkout first: the changelog step below reads CHANGES.md, and
+      # checkout's default clean would otherwise wipe the dist/ directory
+      # we download right after it.
+      - uses: actions/checkout@v7
       # Flat, explicit: pattern + path + merge-multiple means the file
       # lands at dist/<name>.AppImage no matter how the extractor
       # nests it (v8 without `path` left the glob below empty, which
