@@ -1,5 +1,5 @@
 name: nixietube
-description: "NixieTube — YouTube Music desktop client. Flutter port of the Kotlin/Compose client."
+description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
 version: 0.2.1+2
 
