@@ -1252,13 +1252,6 @@ class _LastFmCardState extends State<_LastFmCard> {
             builder: (context) => const _LastFmKeysDialog(),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Empty credential fields use the built-in shared key — fill '
-          'them only to use your own last.fm/api application.',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
-        ),
         const SizedBox(height: 12),
         if (_failed) ...[
           Text(
@@ -1292,13 +1285,6 @@ class _LastFmCardState extends State<_LastFmCard> {
             onToken: (t) => setState(() => _token = t),
             onSignedIn: () => setState(() => _token = null),
           ),
-        const SizedBox(height: 8),
-        Text(
-          'Scrobbles tracks over 30 seconds once half played or '
-          '4 minutes pass; now-playing shows on track start.',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
-        ),
       ],
     );
   }

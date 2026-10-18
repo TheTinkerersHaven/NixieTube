@@ -100,7 +100,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      # Checkout first: the changelog step below reads CHANGES.md, and
+      # Checkout first: the changelog step below reads CHANGELOG.md, and
       # checkout's default clean would otherwise wipe the dist/ directory
       # we download right after it.
       - uses: actions/checkout@v7
@@ -124,15 +124,15 @@ jobs:
         run: |
           TAG_VER="${GITHUB_REF_NAME#v}"
           awk -v ver="$TAG_VER" '
-            /^## / {
+            /^## \[/ {
               if (capture) exit
-              if ($0 ~ "## " ver) { capture=1; next }
+              if ($0 ~ "## \\[" ver "\\]") { capture=1; next }
               capture=0
             }
             capture { print }
-          ' CHANGES.md > release-notes.md
+          ' CHANGELOG.md > release-notes.md
           if [ ! -s release-notes.md ]; then
-            echo "::error::No changelog section found for version ${TAG_VER} in CHANGES.md"
+            echo "::error::No changelog section found for version ${TAG_VER} in CHANGELOG.md"
             exit 1
           fi
           echo "body_path=release-notes.md" >> "$GITHUB_OUTPUT"

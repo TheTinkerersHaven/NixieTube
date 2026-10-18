@@ -107,7 +107,7 @@ Future<({AppState state, _FeedTube tube})> _bootHome(
   addTearDown(player.dispose);
   final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
   addTearDown(art.close);
-  final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+  final oauth = GoogleOAuth();
   addTearDown(oauth.close);
   final state = AppState(
     tube: tube,

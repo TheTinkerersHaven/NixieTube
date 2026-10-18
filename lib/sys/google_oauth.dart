@@ -2,13 +2,13 @@
 // loopback redirect), ported from Kotlin `GoogleOAuth`.
 //
 // Account data goes through the YouTube Data API; InnerTube rejects
-// third-party sessions. Issued tokens persist to
-// `~/.config/nixietube/oauth.properties` and refresh automatically when
+// third-party sessions. Issued tokens persist to the app config
+// directory (auth.properties) and refresh automatically when
 // within 120s of expiry.
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show ContentType, File, HttpRequest, HttpServer;
+import 'dart:io' show ContentType, HttpRequest, HttpServer;
 import 'dart:math' show Random;
 
 import 'package:crypto/crypto.dart';
@@ -16,7 +16,6 @@ import 'package:dio/dio.dart';
 
 import '../core/innertube/auth_session.dart';
 import 'http_client.dart';
-import 'paths.dart';
 import 'sys_config.dart';
 
 /// OAuth scope requested for YouTube access.
@@ -67,14 +66,12 @@ String newOAuthState([Random? random]) {
 /// directory and refresh automatically; [loginBrowser] drives the
 /// guided system-browser flow used by Settings.
 class GoogleOAuth {
-  GoogleOAuth({SysConfig? config, Dio? dio, String? storePath})
+  GoogleOAuth({SysConfig? config, Dio? dio})
     : _config = config ?? SysConfig(),
-      _dio = dio ?? newHttpClient(),
-      _storePath = storePath ?? '${configDir().path}/oauth.properties';
+      _dio = dio ?? newHttpClient();
 
   final SysConfig _config;
   final Dio _dio;
-  final String _storePath;
 
   /// Releases the HTTP client.
   void close() => _dio.close();
@@ -158,11 +155,12 @@ class GoogleOAuth {
     return AuthSession(accessToken: refreshed.accessToken);
   }
 
-  /// Deletes the persisted token file, signing the user out.
+  /// Deletes the persisted tokens, signing the user out.
   void logout() {
-    try {
-      File(_storePath).deleteSync();
-    } catch (_) {}
+    _config.remove('client_id');
+    _config.remove('access_token');
+    _config.remove('refresh_token');
+    _config.remove('expires_at');
   }
 
   /// True when a Google sign-in token is stored — the user
@@ -367,29 +365,20 @@ class GoogleOAuth {
 
   /// Writes tokens to the properties-backed token store.
   void _saveTokens(String clientId, OAuthTokens tokens) {
-    writeProperties(File(_storePath), {
-      'client_id': clientId,
-      'access_token': tokens.accessToken,
-      'refresh_token': tokens.refreshToken,
-      'expires_at': '${tokens.expiresAtSec}',
-    });
+    _config.set('client_id', clientId);
+    _config.set('access_token', tokens.accessToken);
+    _config.set('refresh_token', tokens.refreshToken);
+    _config.set('expires_at', '${tokens.expiresAtSec}');
   }
 
   /// Reads the stored client id and tokens, or null when absent.
   (String, OAuthTokens)? _loadTokens() {
-    final file = File(_storePath);
-    if (!file.existsSync()) return null;
-    try {
-      final p = readProperties(file);
-      final clientId = p['client_id'] ?? '';
-      final access = p['access_token'] ?? '';
-      final refresh = p['refresh_token'] ?? '';
-      final expires = int.tryParse(p['expires_at'] ?? '') ?? 0;
-      if (clientId.trim().isEmpty || access.trim().isEmpty) return null;
-      return (clientId, OAuthTokens(access, refresh, expires));
-    } catch (_) {
-      return null;
-    }
+    final clientId = _config.get('client_id');
+    final access = _config.get('access_token');
+    final refresh = _config.get('refresh_token');
+    final expires = int.tryParse(_config.get('expires_at')) ?? 0;
+    if (clientId.trim().isEmpty || access.trim().isEmpty) return null;
+    return (clientId, OAuthTokens(access, refresh, expires));
   }
 }
 

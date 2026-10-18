@@ -119,19 +119,15 @@ void main() {
       final config = SysConfig(configPath: '${dir.path}/config.properties');
       config.set('google.clientId', 'id');
       config.set('google.clientSecret', 'secret');
-      final oauth = GoogleOAuth(
-        config: config,
-        dio: client,
-        storePath: '${dir.path}/oauth.properties',
-      );
+      final oauth = GoogleOAuth(config: config, dio: client);
       addTearDown(oauth.close);
       expect(oauth.savedClient(), ('id', 'secret'));
-      // Seed fresh tokens directly through the file format.
+      // Seed fresh tokens directly through the config store.
       final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
-      await File('${dir.path}/oauth.properties').writeAsString(
-        'client_id=id\naccess_token=AAA\nrefresh_token=RRR\n'
-        'expires_at=$future\n',
-      );
+      config.set('client_id', 'id');
+      config.set('access_token', 'AAA');
+      config.set('refresh_token', 'RRR');
+      config.set('expires_at', '$future');
       final session = await oauth.validSession();
       expect(session?.accessToken, 'AAA');
       expect(calls, 0);
@@ -147,17 +143,13 @@ void main() {
       final config = SysConfig(configPath: '${dir.path}/config.properties');
       config.set('google.clientId', 'id');
       config.set('google.clientSecret', 'secret');
-      final oauth = GoogleOAuth(
-        config: config,
-        dio: client,
-        storePath: '${dir.path}/oauth.properties',
-      );
+      final oauth = GoogleOAuth(config: config, dio: client);
       addTearDown(oauth.close);
       final past = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 10;
-      await File('${dir.path}/oauth.properties').writeAsString(
-        'client_id=id\naccess_token=OLD\nrefresh_token=RRR\n'
-        'expires_at=$past\n',
-      );
+      config.set('client_id', 'id');
+      config.set('access_token', 'OLD');
+      config.set('refresh_token', 'RRR');
+      config.set('expires_at', '$past');
       final session = await oauth.validSession();
       expect(session?.accessToken, 'NEW');
       // Refresh token preserved and persisted.
@@ -169,15 +161,13 @@ void main() {
       final dir = await Directory.systemTemp.createTemp('nt-oauth-logout');
       addTearDown(() => dir.delete(recursive: true));
       final config = SysConfig(configPath: '${dir.path}/config.properties');
-      final oauth = GoogleOAuth(
-        config: config,
-        storePath: '${dir.path}/oauth.properties',
-      );
+      final oauth = GoogleOAuth(config: config);
       addTearDown(oauth.close);
-      await File('${dir.path}/oauth.properties')
-          .writeAsString('client_id=id\naccess_token=AAA\n');
+      config.set('client_id', 'id');
+      config.set('access_token', 'AAA');
       oauth.logout();
-      expect(File('${dir.path}/oauth.properties').existsSync(), isFalse);
+      expect(config.get('client_id'), isEmpty);
+      expect(config.get('access_token'), isEmpty);
       expect(await oauth.validSession(), isNull);
     });
   });

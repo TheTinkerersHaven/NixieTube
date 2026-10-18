@@ -57,14 +57,16 @@ String discordStatusTextKey(DiscordStatusText mode) => switch (mode) {
   DiscordStatusText.album => 'album',
 };
 
-/// 540px square YTM artwork only (mirrors the Kotlin artwork rule):
-/// googleusercontent URLs with a square `=w-h` suffix, rewritten to
-/// `=w540-h540-l90-rj`. Anything else yields no large image.
+/// Square 540px YTM artwork for Discord (mirrors the Kotlin artwork rule):
+/// any googleusercontent `=w-h` thumbnail is rewritten to
+/// `=w540-h540-l90-rj`, forcing YouTube's image server to center-crop
+/// non-square (4:3 / 16:9) video thumbnails into a square cover. Anything
+/// else yields no large image.
 String? discordArtwork(String? url) {
   if (url == null || url.isEmpty) return null;
   if (!url.contains('googleusercontent')) return null;
   final m = RegExp(r'=w(\d+)-h(\d+)').firstMatch(url);
-  if (m == null || m.group(1) != m.group(2)) return null;
+  if (m == null) return null;
   return url.replaceFirst(RegExp(r'=w\d+-h\d+[^?]*'), '=w540-h540-l90-rj');
 }
 

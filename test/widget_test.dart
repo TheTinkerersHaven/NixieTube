@@ -55,7 +55,7 @@ void main() {
       configDirPath: dir.path,
     );
     addTearDown(player.dispose);
-    final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+    final oauth = GoogleOAuth();
     addTearDown(oauth.close);
     final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
     addTearDown(art.close);
@@ -101,7 +101,7 @@ void main() {
       configDirPath: dir.path,
     );
     addTearDown(player.dispose);
-    final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+    final oauth = GoogleOAuth();
     addTearDown(oauth.close);
     final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
     addTearDown(art.close);

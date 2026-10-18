@@ -133,7 +133,7 @@ _app({bool playback = false, Directory? dir}) {
     tube: tube,
     player: player,
     art: ArtworkStore(cacheDirPath: '${d.path}/art'),
-    oauth: GoogleOAuth(storePath: '${d.path}/oauth.properties'),
+    oauth: GoogleOAuth(),
     config: SysConfig(configPath: '${d.path}/config.properties'),
     openUrl: (_) async {},
   );

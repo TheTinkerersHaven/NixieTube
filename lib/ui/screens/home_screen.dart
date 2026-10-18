@@ -167,7 +167,7 @@ class HomeScreen extends StatelessWidget {
           ),
           children: [
             _greeting(context, account: account, accountAvatar: accountAvatar),
-            const SizedBox(height: 12),
+            const SizedBox(height: homeSectionSpacing),
             _moods(context, state),
             // Personal block next, no matter what: the quick-picks
             // grid + liked list (or the jump-back-in fallback on
@@ -187,10 +187,10 @@ class HomeScreen extends StatelessWidget {
                   pins: gridLoading ? const <ShelfItem>[] : pins,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ] else if (!loading && account != null && activity.isNotEmpty) ...[
               _jumpBackIn(context, state),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
             // Personal sections first, then the editorial and trending
             // rows. Browsable shelves render as horizontal cover rails;
@@ -199,11 +199,11 @@ class HomeScreen extends StatelessWidget {
             // [_ShelfSection.songRail]).
             if (!loading && discover.isNotEmpty) ...[
               _discover(context, state),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
             if (listenAgain != null) ...[
               _ShelfSection(shelf: listenAgain, title: 'Listen Again'),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
             if (forgotten != null) ...[
               _ShelfSection(
@@ -211,26 +211,26 @@ class HomeScreen extends StatelessWidget {
                 title: 'Forgotten favorites',
                 songRail: true,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
             if (newReleases != null) ...[
               _ShelfSection(shelf: newReleases, title: 'New releases'),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
             _albumsMadeForYou(context, state, loading, recaps),
             for (final shelf in rankedShelves) ...[
               _ShelfSection(shelf: shelf),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
             // Trending closes the screen, country first: the region row
             // Explore serves, then the worldwide chart.
             if (trending != null) ...[
               _ShelfSection(shelf: trending, title: trendingTitle),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
             if (globalTrending != null) ...[
               _ShelfSection(shelf: globalTrending, title: 'Trending globally'),
-              const SizedBox(height: 20),
+              const SizedBox(height: homeSectionSpacing),
             ],
           ],
         ),
@@ -420,7 +420,7 @@ class HomeScreen extends StatelessWidget {
             );
           },
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: homeSectionSpacing),
       ],
     );
   }
@@ -918,7 +918,8 @@ bool isLeftoverShelf(String title, {required bool showingPersonalPicks}) {
       t.contains('new album') ||
       t.contains('new release') ||
       t.contains('trend') ||
-      t.contains('mix'));
+      t.contains('mix') ||
+      t.contains('liked'));
 }
 
 /// One home shelf. Song-only shelves render as columns of rows (about

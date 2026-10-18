@@ -91,7 +91,7 @@ void main() {
         configDirPath: dir.path,
       );
       addTearDown(player.dispose);
-      final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+      final oauth = GoogleOAuth();
       addTearDown(oauth.close);
       final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
       addTearDown(art.close);
@@ -191,7 +191,7 @@ void main() {
         configDirPath: dir.path,
       );
       addTearDown(player.dispose);
-      final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+      final oauth = GoogleOAuth();
       addTearDown(oauth.close);
       final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
       addTearDown(art.close);
@@ -298,7 +298,7 @@ void main() {
         tube: tube,
         player: player,
         art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
-        oauth: GoogleOAuth(storePath: '${dir.path}/oauth.properties'),
+        oauth: GoogleOAuth(),
         config: SysConfig(configPath: '${dir.path}/config.properties'),
         openUrl: (_) async {},
       );

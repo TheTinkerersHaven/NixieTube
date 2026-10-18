@@ -1,14 +1,23 @@
-// Simple properties-file config, mirroring Kotlin `SysConfig`
-// (`~/.config/nixietube/config.properties`).
+// Simple properties-file config, mirroring Kotlin `SysConfig`.
 //
-// Keys: discord.appId, discord.enabled, discord.statusText, mpris.enabled,
-// google.clientId, google.clientSecret, lastfm.enabled, lastfm.apiKey,
-// lastfm.secret, lastfm.sessionKey, lastfm.username, reportPlayback,
-// a11y.highContrast, a11y.reducedMotion, a11y.underlineLinks,
-// lyrics.source, theme.source,
-// theme.seedColor, theme.primary, theme.secondary, theme.tertiary,
-// theme.surface, theme.systemPrimary.
-
+// Keys live in two files in `~/.config/nixietube/`:
+//
+//   config.properties — app settings only:
+//     discord.appId, discord.enabled, discord.statusText,
+//     mpris.enabled, reportPlayback, lyrics.source,
+//     a11y.highContrast, a11y.reducedMotion, a11y.underlineLinks,
+//     theme.source, theme.seedColor, theme.primary, theme.secondary,
+//     theme.tertiary, theme.surface, theme.systemPrimary.
+//
+//   auth.properties — credentials only:
+//     google.clientId, google.clientSecret (OAuth client credentials),
+//     lastfm.enabled, lastfm.apiKey, lastfm.secret, lastfm.sessionKey,
+//     lastfm.username (Last.fm scrobbling),
+//     cookie, sapisidHash, sessionToken (YouTube Music auth),
+//     client_id, access_token, refresh_token, expires_at (OAuth tokens).
+//
+// Both files are read on startup and every write is mirrored to the
+// appropriate file based on key prefix.
 import 'dart:io' show File;
 
 import 'paths.dart';
@@ -110,15 +119,35 @@ void writeProperties(File file, Map<String, String> values) {
   } catch (_) {}
 }
 
+/// Keys that belong in `auth.properties` (credentials, secrets, tokens)
+// rather than `config.properties` (app settings).
+bool _isAuthKey(String key) =>
+    key == 'cookie' ||
+    key == 'sapisidHash' ||
+    key == 'sessionToken' ||
+    key == 'client_id' ||
+    key == 'access_token' ||
+    key == 'refresh_token' ||
+    key == 'expires_at' ||
+    key.startsWith('google.') ||
+    key.startsWith('lastfm.');
+
 /// Persistent application settings.
+///
+/// Reads from both `config.properties` (app settings) and
+/// `auth.properties` (credentials) on startup. Every write is mirrored
+/// to the appropriate file based on key type.
 class SysConfig {
   SysConfig({String? configPath})
-    : _file = File(configPath ?? '${configDir().path}/config.properties'),
+    : _appFile = File(configPath ?? '${configDir().path}/config.properties'),
+      _authFile = File('${configDir().path}/auth.properties'),
       _values = {} {
-    _values.addAll(readProperties(_file));
+    _values.addAll(readProperties(_appFile));
+    _values.addAll(readProperties(_authFile));
   }
 
-  final File _file;
+  final File _appFile;
+  final File _authFile;
   final Map<String, String> _values;
 
   /// Reads a raw string setting, returning [defaultValue] when absent.
@@ -127,10 +156,27 @@ class SysConfig {
     return v ?? defaultValue;
   }
 
-  /// Writes a raw string setting through to disk immediately.
+  /// Writes a raw string setting through to disk immediately, splitting
+  /// app settings and credentials between `config.properties` and
+  /// `auth.properties` based on key type.
   void set(String key, String value) {
     _values[key] = value;
-    writeProperties(_file, _values);
+    _persist();
+  }
+
+  /// Writes both property files from the current in-memory map.
+  void _persist() {
+    final appValues = <String, String>{};
+    final authValues = <String, String>{};
+    _values.forEach((k, v) {
+      if (_isAuthKey(k)) {
+        authValues[k] = v;
+      } else {
+        appValues[k] = v;
+      }
+    });
+    writeProperties(_appFile, appValues);
+    writeProperties(_authFile, authValues);
   }
 
   /// Reads a bool setting, accepting true/1/yes (and the false forms).
@@ -148,7 +194,7 @@ class SysConfig {
   /// Drops [key] entirely (used for nullable settings where an
   /// absent key means "follow the default").
   void remove(String key) {
-    if (_values.remove(key) != null) writeProperties(_file, _values);
+    if (_values.remove(key) != null) _persist();
   }
 
   /// Typed accessors mirroring Kotlin `SysConfig`. Getters read with

@@ -325,7 +325,6 @@ class AppState extends ChangeNotifier {
     // config dir; tests must pass a temp path — the login/logout
     // flows create and delete this file, and must never touch the
     // real session.
-    String? authFilePath,
   }) {
     _tube = tube;
     _player = player;
@@ -333,7 +332,6 @@ class AppState extends ChangeNotifier {
     _oauth = oauth;
     _config = config;
     _openUrl = openUrl;
-    _authFilePath = authFilePath;
     _tube.authProvider = () => _oauth.validSession();
     _playerSub = _player.states.listen(_onPlayerState);
     _loadLocalRecents();
@@ -362,7 +360,6 @@ class AppState extends ChangeNotifier {
   late final GoogleOAuth _oauth;
   late final SysConfig _config;
   late final Future<void> Function(String url) _openUrl;
-  late final String? _authFilePath;
 
   /// Opens [url] in the system's external browser (see the `openUrl`
   /// wiring in `main.dart`).
@@ -3155,27 +3152,19 @@ class AppState extends ChangeNotifier {
 
   // ---------- Auth ----------
 
-  File get _authFile =>
-      File(_authFilePath ?? '${configDir().path}/auth.properties');
-
   /// Restores the persisted cookie session, if any.
   Future<void> loadAuth() async {
     _loadSearchHistory();
     try {
-      final f = _authFile;
-      if (!f.existsSync()) return;
-      final props = readProperties(f);
-      final cookie = props['cookie'] ?? '';
+      final cookie = config.get('cookie');
       if (cookie.isEmpty) return;
       final session = AuthSession.fromCookie(cookie);
       if (session == null) return;
-      final savedToken = props['sessionToken'];
+      final savedToken = config.get('sessionToken');
       _tube.auth = AuthSession(
         cookie: session.cookie,
         sapisidHash: session.sapisidHash,
-        sessionToken: (savedToken != null && savedToken.isNotEmpty)
-            ? savedToken
-            : null,
+        sessionToken: savedToken.isNotEmpty ? savedToken : null,
       );
       unawaited(_refreshAccountAfterAuth());
     } catch (_) {}
@@ -3219,11 +3208,9 @@ class AppState extends ChangeNotifier {
   void _saveAuth() {
     final s = _tube.auth;
     if (s.cookie == null) return;
-    writeProperties(_authFile, {
-      'cookie': s.cookie!,
-      if (s.sapisidHash != null) 'sapisidHash': s.sapisidHash!,
-      if (s.sessionToken != null) 'sessionToken': s.sessionToken!,
-    });
+    config.set('cookie', s.cookie!);
+    if (s.sapisidHash != null) config.set('sapisidHash', s.sapisidHash!);
+    if (s.sessionToken != null) config.set('sessionToken', s.sessionToken!);
   }
 
   Future<void> _refreshAvatar() async {
@@ -3346,9 +3333,9 @@ class AppState extends ChangeNotifier {
     // play history, and the next login's server merge dedups them
     // against fresh history. Clearing them here is what used to wipe
     // just-played songs back to stale server rows on every re-login.
-    try {
-      if (_authFile.existsSync()) _authFile.deleteSync();
-    } catch (_) {}
+    config.remove('cookie');
+    config.remove('sapisidHash');
+    config.remove('sessionToken');
     final current = _player.state.current;
     if (current != null) {
       _player.updateTrackRating(current.videoId, RatingStatus.unknown);
@@ -3379,9 +3366,9 @@ class AppState extends ChangeNotifier {
   /// rows are cleared only when no OAuth session remains.
   void logoutCookie() {
     _tube.auth = const AuthSession.anonymous();
-    try {
-      if (_authFile.existsSync()) _authFile.deleteSync();
-    } catch (_) {}
+    config.remove('cookie');
+    config.remove('sapisidHash');
+    config.remove('sessionToken');
     _ratingCache.clear();
     final current = _player.state.current;
     if (current != null) {

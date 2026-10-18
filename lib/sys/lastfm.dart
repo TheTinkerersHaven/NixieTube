@@ -87,6 +87,7 @@ class LastFmService extends ChangeNotifier {
   LastFmService({required SysConfig config, Dio? dio}) {
     _config = config;
     _dio = dio ?? newHttpClient();
+    refreshStatus();
   }
 
   late final SysConfig _config;

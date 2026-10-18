@@ -67,7 +67,7 @@ Future<({AppState state, String configPath})> _pumpWith(
     configDirPath: dir.path,
   );
   addTearDown(player.dispose);
-  final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+  final oauth = GoogleOAuth();
   addTearDown(oauth.close);
   final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
   addTearDown(art.close);
@@ -287,7 +287,7 @@ void main() {
     addTearDown(player.dispose);
     final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
     addTearDown(art.close);
-    final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+    final oauth = GoogleOAuth();
     addTearDown(oauth.close);
     final state = AppState(
       tube: tube,

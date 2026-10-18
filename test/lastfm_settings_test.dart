@@ -68,7 +68,7 @@ void main() {
     );
     addTearDown(player.dispose);
     config = SysConfig(configPath: '${dir.path}/config.properties');
-    final oauth = GoogleOAuth(storePath: '${dir.path}/oauth.properties');
+    final oauth = GoogleOAuth();
     addTearDown(oauth.close);
     final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
     addTearDown(art.close);

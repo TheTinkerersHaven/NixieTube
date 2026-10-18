@@ -13,13 +13,14 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/sys/google_oauth.dart';
+import 'package:nixietube/sys/sys_config.dart';
 
 import 'mock_dio.dart';
 
 void main() {
   test('loginBrowser keeps the callback server open for a delayed redirect', () async {
     final dir = Directory.systemTemp.createTempSync('nixietube-oauth-');
-    final storePath = '${dir.path}/oauth.properties';
+    addTearDown(() => dir.deleteSync(recursive: true));
     // Longer than the ~1s after which the old poll gave up.
     const redirectDelay = Duration(milliseconds: 1500);
     Future<void>? redirect;
@@ -36,7 +37,8 @@ void main() {
           }),
         ),
       );
-      final oauth = GoogleOAuth(dio: client, storePath: storePath);
+      final config = SysConfig(configPath: '${dir.path}/config.properties');
+      final oauth = GoogleOAuth(config: config, dio: client);
 
       final ok = await oauth.loginBrowser(
         'test-client-id',
@@ -76,22 +78,15 @@ void main() {
             'a redirect arriving after ${redirectDelay.inMilliseconds}ms must be received',
       );
       expect(
-        File(storePath).existsSync(),
-        isTrue,
+        config.get('access_token'),
+        'test-access-token',
         reason: 'the exchanged token must be persisted',
-      );
-      expect(
-        File(storePath)
-            .readAsStringSync()
-            .contains('access_token=test-access-token'),
-        isTrue,
       );
     } finally {
       // Drain the background redirect so no timer is left pending
       // (it is still waiting when the login fails under the bug).
       final pending = redirect;
       if (pending != null) await pending;
-      dir.deleteSync(recursive: true);
     }
   });
 }

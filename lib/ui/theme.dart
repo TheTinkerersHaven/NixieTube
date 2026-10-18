@@ -10,6 +10,9 @@ import 'package:material_ui/material_ui.dart';
 /// Shared outer padding applied by every top-level screen.
 const double screenPadding = 20.0;
 
+/// Even vertical spacing between home sections.
+const double homeSectionSpacing = 20.0;
+
 /// Material 3 Expressive corner scale (10 steps, dp). The three newest
 /// steps (largeIncreased, extraLargeIncreased, extraExtraLarge) serve
 /// the larger components (FAB menu, toolbars, expressive buttons).

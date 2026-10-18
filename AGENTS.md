@@ -13,7 +13,7 @@ The agent must **never** commit, push, tag, or force-push on the user's behalf. 
 
 - `flutter analyze` clean, affected tests green, `flutter build linux --release` succeeds before a release is considered done.
 - Bump the `+<num>` build in `pubspec.yaml` (`version: 0.2.1+N`) on every build; the build number must change whenever the binary changes so the version stays meaningful.
-- In `CHANGES.md`, do not cut lines at a certain length to fit a column width. Leave bullet text full length; the renderer's text wrapping handles it. Hard line wraps inside a bullet fragment the section and break the CI changelog extraction.
+- In `CHANGELOG.md`, do not cut lines at a certain length to fit a column width. Leave bullet text full length; the renderer's text wrapping handles it. Hard line wraps inside a bullet fragment the section and break the CI changelog extraction.
 - M3 (`useMaterial3: true`); M3E components throughout; no hardcoding user-facing content except explicitly requested section names.
 - Two-login model: 1. Google OAuth, 2. browser cookie; per-session sign-out.
 - Square thumbnails must use YouTube's own square art — no client-side auto-crop and no bar trimming; the store never crops (whole-frame decode).

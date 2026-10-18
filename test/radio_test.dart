@@ -160,7 +160,7 @@ Track _track(String id) => Track(
     tube: tube,
     player: player,
     art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
-    oauth: GoogleOAuth(storePath: '${dir.path}/oauth.properties'),
+    oauth: GoogleOAuth(),
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: (_) async {},
   );

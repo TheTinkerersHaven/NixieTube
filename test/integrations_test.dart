@@ -78,14 +78,15 @@ void main() {
   });
 
   group('discord artwork', () {
-    test('only square googleusercontent upgrades', () {
+    test('any googleusercontent artwork is squared up', () {
       expect(
         discordArtwork('https://lh3.googleusercontent.com/a=w60-h60-l90-rj'),
         'https://lh3.googleusercontent.com/a=w540-h540-l90-rj',
       );
+      // Non-square (4:3 / 16:9) video thumbnails are center-cropped to square
       expect(
         discordArtwork('https://lh3.googleusercontent.com/a=w480-h360'),
-        isNull,
+        'https://lh3.googleusercontent.com/a=w540-h540-l90-rj',
       );
       expect(discordArtwork('https://i.ytimg.com/vi/x/hqdefault.jpg'), isNull);
       expect(discordArtwork(null), isNull);
