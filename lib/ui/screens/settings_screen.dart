@@ -18,6 +18,7 @@ import '../../sys/discord.dart';
 import '../../sys/lastfm.dart';
 import '../../sys/mpris.dart';
 import '../../sys/sys_config.dart';
+import '../../sys/version.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/browser_login_dialog.dart';
@@ -174,7 +175,7 @@ class SettingsScreen extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         Text(
-          'NixieTube Flutter port — desktop client',
+          '$appVersionLabel — Flutter port, desktop client',
           style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),

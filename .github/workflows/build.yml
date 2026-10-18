@@ -47,7 +47,8 @@ jobs:
             echo "::error::tag version $TAG_VER != pubspec version $PUB_BUILD_NAME; bump pubspec before tagging"
             exit 1
           fi
-      - run: flutter build linux --release --build-name="${VERSION#v}"
+          echo "APP_VERSION=$RAW" >> "$GITHUB_ENV"
+      - run: flutter build linux --release --build-name="${VERSION#v}" --dart-define=APP_VERSION="${APP_VERSION}"
 
       - name: Build AppImage
         run: |
