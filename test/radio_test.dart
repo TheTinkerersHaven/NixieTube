@@ -32,9 +32,9 @@ class _FakeEngine implements PlayerEngine {
   int pos = 0;
 
   @override
-  Future<bool> play(String url) async {
+  Future<String?> play(String url) async {
     playedUrls.add(url);
-    return true;
+    return null;
   }
 
   @override

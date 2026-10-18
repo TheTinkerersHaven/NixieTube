@@ -27,9 +27,9 @@ class _FakeEngine implements PlayerEngine {
   final List<String> playedUrls = [];
 
   @override
-  Future<bool> play(String url) async {
+  Future<String?> play(String url) async {
     playedUrls.add(url);
-    return true;
+    return null;
   }
 
   @override

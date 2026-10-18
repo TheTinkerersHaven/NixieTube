@@ -28,7 +28,7 @@ Shelf _shelf(String title) => Shelf(title, const []);
 /// Player engine that never really plays, mirroring the other UI tests.
 class _FakeEngine implements PlayerEngine {
   @override
-  Future<bool> play(String url) async => true;
+  Future<String?> play(String url) async => null;
   @override
   Future<void> pause() async {}
   @override

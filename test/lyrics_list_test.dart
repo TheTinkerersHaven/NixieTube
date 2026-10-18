@@ -21,7 +21,7 @@ import 'package:nixietube/ui/widgets/lyrics_list.dart';
 
 class _IdleEngine implements PlayerEngine {
   @override
-  Future<bool> play(String url) async => true;
+  Future<String?> play(String url) async => null;
   @override
   Future<void> pause() async {}
   @override

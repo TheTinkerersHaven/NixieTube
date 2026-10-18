@@ -31,6 +31,19 @@ finalized with a version and date.
   isolate so a large saved queue never stalls startup.
 - Bulk `updateTrackDurations`/`updateTrackMetadata` restamp queue rows in one
   emission.
+- **A stream that dies mid-playback now recovers.** The backend's own error
+  event was never wired up, so the whole retry/backoff path was unreachable:
+  a refused stream just stopped with nothing to say why. Engine errors now
+  reach the controller, which re-resolves under a fresh visitor and resumes
+  where it left off, restarts the backend stack once as last resort, and
+  otherwise reports the backend's real reason instead of a blanket failure.
+  Hung opens time out at 20 s instead of spinning forever.
+- **State delivery is re-entrancy safe.** `_update` broadcasts synchronously
+  to listeners, and a listener (`AppState._onPlayerState` →
+  `_stampQueueMetadata` → `updateTrackRatings`) could call back into
+  `_update` mid-delivery, crashing with `Cannot fire new event`. Nested
+  updates are now deferred to a microtask instead of re-entering the
+  broadcast controller.
 
 ### Discord Rich Presence
 

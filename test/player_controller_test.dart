@@ -17,9 +17,13 @@ class FakeEngine implements PlayerEngine {
   final List<PlayerEngineListener> listeners = [];
   bool playResult = true;
 
+  /// Reason reported by a failing open, so tests can assert the backend's
+  /// own cause reaches the user instead of a blanket "failed".
+  String playFailure = 'the stream was refused';
+
   /// Overrides play when set (e.g. a never-completing future to
   /// simulate a hung backend open).
-  Future<bool> Function(String url)? playHook;
+  Future<String?> Function(String url)? playHook;
 
   /// Scripted per-call play outcomes (consumed in order); falls back to
   /// [playResult] when empty.
@@ -32,14 +36,25 @@ class FakeEngine implements PlayerEngine {
   int volume = 80;
   bool released = false;
 
+  /// Simulates the backend reporting an error nobody is waiting on — a
+  /// stream that dies after it started.
+  void emitError(String message) {
+    for (final l in List.of(listeners)) {
+      l.onError(message);
+    }
+  }
+
   @override
-  Future<bool> play(String url) async {
+  Future<String?> play(String url) async {
     if (playHook != null) return playHook!(url);
     lastUrl = url;
     playedUrls.add(url);
     final ok = playScript.isNotEmpty ? playScript.removeAt(0) : playResult;
-    if (ok) playing = true;
-    return ok;
+    if (ok) {
+      playing = true;
+      return null;
+    }
+    return playFailure;
   }
 
   @override
@@ -164,6 +179,28 @@ void main() {
       expect(c.state.loading, isFalse);
     });
 
+    test('re-entrant _update during state delivery does not crash', () async {
+      // Mirrors AppState._onPlayerState -> _stampQueueMetadata ->
+      // updateTrackRatings -> _update: a listener synchronously re-enters
+      // _update while the broadcast controller is mid-delivery. Without the
+      // microtask deferral this throws "Cannot fire new event".
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      var reentered = false;
+      c.states.listen((_) {
+        if (!reentered) {
+          reentered = true;
+          c.enqueueNext(_track('extra'));
+        }
+      });
+      c.playTracks([_track('v1')]);
+      await _settle();
+      // The deferred re-entrant update lands after delivery completes.
+      expect(c.state.queue, hasLength(2));
+      expect(c.state.queue.map((t) => t.videoId), ['v1', 'extra']);
+      expect(c.state.error, isNull);
+    });
+
     test('unresolvable stream surfaces an error', () async {
       final engine = FakeEngine();
       final c = _controller(engine, streams: {});
@@ -179,6 +216,47 @@ void main() {
       c.playTracks([_track('v1')]);
       await _settle();
       expect(c.state.error, contains('Playback failed to start'));
+    });
+
+    test(
+      "the backend's reason reaches the user, not a blanket failure",
+      () async {
+        // A signed CDN URL refused by the edge looks nothing like a missing
+        // stream, and only the backend knows which it was. The URL itself is
+        // noise in a settings row, so it is stripped.
+        final engine = FakeEngine()
+          ..playResult = false
+          ..playFailure = 'HTTP 403 from rr1---sn-45nufxc-925e.googlevideo.com';
+        final c = _controller(engine);
+        c.playTracks([_track('v1')]);
+        await _settle();
+        expect(c.state.error, contains('HTTP 403'));
+        expect(c.state.error, contains('googlevideo.com'));
+      },
+    );
+
+    test('a stream that dies under us is re-resolved and resumed', () async {
+      // The backend reports this through its error stream when no open is
+      // in flight. Before the engine forwarded it, the controller's whole
+      // recovery path was unreachable and playback just stopped.
+      final engine = FakeEngine();
+      final c = _controller(engine);
+      c.playTracks([_track('v1')]);
+      await _settle();
+      expect(c.state.playing, isTrue);
+      expect(engine.playedUrls, hasLength(1));
+      c.seekTo(30000);
+      await _settle();
+
+      engine.emitError('the stream was refused');
+      await _settle();
+      await _settle();
+
+      // A second URL was minted and playback carried on from where it was,
+      // rather than the track being left dead.
+      expect(engine.playedUrls, hasLength(2));
+      expect(c.state.playing, isTrue);
+      expect(c.state.error, isNull);
     });
 
     test('dead open URL retries under a fresh resolve context', () async {
@@ -739,7 +817,7 @@ void main() {
     });
 
     test('hung engine open times out instead of wedging the track', () async {
-      final first = FakeEngine()..playHook = (_) => Completer<bool>().future;
+      final first = FakeEngine()..playHook = (_) => Completer<String?>().future;
       final c = PlayerController(
         engine: first,
         tube: FakeTube(),

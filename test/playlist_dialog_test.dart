@@ -26,7 +26,7 @@ import 'package:nixietube/ui/widgets/playlist_dialog.dart';
 
 class _FakeEngine implements PlayerEngine {
   @override
-  Future<bool> play(String url) async => true;
+  Future<String?> play(String url) async => null;
   @override
   Future<void> pause() async {}
   @override

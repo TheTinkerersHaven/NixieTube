@@ -29,9 +29,9 @@ class _FakeEngine implements PlayerEngine {
   bool playing = false;
 
   @override
-  Future<bool> play(String url) async {
+  Future<String?> play(String url) async {
     playing = true;
-    return true;
+    return null;
   }
 
   @override

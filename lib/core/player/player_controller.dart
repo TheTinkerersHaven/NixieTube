@@ -159,6 +159,12 @@ class PlayerController implements PlayerEngineListener {
   PlayerState _state = const PlayerState();
   final _states = StreamController<PlayerState>.broadcast(sync: true);
 
+  /// True while `_states.add` is mid-delivery to listeners. A listener
+  /// (e.g. `AppState._onPlayerState`) can synchronously call back into
+  /// `_update` — via `updateTrackRatings` — while we are firing, which
+  // would re-enter the broadcast controller and throw.
+  bool _firing = false;
+
   /// Current snapshot (mirrors `state.value`).
   PlayerState get state => _state;
 
@@ -167,7 +173,25 @@ class PlayerController implements PlayerEngineListener {
 
   void _update(PlayerState value) {
     _state = value;
-    if (!_states.isClosed) _states.add(value);
+    if (_states.isClosed) return;
+    if (_firing) {
+      // A listener synchronously re-entered _update while we were already
+      // delivering an event. Defer the broadcast to a microtask so we never
+      // re-enter the controller while it is firing.
+      scheduleMicrotask(_flushStates);
+      return;
+    }
+    _firing = true;
+    try {
+      _states.add(value);
+    } finally {
+      _firing = false;
+    }
+  }
+
+  /// Re-broadcasts the latest snapshot after a re-entrant _update.
+  void _flushStates() {
+    if (!_states.isClosed) _states.add(_state);
   }
 
   Timer? _ticker;
@@ -326,7 +350,7 @@ class PlayerController implements PlayerEngineListener {
       stream = null;
     }
     if (token != _playToken || stream == null) return false;
-    if (!await _playUrl(stream.url)) return false;
+    if (await _playUrl(stream.url) != null) return false;
     if (token != _playToken) return false;
     if (resumeAt != null && resumeAt > 0) {
       await _engine.seekTo(resumeAt);
@@ -345,18 +369,27 @@ class PlayerController implements PlayerEngineListener {
     return true;
   }
 
-  /// Plays [url] on the engine with a hard ceiling. A hung open (dead
-  /// edge blackholing the connect) must become a plain failure — with
-  /// the hung command stopped — so retries, backend restart and error
-  /// surfacing can take over instead of spinning forever.
-  Future<bool> _playUrl(String url) async {
+  /// Plays [url] on the engine, returning null once it is up or the reason
+  /// it could not be opened.
+  ///
+  /// A hung open (dead edge blackholing the connect) must become a plain
+  /// failure — with the hung command stopped — so retries, backend restart
+  /// and error surfacing can take over instead of spinning forever. The
+  /// reason travels all the way to the user: a signed CDN URL refused by
+  /// the edge is otherwise indistinguishable from a missing stream.
+  Future<String?> _playUrl(String url) async {
     try {
-      return await _engine.play(url).timeout(playTimeout);
-    } catch (_) {
+      return await _engine
+          .play(url)
+          .timeout(
+            playTimeout,
+            onTimeout: () => 'timed out opening the stream',
+          );
+    } catch (error) {
       try {
         unawaited(_engine.stop());
       } catch (_) {}
-      return false;
+      return '$error';
     }
   }
 
@@ -381,7 +414,7 @@ class PlayerController implements PlayerEngineListener {
           now.current?.videoId == track.videoId &&
           !now.stopped) {
         _update(now.copyWith(loading: true, error: () => null));
-        if (await _playUrl(stream.url)) {
+        if (await _playUrl(stream.url) == null) {
           await _engine.seekTo(resumeAt);
           _loadedVideoId = track.videoId;
           _update(_state.copyWith(loading: false, playing: true));
@@ -1278,26 +1311,29 @@ class PlayerController implements PlayerEngineListener {
       );
       return;
     }
-    var ok = await _playUrl(stream.url);
+    var failure = await _playUrl(stream.url);
     // URLs can die server-side before expiry (edge 403 on fresh,
     // IP-correct URLs); retry once under a fresh visitor, whether the
     // dead URL came from prefetch or a direct resolve.
-    if (!ok) {
+    if (failure != null) {
       final fresh = await _resolveFresh(track.videoId);
       if (token != _playToken) return;
       if (fresh != null) {
         stream = fresh;
-        ok = await _playUrl(fresh.url);
+        failure = await _playUrl(fresh.url);
       }
     }
     if (token != _playToken) return;
-    if (!ok) {
+    if (failure != null) {
       // Dead URL family: restart the backend stack before giving up.
       if (await _tryBackendRestart(track, token)) return;
       _update(
         _state.copyWith(
           loading: false,
-          error: () => 'Playback failed to start',
+          // The backend's own reason, not a blanket "failed": a refused
+          // signed URL reads very differently from a missing stream, and
+          // only the backend saw which it was.
+          error: () => 'Playback failed to start: $failure',
         ),
       );
       return;
