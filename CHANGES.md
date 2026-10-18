@@ -44,6 +44,12 @@ finalized with a version and date.
   `_update` mid-delivery, crashing with `Cannot fire new event`. Nested
   updates are now deferred to a microtask instead of re-entering the
   broadcast controller.
+- **Home shelves no longer repeat mixes.** Mixes lifted into "Albums made for
+  you" are filtered out of leftover shelves, so a mood/playlist shelf no
+  longer shows the same cards twice.
+- **Lazy load-more for home rows.** Shelves that carry a continuation token
+  get a "Load more" action under the row; tapping it fetches the next page
+  and appends it to the shelf in place.
 
 ### Discord Rich Presence
 

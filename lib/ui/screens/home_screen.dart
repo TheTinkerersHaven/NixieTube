@@ -1,6 +1,8 @@
 // Home screen ported from Kotlin `HomePanel`: greeting, mood chips,
 // personal quick picks, discover rail, and content shelves.
 
+import 'dart:async' show unawaited;
+
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
@@ -104,16 +106,29 @@ class HomeScreen extends StatelessWidget {
           ];
     // Everything not already pinned above renders after the fixed
     // sections, still ranked so user-overlapping rows come first.
+    // Mix items are not repeated here: they already surface under
+    // "Albums made for you" (via [AppState.mixes]), so a leftover shelf
+    // that contains mixes (e.g. a mood playlist shelf) would otherwise
+    // show the same cards twice.
     final leftovers = loading
         ? const <Shelf>[]
         : [
-            for (final s in home.shelves)
-              if (isLeftoverShelf(
-                s.title,
-                showingPersonalPicks: showPersonalPicks,
-              ))
-                s,
-          ];
+                for (final s in home.shelves)
+                  if (isLeftoverShelf(
+                    s.title,
+                    showingPersonalPicks: showPersonalPicks,
+                  ))
+                    s,
+              ]
+              .map(
+                (s) => Shelf(
+                  s.title,
+                  s.items.where((item) => !AppState.isMixItem(item)).toList(),
+                  continuation: s.continuation,
+                ),
+              )
+              .where((s) => s.items.isNotEmpty)
+              .toList();
     final rankedShelves = loading
         ? const <Shelf>[]
         : state.rankedHomeShelves(leftovers);
@@ -937,9 +952,11 @@ class _ShelfSection extends StatelessWidget {
         .toList();
     final browses = shelf.items.whereType<BrowseItem>().toList();
     final header = title ?? shelf.title;
+    final loadingMore = state.isLoadingMoreShelf(shelf.title);
+    Widget body;
     if (songs.isNotEmpty && browses.isEmpty) {
       if (songRail) {
-        return CardRail(
+        body = CardRail(
           title: header,
           itemCount: songs.length,
           itemBuilder: (context, i) => TrackRailCard(
@@ -948,50 +965,77 @@ class _ShelfSection extends StatelessWidget {
             onTap: () => _playShelfSong(state, songs, i),
           ),
         );
+      } else {
+        body = TrackColumns(
+          title: header,
+          count: songs.length,
+          itemBuilder: (context, i) => TrackRow(
+            track: songs[i],
+            playing: songs[i].videoId == playingId,
+            onPlay: () => _playShelfSong(state, songs, i),
+            rateable: true,
+            showPlaylists: true,
+          ),
+        );
       }
-      return TrackColumns(
+    } else {
+      body = CardRail(
         title: header,
-        count: songs.length,
-        itemBuilder: (context, i) => TrackRow(
-          track: songs[i],
-          playing: songs[i].videoId == playingId,
-          onPlay: () => _playShelfSong(state, songs, i),
-          rateable: true,
-          showPlaylists: true,
-        ),
+        itemCount: shelf.items.length,
+        itemBuilder: (context, i) {
+          final item = shelf.items[i];
+          if (item is SongItem) {
+            final t = item.track;
+            return BrowseCard(
+              item: BrowseItem(
+                title: t.title,
+                subtitle: t.artistNames(),
+                browseId: '',
+                thumbnails: t.thumbnails,
+              ),
+              onTap: () {
+                if (AppState.isMixSeed(t)) {
+                  state.playMixSeed(t);
+                  return;
+                }
+                var idx = songs.indexWhere((s) => s.videoId == t.videoId);
+                if (idx < 0) idx = 0;
+                state.playSongs(songs, idx);
+              },
+            );
+          }
+          final b = item as BrowseItem;
+          return BrowseCard(
+            item: b,
+            onTap: () => state.go(Screen.detail, detail: b),
+          );
+        },
       );
     }
-    return CardRail(
-      title: header,
-      itemCount: shelf.items.length,
-      itemBuilder: (context, i) {
-        final item = shelf.items[i];
-        if (item is SongItem) {
-          final t = item.track;
-          return BrowseCard(
-            item: BrowseItem(
-              title: t.title,
-              subtitle: t.artistNames(),
-              browseId: '',
-              thumbnails: t.thumbnails,
-            ),
-            onTap: () {
-              if (AppState.isMixSeed(t)) {
-                state.playMixSeed(t);
-                return;
-              }
-              var idx = songs.indexWhere((s) => s.videoId == t.videoId);
-              if (idx < 0) idx = 0;
-              state.playSongs(songs, idx);
-            },
-          );
-        }
-        final b = item as BrowseItem;
-        return BrowseCard(
-          item: b,
-          onTap: () => state.go(Screen.detail, detail: b),
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        body,
+        if (shelf.hasMore) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (loadingMore)
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                M3ETextButton(
+                  onPressed: () => unawaited(state.loadMoreShelf(shelf)),
+                  child: const Text('Load more'),
+                ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }

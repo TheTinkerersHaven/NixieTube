@@ -475,10 +475,20 @@ class BrowseItem extends ShelfItem {
 }
 
 /// A home-screen shelf (carousel or list) with its items.
+///
+/// A shelf may carry a [continuation] token: when present, YouTube has
+/// more items for it and a "load more" action appears under the row.
 class Shelf {
-  const Shelf(this.title, this.items);
+  const Shelf(this.title, this.items, {this.continuation});
   final String title;
   final List<ShelfItem> items;
+
+  /// Continuation token for loading the next page of this shelf, or null
+  /// when the shelf is complete (or the feed didn't supply one).
+  final String? continuation;
+
+  /// Whether a load-more action should be offered for this shelf.
+  bool get hasMore => continuation?.isNotEmpty == true;
 }
 
 /// Full album/release page.

@@ -603,7 +603,7 @@ Shelf? parseShelf(dynamic el) {
       }
     }
     if (items.isEmpty) return null;
-    return Shelf(title, items);
+    return Shelf(title, items, continuation: _shelfContinuation(el, carousel));
   }
   final musicShelf = el['musicShelfRenderer'];
   if (musicShelf is Map) {
@@ -620,7 +620,51 @@ Shelf? parseShelf(dynamic el) {
     }
     if (items.isEmpty) return null;
     if (title.isEmpty) title = 'Songs';
-    return Shelf(title, items);
+    return Shelf(
+      title,
+      items,
+      continuation: _shelfContinuation(el, musicShelf),
+    );
+  }
+  return null;
+}
+
+/// Best-effort continuation token for [Shelf.continuation].
+///
+/// YouTube carries more-items tokens in different places depending on the
+/// shelf renderer version: sometimes at the shelf element itself, sometimes
+/// inside the renderer, and sometimes as the trailing
+/// `continuationItemRenderer` of `contents`. Every path is tried and `null`
+/// is returned when none is present, so a shelf without a token simply
+/// never offers a load-more action.
+String? _shelfContinuation(dynamic el, dynamic renderer) {
+  String? token(dynamic node) {
+    if (node is! Map) return null;
+    final cont = nav(node, const ['continuation']);
+    if (cont is Map) {
+      final t = str(nav(cont, const ['token']));
+      if (t?.isNotEmpty == true) return t;
+    }
+    return null;
+  }
+
+  final t = token(el);
+  if (t?.isNotEmpty == true) return t;
+  final r = token(renderer);
+  if (r?.isNotEmpty == true) return r;
+
+  // A trailing continuationItemRenderer in contents.
+  final contents = nav(el, const ['contents']);
+  if (contents is List && contents.isNotEmpty) {
+    final last = contents.last;
+    if (last is Map) {
+      final ci = last['continuationItemRenderer'];
+      if (ci is Map) {
+        final ep = nav(ci, const ['continuationEndpoint']);
+        final ct = str(nav(ep, const ['continuationToken']));
+        if (ct?.isNotEmpty == true) return ct;
+      }
+    }
   }
   return null;
 }

@@ -59,6 +59,11 @@ class _FeedTube extends InnerTube {
   String? country;
   List<Track> globalTracks = const [];
 
+  /// Scripted response to a load-more continuation, plus the token last
+  /// requested (so tests can assert the right shelf was reloaded).
+  List<ShelfItem> loadMoreItems = const [];
+  String? lastLoadMoreContinuation;
+
   @override
   Future<({List<String> moods, List<Shelf> shelves})> home() async =>
       (moods: const <String>[], shelves: shelves);
@@ -69,6 +74,14 @@ class _FeedTube extends InnerTube {
   @override
   Future<({String? country, List<Track> tracks})> charts() async =>
       (country: country, tracks: globalTracks);
+
+  @override
+  Future<({List<ShelfItem> items, String? continuation})> loadMoreShelf(
+    String continuation,
+  ) async {
+    lastLoadMoreContinuation = continuation;
+    return (items: loadMoreItems, continuation: null);
+  }
 
   @override
   Future<Track> enrichTrack(Track track) async => track;
@@ -284,6 +297,102 @@ void main() {
       expect(find.text('The sound of autumn'), findsOneWidget);
       expect(find.byType(TrackColumns), findsOneWidget);
       expect(find.byType(TrackRailCard), findsNothing);
+    });
+
+    testWidgets(
+      'leftover shelves drop mixes already shown under Albums made for you',
+      (tester) async {
+        // A leftover shelf that carries a mix must not render that mix
+        // again: it already appears under "Albums made for you".
+        tester.view.physicalSize = const Size(1600, 2000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        final env = await _bootHome(tester);
+        env.tube.shelves = [
+          Shelf('Recaps', [
+            ShelfItem.browse(
+              title: 'A Recap',
+              subtitle: 'An Artist',
+              browseId: 'MPRErecap',
+              thumbnails: const [],
+            ),
+          ]),
+          Shelf('The sound of autumn', [
+            ShelfItem.browse(
+              title: 'Mix 0',
+              subtitle: 'Mix',
+              browseId: 'VLRDmix0',
+              thumbnails: const [],
+            ),
+            ShelfItem.song(
+              Track(
+                videoId: 'autumn-song-0',
+                title: 'Song 0',
+                artists: const [ArtistRef('An Artist')],
+              ),
+            ),
+          ]),
+        ];
+        await env.state.loadHome();
+        await _pumpHome(tester, env.state);
+        await tester.pump();
+
+        // The mix surfaces once, under "Albums made for you".
+        expect(find.text('Albums made for you'), findsOneWidget);
+        expect(find.text('Mix 0'), findsOneWidget);
+        // The leftover shelf keeps its non-mix song only.
+        expect(find.text('The sound of autumn'), findsOneWidget);
+        expect(find.text('Song 0'), findsOneWidget);
+        expect(find.byType(TrackColumns), findsOneWidget);
+      },
+    );
+
+    testWidgets('load more appends to a shelf and swaps it in place', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1600, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      final env = await _bootHome(tester);
+      env.tube.shelves = [
+        Shelf('The sound of autumn', [
+          ShelfItem.song(
+            Track(
+              videoId: 'autumn-0',
+              title: 'Song 0',
+              artists: const [ArtistRef('An Artist')],
+            ),
+          ),
+        ], continuation: 'tok'),
+      ];
+      env.tube.loadMoreItems = [
+        ShelfItem.song(
+          Track(
+            videoId: 'autumn-1',
+            title: 'Song 1',
+            artists: const [ArtistRef('An Artist')],
+          ),
+        ),
+      ];
+      await env.state.loadHome();
+      await _pumpHome(tester, env.state);
+      await tester.pump();
+
+      expect(find.text('The sound of autumn'), findsOneWidget);
+      expect(find.text('Song 0'), findsOneWidget);
+      expect(find.text('Load more'), findsOneWidget);
+
+      await tester.tapAt(tester.getCenter(find.text('Load more')));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      // The continuation token of that shelf was sent.
+      expect(env.tube.lastLoadMoreContinuation, 'tok');
+      // The new item is appended to the same shelf.
+      expect(find.text('Song 1'), findsOneWidget);
+      // The fake returned no continuation, so the button goes away.
+      expect(find.text('Load more'), findsNothing);
     });
 
     testWidgets('Listen Again is a pinned row list, not a leftover', (

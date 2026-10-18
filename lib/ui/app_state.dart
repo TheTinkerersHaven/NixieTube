@@ -564,6 +564,11 @@ class AppState extends ChangeNotifier {
 
   List<Shelf>? _rankedShelvesCache;
   String _rankedShelvesKey = '';
+  final Set<String> _loadingMoreShelves = {};
+
+  /// Whether a load-more fetch for [title] is in flight, so the row's load
+  // more button shows a spinner instead of being tapped again.
+  bool isLoadingMoreShelf(String title) => _loadingMoreShelves.contains(title);
 
   /// Home shelves with user-overlapping rows first (history, liked
   /// songs, followed artists, personalized mixes outrank generic
@@ -608,12 +613,47 @@ class AppState extends ChangeNotifier {
   /// as My Mix or Discover Mix).
   List<HomeMix> get mixes => mixesOfShelves(home.shelves);
 
+  /// Whether [item] is a mix (a `VLRD…` playlist page or a mix seed
+  /// card) that the "Albums made for you" section already shows. Leftover
+  /// shelves must not re-render these, or the same mix appears twice —
+  /// once under its feed shelf and once under "Albums made for you".
+  static bool isMixItem(ShelfItem item) {
+    if (item is BrowseItem) return item.browseId.startsWith('VLRD');
+    if (item is SongItem) return isMixSeed(item.track);
+    return false;
+  }
+
   /// True when [track] is a personalized mix seed card rather than a
   /// plain song: its radio list (not the single video) is the mix.
   /// Song radios (`RDAMVM…`, carried by every song card) are excluded.
   static bool isMixSeed(Track track) {
     final pid = track.playlistId ?? '';
     return pid.startsWith('RDEM') || pid.startsWith('RDCLAK');
+  }
+
+  /// Loads the next page of [shelf] (its continuation token) and appends
+  /// the new items to it, replacing the shelf in [home.shelves]. Only one
+  // load per shelf at a time; a shelf without a continuation is a no-op.
+  Future<void> loadMoreShelf(Shelf shelf) async {
+    if (!shelf.hasMore || _loadingMoreShelves.contains(shelf.title)) return;
+    _loadingMoreShelves.add(shelf.title);
+    try {
+      final more = await tube.loadMoreShelf(shelf.continuation!);
+      if (more.items.isEmpty) return;
+      final updated = Shelf(shelf.title, [
+        ...shelf.items,
+        ...more.items,
+      ], continuation: more.continuation);
+      home = home.copyWith(
+        shelves: [
+          for (final s in home.shelves)
+            if (s.title == shelf.title) updated else s,
+        ],
+      );
+      notifyListeners();
+    } finally {
+      _loadingMoreShelves.remove(shelf.title);
+    }
   }
 
   /// Collects deduplicated mixes from [shelves] in feed order.
@@ -2644,7 +2684,7 @@ class AppState extends ChangeNotifier {
       Shelf(s.title, [
         for (final item in s.items)
           item is SongItem ? SongItem(_stampKnownRating(item.track)) : item,
-      ]),
+      ], continuation: s.continuation),
   ];
 
   List<Track> _stampLikedIds(List<Track> tracks) => _stampKnownRatings(tracks);

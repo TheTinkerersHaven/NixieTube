@@ -175,7 +175,12 @@ class SettingsScreen extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         Text(
-          '$appVersionLabel — Flutter port, desktop client',
+          '${appVersionLabel.split('+')[0]} - build ${appVersionLabel.split('+')[1]}',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        Text(
+          'Made with ♥  by TheTinkerersHaven :3',
           style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),

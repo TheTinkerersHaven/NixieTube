@@ -637,6 +637,23 @@ class InnerTube {
     return _browseShelvesFrom(res);
   }
 
+  /// Loads the next page of items for [continuation] (a shelf's load-more
+  /// token) using the same signed `browse` request the home feed uses, with
+  /// the continuation token in place of `browseId`. Returns the additional
+  /// items plus any continuation token the response carries for a further
+  /// page, or null when the shelf is exhausted.
+  Future<({List<ShelfItem> items, String? continuation})> loadMoreShelf(
+    String continuation,
+  ) async {
+    final res = await post('browse', _bodyWith({'continuation': continuation}));
+    final shelves = _browseShelvesFrom(res);
+    if (shelves.isEmpty) {
+      return (items: const <ShelfItem>[], continuation: null);
+    }
+    final first = shelves.first;
+    return (items: first.items, continuation: first.continuation);
+  }
+
   /// YouTube's Charts feed: per-country and worldwide music charts.
   static const _chartsBrowseId = 'FEmusic_charts';
 
