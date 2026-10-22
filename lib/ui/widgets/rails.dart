@@ -34,10 +34,11 @@ class RailHeader extends StatelessWidget {
       0.0,
       position.maxScrollExtent,
     );
-    controller.animateTo(
+    scrollToOffset(
+      context,
+      controller,
       target,
-      duration: readMotionDuration(context, const Duration(milliseconds: 300)),
-      curve: Curves.easeOut,
+      duration: const Duration(milliseconds: 300),
     );
   }
 

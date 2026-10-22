@@ -170,6 +170,7 @@ class QuickPickCard extends StatelessWidget {
                   radius: 0,
                   iconSize: 48,
                   squareCoverKey: squareCoverKey,
+                  expand: true,
                 ),
                 const DecoratedBox(
                   decoration: BoxDecoration(

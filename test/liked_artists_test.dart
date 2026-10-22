@@ -1,6 +1,6 @@
 // Tests for healing distributor-placeholder ("Release") credits.
 //
-// Data API `fixup` falls back to "Release" when a "Release - Topic"
+// `fixup` falls back to "Release" when a "Release - Topic"
 // upload carries no artist in its tags; only InnerTube's watch-next
 // panel names the real credit. The liked list (and opened playlists,
 // home shelves) heal in the background via fixReleaseCredits.
@@ -12,13 +12,12 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
-import 'package:nixietube/core/innertube/gdata_api.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
+import 'package:nixietube/core/innertube/account_library.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
@@ -133,7 +132,6 @@ _app({bool playback = false, Directory? dir}) {
     tube: tube,
     player: player,
     art: ArtworkStore(cacheDirPath: '${d.path}/art'),
-    oauth: GoogleOAuth(),
     config: SysConfig(configPath: '${d.path}/config.properties'),
     openUrl: (_) async {},
   );
@@ -219,7 +217,7 @@ void main() {
 
       // The open liked view snapshots the stale credit…
       await env.state.openPlaylist(
-        const GPlaylist(id: '__liked', title: 'Liked songs', itemCount: 1),
+        const AccountPlaylist(id: '__liked', title: 'Liked songs', itemCount: 1),
       );
       expect(env.state.openedPlaylist!.tracks.single.artistNames(), 'Release');
 
@@ -245,10 +243,10 @@ void main() {
           durationSec: 200,
           radioPlaylistId: 'RDAMVM$id',
         );
-        // Session 1: thin liked list straight from the Data API.
+        // Session 1: thin liked list straight from the library.
         var env = _app(dir: dir);
         env.state.testAccount = 'me';
-        env.state.apiOverride = _CachedLibraryApi([thin('v1'), thin('v2')]);
+        env.state.libraryOverride = _CachedLibraryApi([thin('v1'), thin('v2')]);
         await env.state.loadLibrary();
         expect(env.state.liked.first.album, isNull);
         // The panel heals both rows; the resolutions persist.
@@ -263,7 +261,7 @@ void main() {
         // rows still paint full from the persisted cache, no reads needed.
         env = _app(dir: dir);
         env.state.testAccount = 'me';
-        env.state.apiOverride = _CachedLibraryApi([thin('v1'), thin('v2')]);
+        env.state.libraryOverride = _CachedLibraryApi([thin('v1'), thin('v2')]);
         await env.state.loadLibrary();
         expect(env.state.liked.first.album?.name, 'Panel Album 1');
         expect(env.state.liked.first.artistNames(), 'A1');
@@ -273,20 +271,20 @@ void main() {
   });
 }
 
-/// Data API double serving a scripted liked list, everything else empty.
-class _CachedLibraryApi extends GDataApi {
-  _CachedLibraryApi(this.likedTracks) : super(tokenProvider: () async => 'tok');
+/// Library double serving a scripted liked list, everything else empty.
+class _CachedLibraryApi extends AccountLibrary {
+  _CachedLibraryApi(this.likedTracks);
 
   final List<Track> likedTracks;
 
   @override
-  Future<List<GPlaylist>> playlists() async => const [];
+  Future<List<AccountPlaylist>> playlists() async => const [];
 
   @override
   Future<List<Track>> recentActivity({int max = 30}) async => const [];
 
   @override
-  Future<List<ShelfItem>> subscriptions({int max = 50}) async => const [];
+  Future<List<BrowseItem>> subscriptions({int max = 50}) async => const [];
 
   @override
   Future<List<Track>> likedVideos({int max = 2000}) async => likedTracks;
@@ -295,5 +293,5 @@ class _CachedLibraryApi extends GDataApi {
   Future<Map<String, String>> channelAvatars(List<String> ids) async => {};
 
   @override
-  Future<String?> channelAvatar() async => null;
+  Future<String?> accountAvatar() async => null;
 }

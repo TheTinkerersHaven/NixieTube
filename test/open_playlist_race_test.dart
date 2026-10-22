@@ -7,12 +7,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
-import 'package:nixietube/core/innertube/gdata_api.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
+import 'package:nixietube/core/innertube/account_library.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
@@ -61,25 +60,25 @@ class _QuietTube extends InnerTube {
   Future<RatingStatus> rating(String videoId) async => RatingStatus.unknown;
 }
 
-/// Data API double with gated per-playlist track fetches.
-class _GatedGData extends GDataApi {
-  _GatedGData() : super(tokenProvider: () async => 'tok');
+/// Library double with gated per-playlist track fetches.
+class _GatedLibrary extends AccountLibrary {
+  _GatedLibrary();
 
   final gates = <String, Completer<List<Track>>>{};
 
   @override
-  Future<List<GPlaylist>> playlists() async => [];
+  Future<List<AccountPlaylist>> playlists() async => [];
   @override
   Future<List<Track>> recentActivity({int max = 30}) async => [];
   @override
-  Future<List<ShelfItem>> subscriptions({int max = 50}) async => [];
+  Future<List<BrowseItem>> subscriptions({int max = 50}) async => [];
   @override
   Future<List<Track>> likedVideos({int max = 2000}) async => [];
   @override
   Future<List<Track>> playlistTracks(String playlistId, {int max = 5000}) =>
       (gates[playlistId] ??= Completer<List<Track>>()).future;
   @override
-  Future<String?> channelAvatar() async => null;
+  Future<String?> accountAvatar() async => null;
 }
 
 Track _track(String id) => Track(
@@ -89,10 +88,10 @@ Track _track(String id) => Track(
   durationSec: 200,
 );
 
-const _plA = GPlaylist(id: 'plA', title: 'A', itemCount: 1);
-const _plB = GPlaylist(id: 'plB', title: 'B', itemCount: 1);
+const _plA = AccountPlaylist(id: 'plA', title: 'A', itemCount: 1);
+const _plB = AccountPlaylist(id: 'plB', title: 'B', itemCount: 1);
 
-Future<({AppState state, _GatedGData api})> _boot() async {
+Future<({AppState state, _GatedLibrary api})> _boot() async {
   final dir = Directory.systemTemp.createTempSync('nt-plrace-test');
   addTearDown(() => dir.deleteSync(recursive: true));
   final tube = _QuietTube();
@@ -105,19 +104,16 @@ Future<({AppState state, _GatedGData api})> _boot() async {
   addTearDown(player.dispose);
   final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
   addTearDown(art.close);
-  final oauth = GoogleOAuth();
-  addTearDown(oauth.close);
   final state = AppState(
     tube: tube,
     player: player,
     art: art,
-    oauth: oauth,
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: (_) async {},
   );
   addTearDown(state.dispose);
-  final api = _GatedGData();
-  state.apiOverride = api;
+  final api = _GatedLibrary();
+  state.libraryOverride = api;
   state.testAccount = 'Tester';
   return (state: state, api: api);
 }

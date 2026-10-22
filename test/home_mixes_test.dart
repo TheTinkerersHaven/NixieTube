@@ -11,7 +11,6 @@ import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
@@ -146,13 +145,10 @@ void main() {
       addTearDown(player.dispose);
       final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
       addTearDown(art.close);
-      final oauth = GoogleOAuth();
-      addTearDown(oauth.close);
       final state = AppState(
         tube: tube,
         player: player,
         art: art,
-        oauth: oauth,
         config: SysConfig(configPath: '${dir.path}/config.properties'),
         openUrl: (_) async {},
       );

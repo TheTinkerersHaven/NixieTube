@@ -15,7 +15,6 @@ import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/home_screen.dart';
@@ -107,13 +106,10 @@ Future<({AppState state, _FeedTube tube})> _bootHome(
   addTearDown(player.dispose);
   final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
   addTearDown(art.close);
-  final oauth = GoogleOAuth();
-  addTearDown(oauth.close);
   final state = AppState(
     tube: tube,
     player: player,
     art: art,
-    oauth: oauth,
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: (_) async {},
   );
@@ -298,6 +294,45 @@ void main() {
       expect(find.byType(TrackColumns), findsOneWidget);
       expect(find.byType(TrackRailCard), findsNothing);
     });
+
+    testWidgets(
+      'the feed drops the liked-music playlist card',
+      (tester) async {
+        // The feed offers the "Liked Music" auto-playlist as a
+        // suggested playlist. The home lists the liked songs in its own
+        // column, so the card is redundant and never shows.
+        tester.view.physicalSize = const Size(1600, 2000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        final env = await _bootHome(tester);
+        env.tube.shelves = [
+          Shelf('Listen again', [
+            ShelfItem.browse(
+              title: 'Liked Music',
+              subtitle: 'Playlist',
+              browseId: 'VLLM',
+              thumbnails: const [],
+            ),
+            ShelfItem.browse(
+              title: 'Hyperlist',
+              subtitle: 'Playlist',
+              browseId: 'VLPLabc',
+              thumbnails: const [],
+            ),
+          ]),
+        ];
+        await env.state.loadHome();
+
+        final items = env.state.home.shelves.first.items;
+        expect(items.length, 1);
+        expect((items.first as BrowseItem).title, 'Hyperlist');
+
+        await _pumpHome(tester, env.state);
+        await tester.pump();
+        expect(find.text('Liked Music'), findsNothing);
+        expect(find.text('Hyperlist'), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'leftover shelves drop mixes already shown under Albums made for you',

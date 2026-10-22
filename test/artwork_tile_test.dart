@@ -18,7 +18,6 @@ import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/theme.dart';
@@ -115,7 +114,6 @@ img.Image _solid(int w, int h, int r, int g, int b) {
     tube: tube,
     player: player,
     art: store,
-    oauth: GoogleOAuth(),
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: (_) async {},
   );
@@ -418,7 +416,6 @@ void main() {
         tube: tube,
         player: player,
         art: art,
-        oauth: GoogleOAuth(),
         config: SysConfig(configPath: '${dir.path}/config.properties'),
         openUrl: (_) async {},
       );

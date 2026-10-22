@@ -22,7 +22,6 @@ import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
@@ -160,7 +159,6 @@ Track _track(String id) => Track(
     tube: tube,
     player: player,
     art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
-    oauth: GoogleOAuth(),
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: (_) async {},
   );

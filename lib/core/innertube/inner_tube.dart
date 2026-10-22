@@ -3,13 +3,14 @@
 //
 // Anonymous by default; [AuthSession] headers (cookie + `SAPISIDHASH`)
 // unlock library, likes and playlists, with an async [authProvider] hook
-// (OAuth refresh) consulted before every request.
+// (a token refresh) consulted before every request.
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File, FileMode;
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/models.dart';
 import '../../sys/http_client.dart';
@@ -119,7 +120,7 @@ class InnerTube {
   /// Current auth session used (with fallbacks) for requests.
   AuthSession auth;
 
-  /// Optional hook (e.g. OAuth refresh) consulted before every request.
+  /// Optional hook consulted before every request (e.g. a token refresh).
   Future<AuthSession?> Function()? authProvider;
 
   final Dio _dio;
@@ -448,6 +449,15 @@ class InnerTube {
   /// token rotates.
   String? _bearerBrokenFor;
 
+  /// Upper bound on continuation pages walked for one list. A big
+  /// liked-songs list runs to ~10 pages; the cap only guards against
+  /// a server that keeps handing out tokens.
+  static const _maxBrowsePages = 40;
+
+  /// The WEB client version used for channel pages, which the music
+  /// client does not answer.
+  static const webClientVersion = '2.20250101.00.00';
+
   /// Today's WEB_REMIX client version string (`1.YYYYMMDD.01.00`).
   static String clientVersion([DateTime? now]) {
     final today = (now ?? DateTime.now()).toUtc();
@@ -468,7 +478,7 @@ class InnerTube {
     },
   };
 
-  static Map<String, dynamic> _bodyWith(Map<String, String> extra) => {
+  static Map<String, dynamic> _bodyWith(Map<String, dynamic> extra) => {
     'context': _contextBlock()['context'],
     ...extra,
   };
@@ -586,7 +596,7 @@ class InnerTube {
 
   /// Executes a single authenticated InnerTube POST. Shape mirrors
   /// ytmusicapi: no API key, `alt=json`, Firefox UA, always Origin;
-  /// `X-Goog-Request-Time` only for Bearer (custom OAuth clients).
+  /// `X-Goog-Request-Time` only for Bearer sessions.
   Future<dynamic> _request(
     String path,
     String bodyString,
@@ -1042,6 +1052,11 @@ class InnerTube {
 
   /// Opens a playlist page. Raw `PL…` ids answer HTTP 400, so the canonical
   /// `VL…` form is tried as well, keeping the first non-error response.
+  /// A browsed playlist, with every one of its songs.
+  ///
+  /// The playlist page carries the first rows and the token for the
+  /// next ones, so the rest of the playlist is paged in: a long
+  /// playlist lists all of its songs, not just the first page.
   Future<PlaylistDetail?> playlist(String browseId, {String? params}) async {
     final ids = browseId.startsWith('PL')
         ? [browseId, 'VL$browseId']
@@ -1057,7 +1072,82 @@ class InnerTube {
       }
       if (_isErrorResponse(res)) continue;
       final detail = buildPlaylist(res);
-      if (detail != null) return detail;
+      if (detail != null) {
+        final tracks = await _playlistSongs(res, detail.tracks);
+        return PlaylistDetail(
+          title: detail.title,
+          subtitle: detail.subtitle,
+          thumbnails: detail.thumbnails,
+          tracks: tracks,
+          author: detail.author,
+        );
+      }
+    }
+    return null;
+  }
+
+  /// The songs of a playlist: the page's own rows plus every page its
+  /// continuation leads to.
+  Future<List<Track>> _playlistSongs(dynamic page, List<Track> first) async {
+    final out = List<Track>.of(first);
+    var token = _playlistShelfToken(page);
+    for (var p = 0; p < _maxBrowsePages && token != null; p++) {
+      dynamic res;
+      try {
+        res = await post('browse', _bodyWith({'continuation': token}));
+      } catch (_) {
+        break;
+      }
+      if (_isErrorResponse(res)) break;
+      final items = _appendedItems(res);
+      if (items == null) break;
+      for (final item in items) {
+        final li = nav(item, const ['musicResponsiveListItemRenderer']);
+        if (li == null) continue;
+        final t = parseListItem(li);
+        if (t == null) continue;
+        // Playlist rows keep the running time in the fixed columns.
+        final duration = parseRowDuration(li);
+        out.add(duration > 0 ? t.copyWith(durationSec: duration) : t);
+      }
+      token = _tokenInRows(items);
+    }
+    return out;
+  }
+
+  /// The token that continues the playlist shelf in [res].
+  ///
+  /// Scoped to the playlist shelf: a playlist page carries other
+  /// shelves (the description, recommendations) whose tokens lead
+  /// somewhere else entirely.
+  String? _playlistShelfToken(dynamic res) {
+    final shelf =
+        findFirst(res, 'musicPlaylistShelfRenderer') ??
+        findFirst(res, 'musicPlaylistShelfContinuation');
+    if (shelf is Map) {
+      final contents = nav(shelf, const ['contents']);
+      if (contents is List) {
+        final token = _tokenInRows(contents);
+        if (token != null) return token;
+      }
+    }
+    final items = _appendedItems(res);
+    if (items != null) return _tokenInRows(items);
+    return null;
+  }
+
+  /// The rows a continued page appends: the row list and its trailing
+  /// continuation row in one place.
+  List<dynamic>? _appendedItems(dynamic res) {
+    final actions = nav(res, const ['onResponseReceivedActions']);
+    if (actions is List) {
+      for (final action in actions) {
+        final items = nav(
+          action,
+          const ['appendContinuationItemsAction', 'continuationItems'],
+        );
+        if (items is List && items.isNotEmpty) return items;
+      }
     }
     return null;
   }
@@ -1099,6 +1189,842 @@ class InnerTube {
     return panelsOf(res);
   }
 
+  /// Liked songs of the signed-in account.
+  ///
+  /// The list is YouTube's "Liked Music" playlist (`VLLM`) — the
+  /// playlist the YouTube Music sidebar links to as *Liked songs* —
+  /// and nothing else: no library shelf, no other source. Every
+  /// entry of that playlist is listed, whatever it holds: official
+  /// music videos, user uploads and album tracks all count as liked
+  /// songs.
+  ///
+  /// The playlist is read in its "Newest first" order, so the list
+  /// reads newest-like first (and the first page already is the newest
+  /// songs, not an arbitrary slice of the playlist). The rows also
+  /// carry the like timestamp (`playlistItemData.voteSortValue`), which
+  /// orders the list when the sorted order is unavailable.
+  ///
+  /// The count the playlist's header reports ([likedCount]) counts every
+  /// entry of the playlist, while its shelf renders only the ones it
+  /// can show, so the two differ — as they do in YouTube Music itself.
+  Future<List<Track>> likedVideos({int max = 2000}) async {
+    if (auth == const AuthSession.anonymous()) return const [];
+    try {
+      final rows = await _likedRows(limit: max);
+      final seen = <String>{};
+      final dated = <({Track track, int likedAt, int order})>[];
+      final undated = <Track>[];
+      for (final row in rows) {
+        if (!seen.add(row.track.videoId)) continue;
+        final likedAt = row.likedAt;
+        if (likedAt == null) {
+          undated.add(row.track);
+        } else {
+          dated.add((track: row.track, likedAt: likedAt, order: dated.length));
+        }
+      }
+      // Newest like first; songs liked within the same second keep the
+      // order the playlist listed them in.
+      dated.sort((a, b) {
+        final byTime = b.likedAt.compareTo(a.likedAt);
+        return byTime != 0 ? byTime : a.order.compareTo(b.order);
+      });
+      final out = <Track>[
+        ...dated.map((e) => e.track),
+        ...undated,
+      ];
+      return out.length <= max ? out : out.sublist(0, max);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// The song count YouTube reports for the liked-music playlist.
+  ///
+  /// The playlist's header counts every entry of the playlist ("524
+  /// songs"), while its shelf only renders the entries it can show —
+  /// so the count and the number of rows differ, exactly as they do
+  /// in YouTube Music itself. Null until a playlist page was read.
+  int? get likedCount => _likedCount;
+  int? _likedCount;
+
+  /// Pages the liked-music playlist, pairing every row with the like
+  /// timestamp it carries (null when the row exposes none).
+  Future<List<({Track track, int? likedAt})>> _likedRows({int limit = 2000}) async {
+    final out = <({Track track, int? likedAt})>[];
+    final page = await post('browse', _bodyWith({'browseId': 'VLLM'}));
+    if (_isErrorResponse(page)) return out;
+    // The count the playlist's header reports: every entry of the
+    // playlist, not only the ones its shelf renders.
+    _likedCount = _playlistSongCount(page);
+    // The playlist in its "Newest first" order: the server sorts, so
+    // even the first page is the newest songs.
+    final newestFirst = _sortContinuation(page, 'VLLM_NEWEST_ADDED');
+    final sizes = newestFirst != null
+        ? await _shelfRows(
+            out,
+            () => post('browse', _bodyWith({'continuation': newestFirst})),
+            limit: limit,
+          )
+        : await _shelfRows(out, () async => page, limit: limit);
+    // The shelf renders the entries it can show while the header
+    // counts all of them, so the two differ by design. A wider gap
+    // means the walk lost rows on the way, and the page sizes say
+    // which page it was.
+    final counted = _likedCount;
+    if (counted != null && out.length < counted) {
+      debugPrint(
+        '[liked] the playlist counts $counted songs, the shelf rendered '
+        '${out.length} (pages: $sizes)',
+      );
+    }
+    return out;
+  }
+
+  /// The song count the playlist page's header reports ("524 songs").
+  static int? _playlistSongCount(dynamic page) {
+    int? found;
+    void walk(dynamic node) {
+      if (found != null) return;
+      if (node is Map) {
+        final subtitle = node['secondSubtitle'];
+        if (subtitle is Map) {
+          final runs = subtitle['runs'];
+          if (runs is List) {
+            final text = runs
+                .map((r) => r is Map ? (r['text'] ?? '') : '')
+                .join(' ');
+            final m = RegExp(r'(\d+)\s+songs?\b').firstMatch(text);
+            if (m != null) {
+              found = int.tryParse(m.group(1)!);
+              return;
+            }
+          }
+        }
+        node.forEach((k, v) => walk(v));
+      } else if (node is List) {
+        for (final v in node) {
+          walk(v);
+          if (found != null) return;
+        }
+      }
+    }
+
+    walk(page);
+    return found;
+  }
+
+  /// Walks a shelf, appending its rows to [out] until [limit] is
+  /// reached or the shelf runs out of pages.
+  ///
+  /// Returns the number of rows every page carried, so the caller can
+  /// tell a clean walk from one that lost rows on the way.
+  ///
+  /// The pages of a shelf all carry the same number of rows, so a page
+  /// that comes back with fewer of them lost rows in the response: it
+  /// is fetched once more and the fuller of the two answers is used.
+  Future<List<int>> _shelfRows(
+    List<({Track track, int? likedAt})> out,
+    Future<dynamic> Function() fetch, {
+    required int limit,
+  }) async {
+    final sizes = <int>[];
+    var request = fetch;
+    var res = await request();
+    if (_isErrorResponse(res)) return sizes;
+    var full = 0;
+    for (var page = 0; page < _maxBrowsePages; page++) {
+      var shelf = _likedShelf(res);
+      if (shelf == null) break;
+      var tracks = _shelfTracks(shelf.rows);
+      if (tracks.length > full) full = tracks.length;
+      if (tracks.length < full && shelf.token != null) {
+        // The page came back short: its response dropped rows. Fetch
+        // it again and keep whichever answer carries more of them.
+        debugPrint(
+          '[liked] page $page came back short: ${tracks.length} of '
+          '$full rows',
+        );
+        final retry = await request();
+        if (!_isErrorResponse(retry)) {
+          final again = _likedShelf(retry);
+          if (again != null) {
+            final refetched = _shelfTracks(again.rows);
+            if (refetched.length > tracks.length) {
+              debugPrint(
+                '[liked] page $page refetched: ${refetched.length} rows',
+              );
+              shelf = again;
+              tracks = refetched;
+            }
+          }
+        }
+      }
+      sizes.add(tracks.length);
+      out.addAll(tracks);
+      if (out.length >= limit) return sizes;
+      final token = shelf.token;
+      if (token == null) break;
+      request = () => post('browse', _bodyWith({'continuation': token}));
+      res = await request();
+      if (_isErrorResponse(res)) break;
+    }
+    return sizes;
+  }
+
+  /// The tracks the shelf rows carry, with their like timestamp and
+  /// their duration.
+  List<({Track track, int? likedAt})> _shelfTracks(List<dynamic> rows) {
+    final out = <({Track track, int? likedAt})>[];
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final inner = row['musicResponsiveListItemRenderer'];
+      final t = parseListItem(inner ?? row);
+      if (t == null || t.videoId.isEmpty) continue;
+      final likedAt = nav(row, const ['playlistItemData', 'voteSortValue']) ??
+          nav(inner, const ['playlistItemData', 'voteSortValue']);
+      final duration = parseRowDuration(inner ?? row);
+      out.add((
+        track: duration > 0 ? t.copyWith(durationSec: duration) : t,
+        likedAt: likedAt is num ? likedAt.toInt() : null,
+      ));
+    }
+    return out;
+  }
+
+  /// The rows of the liked shelf in [res] and the token that continues
+  /// them, or null when the response carries no shelf rows.
+  ///
+  /// Shelf-scoped on purpose: the liked pages carry side shelves and
+  /// carousels ("Listen again", "Forgotten favorites", "Recaps") whose
+  /// rows are not liked songs, and reading the whole response would
+  /// mix them into the list.
+  ({List<dynamic> rows, String? token})? _likedShelf(dynamic res) {
+    // A continued page arrives as appended items: the row list and
+    // its trailing continuation row in one place.
+    final actions = nav(res, const ['onResponseReceivedActions']);
+    if (actions is List) {
+      for (final action in actions) {
+        final items = nav(
+          action,
+          const ['appendContinuationItemsAction', 'continuationItems'],
+        );
+        if (items is List && items.isNotEmpty) {
+          return (rows: items, token: _tokenInRows(items));
+        }
+      }
+    }
+    // The shelf page: the playlist shelf when there is one (the
+    // "Liked Music" playlist), else the plain music shelf (the
+    // library's "Songs" list).
+    List<dynamic>? playlistRows;
+    List<dynamic>? musicRows;
+    String? shelfToken;
+    void walk(dynamic node) {
+      if (playlistRows != null && musicRows != null) return;
+      if (node is Map) {
+        for (final entry in node.entries) {
+          final key = entry.key;
+          if (key is String) {
+            final lower = key.toLowerCase();
+            // Carousels ("Listen again", "Forgotten favorites") hold
+            // rows that are not liked songs.
+            final isShelf = lower.endsWith('shelfrenderer') ||
+                lower.endsWith('shelfcontinuation');
+            if (isShelf && !lower.contains('carousel')) {
+              final contents = nav(entry.value, const ['contents']);
+              if (contents is List && contents.isNotEmpty) {
+                // Some shelves carry their token in a `continuations`
+                // block next to the rows.
+                final continuations = nav(entry.value, const ['continuations']);
+                if (continuations is List) {
+                  for (final c in continuations) {
+                    final next = nav(c, const [
+                      'nextContinuationData',
+                      'continuation',
+                    ]);
+                    if (next is String && next.isNotEmpty) {
+                      shelfToken = next;
+                      break;
+                    }
+                  }
+                }
+                if (lower.contains('playlist')) {
+                  playlistRows = contents;
+                  return;
+                }
+                musicRows ??= contents;
+              }
+            }
+          }
+          walk(entry.value);
+        }
+      } else if (node is List) {
+        for (final v in node) {
+          walk(v);
+          if (playlistRows != null) return;
+        }
+      }
+    }
+
+    walk(res);
+    final rows = playlistRows ?? musicRows;
+    if (rows == null) return null;
+    return (rows: rows, token: _tokenInRows(rows) ?? shelfToken);
+  }
+
+  /// The continuation that reloads a browse page in one of its sort
+  /// orders, or null when the page offers no such order.
+  ///
+  /// The sort options arrive as entity commands; the page also ships
+  /// the matching reload continuations in its `frameworkUpdates`.
+  /// The command key names the order in plain text
+  /// (`music_sort_option_command_entity_key_VLLM_NEWEST_ADDED`),
+  /// which is what picks the wanted one out of the batch.
+  String? _sortContinuation(dynamic res, String marker) {
+    final mutations = nav(res, const [
+      'frameworkUpdates',
+      'entityBatchUpdate',
+      'mutations',
+    ]);
+    if (mutations is! List) return null;
+    for (final mutation in mutations) {
+      final key = str(nav(mutation, const ['entityKey']));
+      if (key == null || !_entityKeyNames(key, marker)) continue;
+      final token = str(
+        nav(mutation, const [
+          'payload',
+          'commandEntity',
+          'command',
+          'browseSectionListReloadEndpoint',
+          'continuation',
+          'reloadContinuationData',
+          'continuation',
+        ]),
+      );
+      if (token != null && token.isNotEmpty) return token;
+    }
+    return null;
+  }
+
+  /// True when an entity command key names [marker]. The key is a
+  /// base64 blob that carries the command name in plain text.
+  static bool _entityKeyNames(String key, String marker) {
+    try {
+      final decoded = base64.decode(Uri.decodeComponent(key));
+      return String.fromCharCodes(decoded).contains(marker);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// The continuation token that continues the rows of [res], or null
+  /// when they are complete.
+  ///
+  /// Scoping matters: a page carries several tokens, and the one on the
+  /// section list itself loads *other* shelves (recommended albums and
+  /// the like), not more rows of this one. Only a token that continues
+  /// the row list may be followed, so a short playlist stops at its own
+  /// last track instead of bleeding into the rest of the page.
+  String? _continuationToken(dynamic res) {
+    // A continued page arrives as appended items, the row list and its
+    // trailing continuation row in one place.
+    final actions = nav(res, const ['onResponseReceivedActions']);
+    if (actions is List) {
+      for (final action in actions) {
+        final items = nav(
+          action,
+          const ['appendContinuationItemsAction', 'continuationItems'],
+        );
+        if (items is List) {
+          final token = _tokenInRows(items);
+          if (token != null) return token;
+        }
+      }
+    }
+    // A shelf page carries its rows plus the token for the next page.
+    String? found;
+    void walk(dynamic node) {
+      if (found != null) return;
+      if (node is Map) {
+        for (final entry in node.entries) {
+          final key = entry.key;
+          if (key is String &&
+              (key.endsWith('ShelfRenderer') || key.endsWith('ShelfContinuation'))) {
+            final shelf = entry.value;
+            final contents = nav(shelf, const ['contents']);
+            if (contents is List) {
+              final token = _tokenInRows(contents);
+              if (token != null) {
+                found = token;
+                return;
+              }
+            }
+            // Some shelves (the liked-songs list) carry their token in
+            // a `continuations` block next to the rows.
+            final continuations = nav(shelf, const ['continuations']);
+            if (continuations is List) {
+              for (final c in continuations) {
+                final next = nav(c, const ['nextContinuationData', 'continuation']);
+                if (next is String && next.isNotEmpty) {
+                  found = next;
+                  return;
+                }
+              }
+            }
+          }
+          walk(entry.value);
+        }
+      } else if (node is List) {
+        for (final v in node) {
+          walk(v);
+          if (found != null) return;
+        }
+      }
+    }
+
+    walk(res);
+    return found;
+  }
+
+  /// The continuation token carried by a row list: the trailing
+  /// `continuationItemRenderer` row, or a `nextContinuationData` block.
+  String? _tokenInRows(List<Object?> rows) {
+    for (final row in rows) {
+      final token = nav(row, const [
+        'continuationItemRenderer',
+        'continuationEndpoint',
+        'continuationCommand',
+        'token',
+      ]);
+      if (token is String && token.isNotEmpty) return token;
+    }
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final next = nav(row, const ['nextContinuationData', 'continuation']);
+      if (next is String && next.isNotEmpty) return next;
+    }
+    return null;
+  }
+
+  /// Account playlists from the library's "liked playlists" page.
+  ///
+  /// The page lists the account's own playlists (`VL…` browse ids)
+  /// plus the special rows YouTube mixes in (liked music, radio
+  /// mixes, the episode queue). Only real playlists are returned, with
+  /// their `PL…` id so edits and opens address the same playlist.
+  Future<List<AccountPlaylist>> libraryPlaylists() async {
+    if (auth == const AuthSession.anonymous()) return const [];
+    try {
+      final res = await post(
+        'browse',
+        _bodyWith({'browseId': 'FEmusic_liked_playlists'}),
+      );
+      if (_isErrorResponse(res)) return const [];
+      final out = <AccountPlaylist>[];
+      for (final node in findAll(res, 'musicTwoRowItemRenderer')) {
+        final title = runsText(nav(node, const ['title', 'runs']));
+        if (title.isEmpty || title == 'New playlist') continue;
+        final browseId =
+            str(nav(node, const ['navigationEndpoint', 'browseEndpoint', 'browseId'])) ??
+            '';
+        // Only the account's own playlists (`VL` + `PL…`) are
+        // editable; the rest are YouTube's own rows.
+        if (!browseId.startsWith('VLPL')) continue;
+        final id = browseId.substring(2);
+        var count = 0;
+        final subtitle = runsText(nav(node, const ['subtitle', 'runs']));
+        final m = RegExp(r'(\d+)\s+(?:track|song)s?').firstMatch(subtitle);
+        if (m != null) count = int.tryParse(m.group(1)!) ?? 0;
+        String? art;
+        final thumbs = nav(
+          node,
+          const ['thumbnailRenderer', 'musicThumbnailRenderer', 'thumbnail', 'thumbnails'],
+        );
+        if (thumbs is List && thumbs.isNotEmpty) {
+          art = str((thumbs.last as Map?)?['url']);
+        }
+        // The owner is the first subtitle run, which links to the
+        // owner's channel.
+        var owner = '';
+        var ownerId = '';
+        final runs = nav(node, const ['subtitle', 'runs']);
+        if (runs is List && runs.isNotEmpty) {
+          final first = runs.first;
+          owner = str(nav(first, const ['text'])) ?? '';
+          ownerId =
+              str(
+                nav(first, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
+              ) ??
+              '';
+        }
+        out.add(
+          AccountPlaylist(
+            id: id,
+            title: title,
+            itemCount: count,
+            art: art,
+            arts: art == null ? const [] : [art],
+            owner: owner,
+            ownerId: ownerId,
+          ),
+        );
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Followed artists (channels the account subscribes to) from the
+  /// library's artist corpus.
+  Future<List<BrowseItem>> libraryArtists({int max = 50}) async {
+    if (auth == const AuthSession.anonymous()) return const [];
+    try {
+      final res = await post(
+        'browse',
+        _bodyWith({'browseId': 'FEmusic_library_corpus_artists'}),
+      );
+      if (_isErrorResponse(res)) return const [];
+      final out = <BrowseItem>[];
+      for (final li in findAll(res, 'musicResponsiveListItemRenderer')) {
+        final item = parseBrowseItem(li);
+        if (item == null) continue;
+        out.add(item);
+        if (out.length >= max) break;
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Tracks of one account playlist, in playlist order.
+  ///
+  /// The playlist page is browsed by its `VL` browse id and the rows
+  /// are parsed like any other list. Only the first page is read:
+  /// a playlist of thousands is not worth a multi-page crawl for the
+  /// library view.
+  Future<List<Track>> playlistTracks(String playlistId, {int max = 5000}) async {
+    if (playlistId.trim().isEmpty) return const [];
+    try {
+      final out = <Track>[];
+      var res = await post(
+        'browse',
+        _bodyWith({'browseId': 'VL$playlistId'}),
+      );
+      if (_isErrorResponse(res)) return const [];
+      for (var page = 0; page < _maxBrowsePages; page++) {
+        for (final li in findAll(res, 'musicResponsiveListItemRenderer')) {
+          final t = parseListItem(li);
+          if (t == null) continue;
+          // Playlist rows keep the running time in the fixed columns.
+          final duration = parseRowDuration(li);
+          out.add(duration > 0 ? t.copyWith(durationSec: duration) : t);
+          if (out.length >= max) return out;
+        }
+        final token = _continuationToken(res);
+        if (token == null) break;
+        res = await post('browse', _bodyWith({'continuation': token}));
+        if (_isErrorResponse(res)) break;
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// The `setVideoId` of a track inside an account playlist, or null
+  /// when the playlist does not contain it. The id is what the
+  /// playlist-edit endpoint needs to remove the row.
+  Future<String?> playlistItemId(String playlistId, String videoId) async {
+    if (playlistId.trim().isEmpty || videoId.trim().isEmpty) return null;
+    try {
+      var res = await post(
+        'browse',
+        _bodyWith({'browseId': 'VL$playlistId'}),
+      );
+      if (_isErrorResponse(res)) return null;
+      for (var page = 0; page < _maxBrowsePages; page++) {
+        for (final node in findAll(res, 'playlistEditEndpoint')) {
+          final bid = str(nav(node, const ['playlistId']));
+          if (bid != null && bid != playlistId) continue;
+          final actions = nav(node, const ['actions']);
+          if (actions is! List) continue;
+          for (final a in actions) {
+            if (str(nav(a, const ['action'])) != 'ACTION_REMOVE_VIDEO') continue;
+            if (str(nav(a, const ['removedVideoId'])) != videoId) continue;
+            return str(nav(a, const ['setVideoId']));
+          }
+        }
+        final token = _continuationToken(res);
+        if (token == null) break;
+        res = await post('browse', _bodyWith({'continuation': token}));
+        if (_isErrorResponse(res)) break;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Creates a playlist and returns its `PL…` id, or null on failure.
+  Future<String?> createPlaylist(String title) async {
+    try {
+      final res = await post(
+        'playlist/create',
+        _bodyWith({'title': title, 'privacyStatus': 'PRIVATE'}),
+      );
+      if (_isErrorResponse(res)) return null;
+      final id = str(nav(res, const ['playlistId']));
+      return (id != null && id.isNotEmpty) ? id : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Renames a playlist. Returns true when YouTube confirms the edit.
+  Future<bool> renamePlaylist(String playlistId, String title) async {
+    if (playlistId.trim().isEmpty) return false;
+    try {
+      final res = await post('browse/edit_playlist', {
+        ..._bodyWith({}),
+        'playlistId': playlistId,
+        'actions': [
+          {'action': 'ACTION_SET_PLAYLIST_NAME', 'playlistName': title},
+        ],
+      });
+      return str(nav(res, const ['status'])) == 'STATUS_SUCCEEDED';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Deletes a playlist. Returns true when YouTube confirms the delete.
+  Future<bool> deletePlaylist(String playlistId) async {
+    if (playlistId.trim().isEmpty) return false;
+    try {
+      final res = await post(
+        'playlist/delete',
+        _bodyWith({'playlistId': playlistId}),
+      );
+      return !_isErrorResponse(res);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Adds a track to a playlist.
+  Future<bool> addToPlaylist(String playlistId, String videoId) async {
+    if (playlistId.trim().isEmpty || videoId.trim().isEmpty) return false;
+    try {
+      final res = await post('browse/edit_playlist', {
+        ..._bodyWith({}),
+        'playlistId': playlistId,
+        'actions': [
+          {'action': 'ACTION_ADD_VIDEO', 'addedVideoId': videoId},
+        ],
+      });
+      return str(nav(res, const ['status'])) == 'STATUS_SUCCEEDED';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Removes a track from a playlist. [setVideoId] comes from
+  /// [playlistItemId]; without it the row cannot be addressed.
+  Future<bool> removeFromPlaylist(
+    String playlistId,
+    String videoId,
+    String setVideoId,
+  ) async {
+    if (playlistId.trim().isEmpty || setVideoId.trim().isEmpty) return false;
+    try {
+      final res = await post('browse/edit_playlist', {
+        ..._bodyWith({}),
+        'playlistId': playlistId,
+        'actions': [
+          {
+            'setVideoId': setVideoId,
+            'action': 'ACTION_REMOVE_VIDEO',
+            'removedVideoId': videoId,
+          },
+        ],
+      });
+      return str(nav(res, const ['status'])) == 'STATUS_SUCCEEDED';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Subscribes to a channel. Returns true when YouTube confirms it.
+  Future<bool> subscribeTo(String channelId) async {
+    if (channelId.trim().isEmpty) return false;
+    try {
+      final res = await post(
+        'subscription/subscribe',
+        _bodyWith({'channelIds': [channelId]}),
+      );
+      return !_isErrorResponse(res);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Unsubscribes from a channel.
+  Future<bool> unsubscribeFrom(String channelId) async {
+    if (channelId.trim().isEmpty) return false;
+    try {
+      final res = await post(
+        'subscription/unsubscribe',
+        _bodyWith({'channelIds': [channelId]}),
+      );
+      return !_isErrorResponse(res);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Whether the account currently subscribes to [channelId], read
+  /// from the channel page's subscribe button.
+  Future<bool> isSubscribed(String channelId) async {
+    if (channelId.trim().isEmpty) return false;
+    try {
+      final res = await post(
+        'browse',
+        _bodyWith({'browseId': channelId}),
+      );
+      if (_isErrorResponse(res)) return false;
+      for (final node in findAll(res, 'subscribeButtonRenderer')) {
+        final subscribed = nav(node, const ['subscribed']);
+        if (subscribed == true) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// The signed-in channel's own id, read from the account menu's
+  /// "Your channel" entry.
+  Future<String?> ownChannelId() async {
+    try {
+      final res = await post('account/account_menu', _bodyWith({}));
+      if (_isErrorResponse(res)) return null;
+      for (final node in findAll(res, 'compactLinkRenderer')) {
+        final title = runsText(nav(node, const ['title', 'runs']));
+        if (title != 'Your channel') continue;
+        final id = str(
+          nav(node, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
+        );
+        if (id != null && id.isNotEmpty) return id;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The signed-in account's own channel avatar (square profile pic).
+  Future<String?> accountAvatar() async {
+    try {
+      final res = await post('account/account_menu', _bodyWith({}));
+      if (_isErrorResponse(res)) return null;
+      for (final node in findAll(res, 'accountPhoto')) {
+        final thumbs = nav(node, const ['thumbnails']);
+        if (thumbs is List && thumbs.isNotEmpty) {
+          return str((thumbs.last as Map?)?['url']);
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Square avatar of one channel, read from the channel's own page.
+  ///
+  /// Channel pages only render under the WEB client (the music client
+  /// answers them empty), so this request uses that client context.
+  Future<String?> channelAvatar(String channelId) async {
+    if (channelId.trim().isEmpty) return null;
+    try {
+      final res = await post('browse', {
+        'context': {
+          'client': {
+            'clientName': 'WEB',
+            'clientVersion': webClientVersion,
+            'hl': 'en',
+          },
+          'user': <String, dynamic>{},
+        },
+        'browseId': channelId,
+      });
+      if (_isErrorResponse(res)) return null;
+      for (final node in findAll(res, 'decoratedAvatarViewModel')) {
+        final sources =
+            nav(node, const ['avatar', 'avatarViewModel', 'image', 'sources']) ??
+            nav(node, const ['avatarViewModel', 'image', 'sources']);
+        if (sources is! List || sources.isEmpty) continue;
+        var best = '';
+        var bestWidth = -1;
+        for (final s in sources) {
+          final w = intOrNull(nav(s, const ['width'])) ?? 0;
+          if (w > bestWidth) {
+            bestWidth = w;
+            best = str(nav(s, const ['url'])) ?? '';
+          }
+        }
+        if (best.isNotEmpty) return best;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Avatars of several channels, keyed by channel id. Channels whose
+  /// avatar cannot be read are absent from the map.
+  Future<Map<String, String>> channelAvatars(List<String> ids) async {
+    if (ids.isEmpty) return const {};
+    final out = <String, String>{};
+    final results = await Future.wait(
+      ids.map((id) async => (id, await channelAvatar(id))),
+    );
+    for (final (id, url) in results) {
+      if (url != null && url.isNotEmpty) out[id] = url;
+    }
+    return out;
+  }
+
+  /// Public like count of a video, read from the watch-next response.
+  ///
+  /// The response carries one count per possible like state; the one
+  /// matching the viewer's current state is the real count.
+  Future<int?> videoLikeCount(String videoId) async {
+    if (videoId.trim().isEmpty) return null;
+    try {
+      final res = await post(
+        'next',
+        _bodyWith({'videoId': videoId, 'queueContext': ''}),
+      );
+      if (_isErrorResponse(res)) return null;
+      final entity = findFirst(res, 'likeCountEntity');
+      if (entity is! Map) return null;
+      final status = str(nav(res, const ['likeStatus']));
+      final key = switch (status) {
+        'LIKE' => 'likeCountIfLikedNumber',
+        'DISLIKE' => 'likeCountIfDislikedNumber',
+        _ => 'likeCountIfIndifferentNumber',
+      };
+      final raw = str(nav(entity, [key])) ??
+          str(nav(entity, const ['likeCountIfIndifferentNumber']));
+      return int.tryParse(raw ?? '');
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Reads the YTM watch-history page (`FEmusic_history`): per-video
   /// play counts plus the parsed tracks (most recent first) so heavy
   /// rotation from other sessions can join the quick-picks pool on
@@ -1109,6 +2035,9 @@ class InnerTube {
   Future<({Map<String, int> counts, List<Track> tracks})> historySnapshot({
     int maxItems = 500,
   }) async {
+    if (auth == const AuthSession.anonymous()) {
+      return (counts: <String, int>{}, tracks: const <Track>[]);
+    }
     try {
       final res = await post(
         'browse',
@@ -1247,7 +2176,7 @@ class InnerTube {
         album: preferredAlbum,
         thumbnails: thumbs,
         // Panel badge/duration fill what's missing: list sources often
-        // lack both (search rows carry no length, Data API no badges).
+        // lack both (search rows carry no length, no badges).
         // OR, never overwrite — a missing badge means "not marked",
         // not "clean", and catalog durations beat panel ones.
         explicit: result.explicit || p.explicit,
@@ -1414,8 +2343,7 @@ class InnerTube {
     return out;
   }
 
-  /// Sets the like state of a video. Dislikes only work here — the Data API
-  /// can only add/remove likes.
+  /// Sets the like state of a video. Dislikes work here.
   Future<bool> rate(String videoId, RatingStatus rating) async {
     if (videoId.trim().isEmpty || rating == RatingStatus.unknown) {
       return false;
@@ -1807,7 +2735,7 @@ class InnerTube {
         ),
       );
     }
-    // 3. Bearer only (fallback, e.g. OAuth-only users).
+    // 3. Bearer only (fallback for token-only sessions).
     if (!identical(cookieAuth, bearerAuth) &&
         (bearerAuth.cookie ?? '').isEmpty &&
         (bearerAuth.accessToken ?? '').isNotEmpty) {

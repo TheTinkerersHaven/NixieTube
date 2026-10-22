@@ -1,4 +1,4 @@
-// Tests for the Data API metadata helpers: artist fixup, album inference,
+// Tests for the metadata helpers: artist fixup, album inference,
 // durations, and music/region filters.
 
 import 'package:flutter_test/flutter_test.dart';

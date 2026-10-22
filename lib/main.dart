@@ -16,7 +16,6 @@ import 'core/player/audio_backend.dart';
 import 'core/player/just_audio_player_engine.dart';
 import 'core/player/player_controller.dart';
 import 'sys/discord.dart';
-import 'sys/google_oauth.dart';
 import 'sys/lastfm.dart';
 import 'sys/mpris.dart';
 import 'sys/sleep_inhibit.dart';
@@ -57,7 +56,6 @@ void main(List<String> args) {
   JustAudioMediaKit.ensureInitialized();
   final config = SysConfig();
   final tube = InnerTube();
-  final oauth = GoogleOAuth(config: config);
   // The resolver and the engine factory stay reachable so the player
   // can restart its backend stack (fresh HTTP pool, visitor id and
   // native handle) when a stream-URL family keeps dying — the
@@ -75,7 +73,6 @@ void main(List<String> args) {
     tube: tube,
     player: player,
     art: ArtworkStore(),
-    oauth: oauth,
     config: config,
     openUrl: (url) =>
         launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
@@ -115,6 +112,16 @@ void main(List<String> args) {
 
   final lastfm = LastFmService(config: config);
   unawaited(player.states.forEach(lastfm.update));
+
+  // The credentials live in the platform secret store: load them in
+  // the background (the legacy plain-text file is migrated into the
+  // store and deleted on the first run), then let the integrations
+  // that read them pick the values up.
+  unawaited(
+    config.loadCredentials().then((_) {
+      lastfm.refreshStatus();
+    }),
+  );
 
   // Sleep stays unblocked until the first play takes the lock.
   unawaited(sleepInhibit.start().catchError((_) {}));

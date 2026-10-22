@@ -1,14 +1,9 @@
-// SysConfig + GoogleOAuth tests: properties round-trip, PKCE vectors
-// (RFC 7636), token refresh flow with scripted HTTP.
+// SysConfig tests: properties round-trip and escape handling.
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
-
-import 'mock_dio.dart';
 
 void main() {
   group('SysConfig', () {
@@ -89,86 +84,4 @@ void main() {
     });
   });
 
-  group('PKCE', () {
-    test('RFC 7636 challenge vector', () {
-      const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
-      expect(
-        codeChallenge(verifier),
-        'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
-      );
-    });
-
-    test('verifier and state are url-safe', () {
-      final v = newCodeVerifier();
-      final s = newOAuthState();
-      expect(v.length, greaterThan(40));
-      expect(RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(v), isTrue);
-      expect(RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(s), isTrue);
-    });
-  });
-
-  group('GoogleOAuth tokens', () {
-    test('valid session without refresh when fresh', () async {
-      final dir = await Directory.systemTemp.createTemp('nt-oauth-test');
-      addTearDown(() => dir.delete(recursive: true));
-      var calls = 0;
-      final client = mockDio((options) async {
-        calls++;
-        return (200, '{}');
-      });
-      final config = SysConfig(configPath: '${dir.path}/config.properties');
-      config.set('google.clientId', 'id');
-      config.set('google.clientSecret', 'secret');
-      final oauth = GoogleOAuth(config: config, dio: client);
-      addTearDown(oauth.close);
-      expect(oauth.savedClient(), ('id', 'secret'));
-      // Seed fresh tokens directly through the config store.
-      final future = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600;
-      config.set('client_id', 'id');
-      config.set('access_token', 'AAA');
-      config.set('refresh_token', 'RRR');
-      config.set('expires_at', '$future');
-      final session = await oauth.validSession();
-      expect(session?.accessToken, 'AAA');
-      expect(calls, 0);
-      expect(await oauth.accessToken(), 'AAA');
-    });
-
-    test('expired token refreshes and preserves refresh token', () async {
-      final dir = await Directory.systemTemp.createTemp('nt-oauth-refresh');
-      addTearDown(() => dir.delete(recursive: true));
-      final client = mockDio((options) async {
-        return (200, jsonEncode({'access_token': 'NEW', 'expires_in': 3600}));
-      });
-      final config = SysConfig(configPath: '${dir.path}/config.properties');
-      config.set('google.clientId', 'id');
-      config.set('google.clientSecret', 'secret');
-      final oauth = GoogleOAuth(config: config, dio: client);
-      addTearDown(oauth.close);
-      final past = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 10;
-      config.set('client_id', 'id');
-      config.set('access_token', 'OLD');
-      config.set('refresh_token', 'RRR');
-      config.set('expires_at', '$past');
-      final session = await oauth.validSession();
-      expect(session?.accessToken, 'NEW');
-      // Refresh token preserved and persisted.
-      final again = await oauth.validSession();
-      expect(again?.accessToken, 'NEW');
-    });
-
-    test('logout deletes the store', () async {
-      final dir = await Directory.systemTemp.createTemp('nt-oauth-logout');
-      addTearDown(() => dir.delete(recursive: true));
-      final config = SysConfig(configPath: '${dir.path}/config.properties');
-      final oauth = GoogleOAuth(config: config);
-      addTearDown(oauth.close);
-      config.set('client_id', 'id');
-      config.set('access_token', 'AAA');
-      oauth.logout();
-      expect(config.get('client_id'), isEmpty);
-      expect(config.get('access_token'), isEmpty);
-      expect(await oauth.validSession(), isNull);
-    });
-  });
 }

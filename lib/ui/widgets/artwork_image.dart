@@ -33,6 +33,7 @@ class ArtworkImage extends StatefulWidget {
     this.circular = false,
     this.iconSize = 24,
     this.squareCoverKey,
+    this.expand = false,
   });
 
   final String? url;
@@ -43,6 +44,11 @@ class ArtworkImage extends StatefulWidget {
 
   /// `videoId` used to resolve a square cover for non-square art.
   final String? squareCoverKey;
+
+  /// When true the tile fills its parent constraints instead of using
+  /// the fixed [size] (used by variable-size square tiles such as the
+  /// quick-pick grid), while [size] still drives the decode width.
+  final bool expand;
 
   @override
   State<ArtworkImage> createState() => _ArtworkImageState();
@@ -281,8 +287,8 @@ class _ArtworkImageState extends State<ArtworkImage> {
     }
     final scheme = Theme.of(context).colorScheme;
     Widget placeholder() => Container(
-      width: widget.size,
-      height: widget.size,
+      width: widget.expand ? null : widget.size,
+      height: widget.expand ? null : widget.size,
       color: scheme.surfaceContainerHigh,
       child: Icon(
         Icons.album_rounded,
@@ -292,19 +298,23 @@ class _ArtworkImageState extends State<ArtworkImage> {
     );
     Widget frame(Widget child) => widget.circular
         ? ClipOval(
-            child: SizedBox(
-              width: widget.size,
-              height: widget.size,
-              child: child,
-            ),
+            child: widget.expand
+                ? SizedBox.expand(child: child)
+                : SizedBox(
+                    width: widget.size,
+                    height: widget.size,
+                    child: child,
+                  ),
           )
         : ClipRRect(
             borderRadius: BorderRadius.circular(widget.radius),
-            child: SizedBox(
-              width: widget.size,
-              height: widget.size,
-              child: child,
-            ),
+            child: widget.expand
+                ? SizedBox.expand(child: child)
+                : SizedBox(
+                    width: widget.size,
+                    height: widget.size,
+                    child: child,
+                  ),
           );
     final file = _file;
     // Per-item skeleton: the tile keeps shimmering until ITS OWN image is
@@ -340,8 +350,8 @@ class _ArtworkImageState extends State<ArtworkImage> {
       }
       child = Image.file(
         file,
-        width: widget.size,
-        height: widget.size,
+        width: widget.expand ? null : widget.size,
+        height: widget.expand ? null : widget.size,
         cacheWidth: decodeWidth,
         fit: BoxFit.cover,
         // Medium filtering: grid geometry is rarely integer logical

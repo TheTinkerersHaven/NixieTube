@@ -13,9 +13,16 @@ import '../widgets/artwork_image.dart';
 import '../widgets/cards.dart';
 import '../widgets/fab_menu_down.dart';
 import '../widgets/rails.dart';
-import '../widgets/track_row.dart';
 
 import '../widgets/palette_backdrop.dart';
+
+/// Collage sources an opened playlist's view paints for [playlist].
+///
+/// Every playlist shows a mosaic of its first songs except the liked
+/// list, which has a cover of its own (the liked-music artwork): it
+/// shows that single image instead of a collage.
+List<String> playlistViewArts(AccountPlaylist playlist) =>
+    playlist.id == '__liked' ? const [] : playlist.arts;
 
 /// Account library (playlists, artists, liked songs).
 class LibraryScreen extends StatelessWidget {
@@ -132,7 +139,7 @@ class LibraryScreen extends StatelessWidget {
     );
   }
 
-  /// Prompts for a playlist name, creates it via the Data API, and reports
+  /// Prompts for a playlist name, creates it, and reports
   /// the outcome in a SnackBar.
   Future<void> _createPlaylist(BuildContext context, AppState state) async {
     final controller = TextEditingController();
@@ -211,12 +218,15 @@ class LibraryScreen extends StatelessWidget {
     OpenPlaylist opened,
   ) {
     final pl = opened.playlist;
+    final note = state.likedLoadNote;
     return AlbumPlaylistView(
       title: pl.title,
-      subtitle: pl.id == '__liked' ? 'Automatic playlist' : '',
+      subtitle: pl.id == '__liked'
+          ? (note == null ? 'Automatic playlist' : 'Automatic playlist · $note')
+          : '',
       description: '',
       art: pl.art,
-      arts: pl.arts,
+      arts: playlistViewArts(pl),
       owner: pl.id == '__liked'
           ? (state.account != null ? ArtistRef(state.account!) : null)
           : (pl.owner.isEmpty
@@ -328,10 +338,9 @@ class LibraryScreen extends StatelessWidget {
     final tabs = [
       'Playlists (${state.playlists.length})',
       'Artists (${state.artists.length})',
-      'Liked (${state.liked.length})',
     ];
     return DefaultTabController(
-      length: 3,
+      length: 2,
       child: Column(
         children: [
           TabBar(tabs: [for (final t in tabs) Tab(text: t)]),
@@ -340,7 +349,6 @@ class LibraryScreen extends StatelessWidget {
               children: [
                 _playlistsTab(context, state),
                 _artistsTab(context, state),
-                _likedTab(context, state),
               ],
             ),
           ),
@@ -425,68 +433,6 @@ class LibraryScreen extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-      ],
-    );
-  }
-
-  Widget _likedTab(BuildContext context, AppState state) {
-    final liked = state.liked;
-    final playingId = state.playerState.current?.videoId;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            screenPadding,
-            screenPadding,
-            screenPadding,
-            0,
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${liked.length} songs',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              M3ETextButton(
-                onPressed: liked.isEmpty
-                    ? null
-                    : () => state.playSongs(liked, 0),
-                child: const Text('Play all'),
-              ),
-              IconButton(
-                icon: const Icon(Icons.shuffle_rounded),
-                tooltip: 'Shuffle',
-                onPressed: liked.isEmpty
-                    ? null
-                    : () => state.playShuffled(liked),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(
-              screenPadding,
-              0,
-              screenPadding,
-              screenPadding + playerBarClearance,
-            ),
-            itemCount: liked.length,
-            itemBuilder: (context, i) {
-              final t = liked[i];
-              return TrackRow(
-                track: t,
-                playing: t.videoId == playingId,
-                onPlay: () => state.playSongs(liked, i),
-                rateable: true,
-                showPlaylists: true,
-              );
-            },
-          ),
-        ),
       ],
     );
   }

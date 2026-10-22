@@ -1,8 +1,7 @@
 // Auth sessions for InnerTube requests, ported from Kotlin `AuthSession`.
 //
 // Anonymous by default; a cookie session (cookie + derived `SAPISIDHASH`)
-// unlocks library, likes and playlists, while an OAuth bearer token serves
-// the Data API and the feedback endpoint. Timestamps are fresh per
+// unlocks the library, likes and playlists. Timestamps are fresh per
 // derivation — never replayed from storage.
 
 import 'dart:convert';
@@ -34,7 +33,7 @@ class AuthSession {
   /// Derived `SAPISIDHASH` Authorization value (`"<ts>_<sha1>"`).
   final String? sapisidHash;
 
-  /// OAuth bearer token, if any.
+  /// Bearer token, if any.
   final String? accessToken;
 
   /// `XSRF-TOKEN` page token for stats beacons (listening history).

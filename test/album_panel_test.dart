@@ -11,7 +11,6 @@ import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/core/models/models.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/album_panel.dart';
@@ -91,15 +90,12 @@ void main() {
         configDirPath: dir.path,
       );
       addTearDown(player.dispose);
-      final oauth = GoogleOAuth();
-      addTearDown(oauth.close);
       final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
       addTearDown(art.close);
       final state = AppState(
         tube: tube,
         player: player,
         art: art,
-        oauth: oauth,
         config: SysConfig(configPath: '${dir.path}/config.properties'),
         openUrl: (_) async {},
       );
@@ -191,15 +187,12 @@ void main() {
         configDirPath: dir.path,
       );
       addTearDown(player.dispose);
-      final oauth = GoogleOAuth();
-      addTearDown(oauth.close);
       final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
       addTearDown(art.close);
       final state = AppState(
         tube: tube,
         player: player,
         art: art,
-        oauth: oauth,
         config: SysConfig(configPath: '${dir.path}/config.properties'),
         openUrl: (_) async {},
       );
@@ -298,7 +291,6 @@ void main() {
         tube: tube,
         player: player,
         art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
-        oauth: GoogleOAuth(),
         config: SysConfig(configPath: '${dir.path}/config.properties'),
         openUrl: (_) async {},
       );

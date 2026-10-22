@@ -2,10 +2,34 @@
 
 All notable changes to NixieTube are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.2.2]
+## [0.3.0] — 2026-10-22
+
+### Added
+
+- **A first-run setup.** A fresh install opens with a short guided flow: what the app is, the sign-in (browser window, one-click import from the system browser, or a pasted cookie), and the choices that shape it (accent color, reduced motion, high contrast, Last.fm — with its sign-in right there). It is skipped for good once it is done, and an account that is already signed in never sees it.
+- **The setup can be run again.** A "First-run setup" section at the bottom of Settings puts the guided flow back, so the welcome, the sign-in and the appearance choices can be walked through whenever you like.
+- **A Last.fm token can be renewed in place.** The setup and the settings card now offer "Get a new token" while signing in, so an expired token no longer means leaving the settings and coming back to start the handshake over.
+- **The credentials live in the platform secret store.** The YouTube cookie, the session token and the Last.fm credentials used to sit in a plain-text `auth.properties` next to the app settings; they now go to the platform's secret store (the keyring on Linux). The old file is migrated into the store on the first start and deleted — and if no keyring is available (no session daemon), the file stays as the fallback instead of losing the session.
+- **The liked list says when it is short.** YouTube's playlist header counts every song of the playlist while its shelf only serves the ones it can render, so the library, the opened liked-songs playlist and the home list now say how many of the playlist's songs could be loaded ("500 of 524 songs loaded") whenever the two differ.
+
+### Fixed
+
+- **Switching tabs in the Now Playing view keeps the lyrics where you left them.** The tab page (and the lyrics list with it) is disposed when another tab is selected, so the list came back at the top; the scroll position now lives above the tab strip and is restored.
+- **Reduce motion no longer breaks the scrolling.** A zero-length scroll animation is rejected by the framework, so the lyrics' follow-scroll and the rail arrows threw instead of moving; they jump now.
+
+### Changed
+
+- **One account card in the settings.** The account name and the sign-in live in the same card now, instead of two cards in two sections.
+- **The settings file stays readable.** The app's caches (track credits, play counts, remembered recents, artist avatars) used to be stored as escaped JSON in `config.properties`; they now live in their own JSON files next to it, and the old properties are moved over on the first start.
+- **One sign-in, no Data API.** The Google OAuth client (and the client id/secret it needed) and the YouTube Data API are gone; the browser-cookie session alone covers playback, listening history and the whole library. Playlists, liked songs, recent activity and followed artists, and every write on them (create, rename or delete a playlist, add or remove a track, subscribe), now run over InnerTube.
+- **The liked songs' card and page show YouTube's own cover.** The app fetches the liked-music playlist's artwork and uses it both for the library's "Liked songs" card and for the opened playlist, which used to paint a mosaic of the first songs instead of the playlist's own cover.
+- **The liked songs show up once.** The library's third tab and the feed's "Liked Music" card only repeated the liked list the home already shows in its own column, so both are gone.
+- **Long lists load in full.** The liked-songs list, the playlist tracks and a playlist opened from home are served one shelf page at a time, so the app follows each list's own continuation: the whole liked-songs list loads instead of the first 25, and a long playlist shows every song instead of the first 100, each row keeping the running time the shelf shows next to the title.
+- **The liked-songs list is YouTube's "Liked Music" playlist, in like order.** The list is the playlist the YouTube Music sidebar links to as *Liked songs* — and nothing else, so every row is a song that playlist holds — read in the playlist's own "Newest first" order, so it runs newest-like first like the old Data API list did (the first paint included, not just the full reload). The library reports the playlist's own count from its header ("524 songs"), the way YouTube Music does, and every row keeps the running time the shelf shows next to the title. The walk follows the shelf's continuation to its end, and a page that comes back with fewer rows than the others is fetched once more, so a short response cannot silently drop songs.
+
+## [0.2.2] — 2026-10-18
 
 ### Changed
 
@@ -29,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Last.fm session survives a restart: `LastFmService` never refreshed its in-memory status after construction, so on every app launch it reported "disabled" even though the session key was persisted — the settings card showed the login UI and asked to log in again. The constructor now calls `refreshStatus()`, so a stored session key is picked up immediately.
 
-## [0.2.0]
+## [0.2.0] — 2026-10-18
 
 ### Added
 
@@ -66,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Connection failures report the real cause (`error: Invalid Client ID`, `no Discord IPC socket reachable`, `no READY from Discord`) instead of a bare "idle".
 - Disabling and re-enabling the presence works again: the presence re-initializes and reconnects; the retry timer re-pushes the current activity after a drop.
 
-## [0.1.1]
+## [0.1.1] — 2026-10-12
 
 ### Added
 
@@ -78,8 +102,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - First release of the Flutter port of NixieTube.
 
-[0.2.2]: https://github.com/gregorio/nixietube/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/gregorio/nixietube/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/gregorio/nixietube/compare/v0.1.2...v0.2.0
-[0.1.1]: https://github.com/gregorio/nixietube/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/gregorio/nixietube/compare/8eb0b5a...v0.1.0
+[0.2.2]: https://github.com/gregorio/nixietube/compare/v0.2.1...v0.2.2 [0.2.1]: https://github.com/gregorio/nixietube/compare/v0.2.0...v0.2.1 [0.2.0]: https://github.com/gregorio/nixietube/compare/v0.1.2...v0.2.0 [0.1.1]: https://github.com/gregorio/nixietube/compare/v0.1.0...v0.1.1 [0.1.0]: https://github.com/gregorio/nixietube/compare/8eb0b5a...v0.1.0

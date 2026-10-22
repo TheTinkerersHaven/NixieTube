@@ -72,7 +72,7 @@ enum RatingStatus {
   indifferent,
   unknown;
 
-  /// Maps a raw InnerTube/Data API status string to a [RatingStatus].
+  /// Maps a raw InnerTube status string to a [RatingStatus].
   static RatingStatus fromValue(String? value) {
     switch (value?.trim().toUpperCase()) {
       case 'LIKE':
@@ -558,6 +558,32 @@ class PlaylistDetail {
   final List<Thumbnail> thumbnails;
   final List<Track> tracks;
   final ArtistRef? author;
+}
+
+/// A playlist from the signed-in account's library.
+class AccountPlaylist {
+  const AccountPlaylist({
+    required this.id,
+    required this.title,
+    required this.itemCount,
+    this.art,
+    this.arts = const [],
+    this.owner = '',
+    this.ownerId = '',
+  });
+
+  /// The playlist id (a `PL…` id usable for edits).
+  final String id;
+  final String title;
+  final int itemCount;
+
+  /// Best playlist-cover URL, or null when none.
+  final String? art;
+
+  /// Additional cover URLs, if any.
+  final List<String> arts;
+  final String owner;
+  final String ownerId;
 }
 
 /// One synced lyric line.

@@ -22,6 +22,7 @@ import '../../sys/version.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/browser_login_dialog.dart';
+import '../widgets/lastfm_auth_actions.dart';
 
 /// Account, playback, accessibility and app settings.
 class SettingsScreen extends StatelessWidget {
@@ -29,7 +30,6 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final account = context.select<AppState, String?>((s) => s.account);
     // Select the toggle states so the switches rebuild when the
     // setting flips. Reading them once via `read` would leave the
     // Switch showing its pre-toggle value.
@@ -45,11 +45,6 @@ class SettingsScreen extends StatelessWidget {
     final underlineLinks = context.select<AppState, bool>(
       (s) => s.config.underlineLinks,
     );
-    // Drives the ordered sign-in: the cookie card unlocks once the
-    // Google (OAuth) sign-in is done.
-    final oauthSignedIn = context.select<AppState, bool>(
-      (s) => s.oauthSignedIn,
-    );
     final state = context.read<AppState>();
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -63,30 +58,7 @@ class SettingsScreen extends StatelessWidget {
         const SizedBox(height: 16),
         const _SectionTitle('Account'),
         const SizedBox(height: 8),
-        if (account != null) ...[
-          _SettingsCard(child: _AccountCard()),
-          const SizedBox(height: 16),
-        ],
-        // --- Data API / OAuth ---
-        // First in order: the cookie session below stays disabled until
-        // this Google (OAuth) sign-in is done. A Google OAuth token
-        // unlocks playlists, liked songs, recent activity and followed
-        // artists; a browser cookie will not work for these.
-        const _SectionTitle('YouTube Data API'),
-        const SizedBox(height: 8),
-        _SettingsCard(child: const _GoogleSignInCard()),
-        const SizedBox(height: 24),
-        // --- InnerTube / cookie ---
-        // Second in order: the cookie session below is disabled until
-        // the Google (OAuth) sign-in above is done, so the two steps
-        // are completed in order rather than half-configured.
-        const _SectionTitle('InnerTube (cookie)'),
-        const SizedBox(height: 8),
-        _SettingsCard(
-          child: oauthSignedIn
-              ? const _CookieSignInCard()
-              : const _LoginOrderNotice(),
-        ),
+        _SettingsCard(child: const _AccountCard()),
         const SizedBox(height: 24),
         const _SectionTitle('Playback'),
         const SizedBox(height: 8),
@@ -173,6 +145,10 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
         ),
+        const SizedBox(height: 24),
+        const _SectionTitle('Setup'),
+        const SizedBox(height: 8),
+        _SettingsCard(child: const _OnboardingCard()),
         const SizedBox(height: 24),
         Text(
           '${appVersionLabel.split('+')[0]} - build ${appVersionLabel.split('+')[1]}',
@@ -742,220 +718,15 @@ class _DiscordStatusLinePicker extends StatelessWidget {
   }
 }
 
-/// Placeholder for the InnerTube card while the Google (OAuth) sign-in
-/// is still missing: sign-ins happen in a fixed order, and the second
-/// step is not offered until the first is done.
-class _LoginOrderNotice extends StatelessWidget {
-  const _LoginOrderNotice();
+/// The account card: who is signed in, and how to sign in (or out).
+class _AccountCard extends StatefulWidget {
+  const _AccountCard();
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Complete the Google sign-in above first.',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Sign-ins run in order: 1) the Google account (Data API), '
-          '2) the browser cookie (InnerTube). This step unlocks once '
-          'the first is done.',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 12),
-        // Grayed-out preview of the gated card, so the shape of the
-        // next step is visible (but inert) before it unlocks.
-        Opacity(
-          opacity: 0.4,
-          child: IgnorePointer(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Browser cookie — InnerTube',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Unlocks playback, listening history (watchtime) and '
-                  'the InnerTube library.',
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-                const SizedBox(height: 12),
-                M3EFilledButton.icon(
-                  onPressed: null,
-                  icon: const Icon(Icons.lock_rounded),
-                  label: const Text('Log in with browser'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  State<_AccountCard> createState() => _AccountCardState();
 }
 
-class _AccountCard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final account = context.select<AppState, String?>((s) => s.account);
-
-    // Display-only: each session below (Data API, cookie) has its
-    // own sign-out button.
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            account ?? '',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _GoogleSignInCard extends StatefulWidget {
-  const _GoogleSignInCard();
-
-  @override
-  State<_GoogleSignInCard> createState() => _GoogleSignInCardState();
-}
-
-class _GoogleSignInCardState extends State<_GoogleSignInCard> {
-  late final TextEditingController _id;
-  late final TextEditingController _secret;
-
-  @override
-  void initState() {
-    super.initState();
-    final config = context.read<AppState>().config;
-    _id = TextEditingController(text: config.googleClientId);
-    _secret = TextEditingController(text: config.googleClientSecret);
-  }
-
-  @override
-  void dispose() {
-    _id.dispose();
-    _secret.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final oauthSignedIn = context.select<AppState, bool>(
-      (s) => s.oauthSignedIn,
-    );
-    final scheme = Theme.of(context).colorScheme;
-    final state = context.read<AppState>();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Google account — YouTube Data API',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            _AuthStatus(
-              connected: oauthSignedIn,
-              label: oauthSignedIn ? 'Connected' : 'Not connected',
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          oauthSignedIn
-              ? 'Signed in. Unlocks playlists, liked songs, '
-                    'recent activity and followed artists.'
-              : 'Required for playlists, liked songs, recent '
-                    'activity and followed artists. The YouTube '
-                    'Data API needs a Google OAuth token — a '
-                    'browser cookie will not work for these.',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
-        ),
-        if (oauthSignedIn) ...[
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: M3ETextButton(
-              onPressed: state.logoutGoogle,
-              child: const Text('Sign out'),
-            ),
-          ),
-        ],
-        if (!oauthSignedIn) ...[
-          const SizedBox(height: 12),
-          TextField(
-            controller: _id,
-            decoration: const InputDecoration(
-              labelText: 'OAuth client ID (Desktop type)',
-              border: OutlineInputBorder(),
-            ),
-            onChanged: (v) => state.config.set('google.clientId', v),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _secret,
-            decoration: const InputDecoration(
-              labelText: 'OAuth client secret',
-              border: OutlineInputBorder(),
-            ),
-            obscureText: true,
-            onChanged: (v) => state.config.set('google.clientSecret', v),
-          ),
-          if (state.loginDetail != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              state.loginDetail!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              M3EFilledButton(
-                onPressed: state.loginBusy
-                    ? null
-                    : () => state.googleBrowserLogin(),
-                child: Text(
-                  state.loginBusy
-                      ? 'Waiting for browser…'
-                      : 'Sign in with Google',
-                ),
-              ),
-              if (state.loginBusy) ...[
-                const SizedBox(width: 8),
-                M3ETextButton(
-                  onPressed: state.cancelGoogleLogin,
-                  child: const Text('Cancel'),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _CookieSignInCard extends StatefulWidget {
-  const _CookieSignInCard();
-
-  @override
-  State<_CookieSignInCard> createState() => _CookieSignInCardState();
-}
-
-class _CookieSignInCardState extends State<_CookieSignInCard> {
+class _AccountCardState extends State<_AccountCard> {
   final TextEditingController _cookie = TextEditingController();
 
   @override
@@ -1027,6 +798,7 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
     final loginValid = context.select<AppState, bool>((s) => s.loginValid);
     final loginBusy = context.select<AppState, bool>((s) => s.loginBusy);
     final loginDetail = context.select<AppState, String?>((s) => s.loginDetail);
+    final account = context.select<AppState, String?>((s) => s.account);
     final scheme = Theme.of(context).colorScheme;
     final state = context.read<AppState>();
     final connected = hasCookieSession && loginValid;
@@ -1037,7 +809,7 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
           children: [
             Expanded(
               child: Text(
-                'Browser cookie — InnerTube',
+                account ?? 'YouTube Music account',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -1165,6 +937,36 @@ class _CookieSignInCardState extends State<_CookieSignInCard> {
   }
 }
 
+/// Runs the first-run setup again.
+class _OnboardingCard extends StatelessWidget {
+  const _OnboardingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('First-run setup', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text(
+          'Walks through the welcome, the sign-in and the appearance '
+          'choices once more.',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 12),
+        M3ETextButton.icon(
+          onPressed: () => state.restartOnboarding(),
+          icon: const Icon(Icons.replay_rounded),
+          label: const Text('Run the setup again'),
+        ),
+      ],
+    );
+  }
+}
+
 /// Small coloured status badge for a sign-in method.
 class _AuthStatus extends StatelessWidget {
   const _AuthStatus({
@@ -1273,7 +1075,7 @@ class _LastFmCardState extends State<_LastFmCard> {
             ),
           )
         else
-          _LastFmAuthActions(
+          LastFmAuthActions(
             token: _token,
             busy: _busy,
             onStart: () => setState(() {
@@ -1357,95 +1159,6 @@ class _LastFmKeysDialogState extends State<_LastFmKeysDialog> {
           ),
           obscureText: true,
           onChanged: (v) => _save(secret: v),
-        ),
-      ],
-    );
-  }
-}
-
-/// Last.fm browser-approval flow: connect, confirm, or reopen.
-class _LastFmAuthActions extends StatelessWidget {
-  const _LastFmAuthActions({
-    required this.token,
-    required this.busy,
-    required this.onStart,
-    required this.onBusyChange,
-    required this.onFailed,
-    required this.onToken,
-    required this.onSignedIn,
-  });
-
-  final String? token;
-  final bool busy;
-  final VoidCallback onStart;
-  final ValueChanged<bool> onBusyChange;
-  final VoidCallback onFailed;
-  final ValueChanged<String?> onToken;
-  final VoidCallback onSignedIn;
-
-  Future<void> _requestToken(BuildContext context) async {
-    onStart();
-    final lastfm = context.read<LastFmService>();
-    final app = context.read<AppState>();
-    final fresh = await lastfm.requestToken();
-    if (!context.mounted) return;
-    if (fresh != null) {
-      onToken(fresh);
-      await app.openUrl(lastfm.authorizeUrl(fresh));
-    } else {
-      onFailed();
-    }
-    onBusyChange(false);
-  }
-
-  Future<void> _complete(BuildContext context) async {
-    onStart();
-    final lastfm = context.read<LastFmService>();
-    final ok = await lastfm.completeAuth(token!);
-    if (!context.mounted) return;
-    if (ok) {
-      onSignedIn();
-    } else {
-      onFailed();
-    }
-    onBusyChange(false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (token == null) {
-      return Row(
-        children: [
-          M3EFilledButton(
-            onPressed: busy ? null : () => _requestToken(context),
-            child: Text(busy ? 'Requesting…' : 'Connect with last.fm'),
-          ),
-        ],
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Approve NixieTube in the browser tab, then continue here.',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            M3EFilledButton(
-              onPressed: busy ? null : () => _complete(context),
-              child: Text(busy ? 'Verifying…' : "I've authorized it"),
-            ),
-            const SizedBox(width: 8),
-            M3ETextButton(
-              onPressed: () => context.read<AppState>().openUrl(
-                context.read<LastFmService>().authorizeUrl(token!),
-              ),
-              child: const Text('Reopen browser'),
-            ),
-          ],
         ),
       ],
     );

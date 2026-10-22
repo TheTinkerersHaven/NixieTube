@@ -6,7 +6,6 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
-import '../../core/innertube/gdata_api.dart';
 import '../app_state.dart';
 
 /// Centered add-to-playlist dialog for the dialog track.
@@ -18,7 +17,7 @@ class PlaylistPickerDialog extends StatelessWidget {
     final track = context.select<AppState, Track?>(
       (s) => s.playlistDialogTrack,
     );
-    final playlists = context.select<AppState, List<GPlaylist>>(
+    final playlists = context.select<AppState, List<AccountPlaylist>>(
       (s) => s.playlists,
     );
     // Render state, not just data: the loading flag flips
@@ -27,7 +26,9 @@ class PlaylistPickerDialog extends StatelessWidget {
     // playlist list above stay identical — without these
     // selects the dialog never rebuilds and the spinner
     // stays up forever.
-    final gdata = context.select<AppState, bool>((s) => s.gdataAvailable);
+    final libraryAvailable = context.select<AppState, bool>(
+      (s) => s.libraryAvailable,
+    );
     final state = context.read<AppState>();
     final loading = context.select<AppState, bool>(
       (s) => s.playlistDialogLoading,
@@ -84,7 +85,7 @@ class PlaylistPickerDialog extends StatelessWidget {
               ),
             ),
             const Divider(),
-            if (!gdata)
+            if (!libraryAvailable)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Text('Sign in to manage playlists.'),

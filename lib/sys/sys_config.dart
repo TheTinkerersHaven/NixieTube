@@ -1,26 +1,27 @@
 // Simple properties-file config, mirroring Kotlin `SysConfig`.
 //
-// Keys live in two files in `~/.config/nixietube/`:
+// Keys live in two places:
 //
-//   config.properties — app settings only:
+//   config.properties — app settings only (plain text, next to the
+//   other app data):
 //     discord.appId, discord.enabled, discord.statusText,
 //     mpris.enabled, reportPlayback, lyrics.source,
 //     a11y.highContrast, a11y.reducedMotion, a11y.underlineLinks,
 //     theme.source, theme.seedColor, theme.primary, theme.secondary,
 //     theme.tertiary, theme.surface, theme.systemPrimary.
 //
-//   auth.properties — credentials only:
-//     google.clientId, google.clientSecret (OAuth client credentials),
-//     lastfm.enabled, lastfm.apiKey, lastfm.secret, lastfm.sessionKey,
-//     lastfm.username (Last.fm scrobbling),
+//   the platform secret store — credentials only:
 //     cookie, sapisidHash, sessionToken (YouTube Music auth),
-//     client_id, access_token, refresh_token, expires_at (OAuth tokens).
+//     lastfm.enabled, lastfm.apiKey, lastfm.secret, lastfm.sessionKey,
+//     lastfm.username (Last.fm scrobbling).
 //
-// Both files are read on startup and every write is mirrored to the
-// appropriate file based on key prefix.
+// The credentials used to live in a plain-text `auth.properties` next
+// to the settings; that file is migrated into the secret store on the
+// first start and then deleted (see [SysConfig.loadCredentials]).
 import 'dart:io' show File;
 
 import 'paths.dart';
+import 'secure_store.dart';
 
 /// Built-in Discord application id used when none is configured.
 const defaultDiscordAppId = '1552404006498869318';
@@ -119,36 +120,159 @@ void writeProperties(File file, Map<String, String> values) {
   } catch (_) {}
 }
 
-/// Keys that belong in `auth.properties` (credentials, secrets, tokens)
-// rather than `config.properties` (app settings).
+/// Keys that belong in the secret store (credentials, secrets, tokens)
+/// rather than `config.properties` (app settings).
 bool _isAuthKey(String key) =>
     key == 'cookie' ||
     key == 'sapisidHash' ||
     key == 'sessionToken' ||
+    key.startsWith('lastfm.');
+
+/// Keys the retired OAuth sign-in wrote; they are dropped on load.
+bool _isRetiredOAuthKey(String key) =>
     key == 'client_id' ||
     key == 'access_token' ||
     key == 'refresh_token' ||
     key == 'expires_at' ||
-    key.startsWith('google.') ||
-    key.startsWith('lastfm.');
+    key.startsWith('google.');
 
-/// Persistent application settings.
+/// Persistent application settings and credentials.
 ///
-/// Reads from both `config.properties` (app settings) and
-/// `auth.properties` (credentials) on startup. Every write is mirrored
-/// to the appropriate file based on key type.
+/// Settings live in `config.properties` (plain text). Credentials live
+/// in the platform secret store: they are read into memory on startup
+/// ([loadCredentials]) and written back there on every change.
 class SysConfig {
-  SysConfig({String? configPath})
+  SysConfig({String? configPath, SecureStore? secure})
     : _appFile = File(configPath ?? '${configDir().path}/config.properties'),
-      _authFile = File('${configDir().path}/auth.properties'),
+      // The legacy credential file lives next to the settings file, so
+      // a custom [configPath] (tests) keeps both files inside the same
+      // sandbox instead of touching the real user credentials.
+      _authFile = File(
+        '${File(configPath ?? '${configDir().path}/config.properties').parent.path}'
+        '/auth.properties',
+      ),
+      // A custom config path means a sandbox, which must never touch
+      // the real keyring.
+      _secure =
+          secure ??
+          (configPath == null
+              ? const SecureStore.platform()
+              : SecureStore.memory()),
       _values = {} {
     _values.addAll(readProperties(_appFile));
-    _values.addAll(readProperties(_authFile));
+    // Credentials of the retired OAuth sign-in: drop them so the next
+    // write leaves no stale secrets behind on disk.
+    _values.removeWhere((k, _) => _isRetiredOAuthKey(k));
   }
 
   final File _appFile;
+
+  /// The plain-text credential file of older versions: read once for
+  /// the migration, then deleted.
   final File _authFile;
+
+  final SecureStore _secure;
   final Map<String, String> _values;
+
+  /// The pending credential writes, so the synchronous setters can
+  /// hand them to the (asynchronous) secret store in order.
+  Future<void> _writes = Future<void>.value();
+
+  /// The directory the settings (and the app's caches) live in.
+  String get directory => _appFile.parent.path;
+
+  /// The credential load, shared so concurrent callers wait for the
+  /// same read instead of racing the migration.
+  Future<void>? _credentialsLoad;
+
+  /// Loads the credentials from the secret store.
+  ///
+  /// On the first start after the migration the legacy plain-text
+  /// `auth.properties` is moved into the store and deleted — but only
+  /// once every value landed, so a failure keeps the file.
+  Future<void> loadCredentials() => _credentialsLoad ??= _loadCredentials();
+
+  Future<void> _loadCredentials() async {
+    Map<String, String> stored = {};
+    try {
+      stored = await _secure.readAll();
+    } catch (_) {
+      // No keyring (no session daemon): the legacy file stays the
+      // source of truth.
+    }
+    // The platform store can hold other apps' items (the Linux
+    // implementation keeps them under one schema), so keep only the
+    // keys that are ours.
+    final ours = <String, String>{
+      for (final entry in stored.entries)
+        if (_isAuthKey(entry.key)) entry.key: entry.value,
+    };
+    _values.addAll(ours);
+    final legacy = readProperties(_authFile);
+    final credentials = <String, String>{
+      for (final entry in legacy.entries)
+        if (_isAuthKey(entry.key)) entry.key: entry.value,
+    };
+    if (credentials.isEmpty) {
+      if (ours.isNotEmpty) _dropLegacyAuthFile();
+      return;
+    }
+    var migrated = true;
+    for (final entry in credentials.entries) {
+      // The store wins: it already holds the current value.
+      if (ours.containsKey(entry.key)) continue;
+      try {
+        await _secure.write(entry.key, entry.value);
+        _values[entry.key] = entry.value;
+      } catch (_) {
+        migrated = false;
+      }
+    }
+    if (migrated) _dropLegacyAuthFile();
+  }
+
+  /// Deletes the legacy plain-text credential file.
+  void _dropLegacyAuthFile() {
+    try {
+      if (_authFile.existsSync()) _authFile.deleteSync();
+    } catch (_) {}
+  }
+
+  /// The credential values that belong in the legacy file.
+  Map<String, String> get _legacyValues => {
+    for (final entry in _values.entries)
+      if (_isAuthKey(entry.key)) entry.key: entry.value,
+  };
+
+  /// Stores a credential in the secret store and waits for it to land.
+  ///
+  /// A keyring that refuses the write (no session daemon) must not
+  /// lose the value: it stays in the legacy file until the store
+  /// works again.
+  Future<void> setCredential(String key, String value) async {
+    _values[key] = value;
+    try {
+      await _secure.write(key, value);
+      // The store holds it now: the plain-text copy can go.
+      _dropLegacyAuthFile();
+    } catch (_) {
+      writeProperties(_authFile, _legacyValues);
+    }
+  }
+
+  /// Drops a credential from the secret store and waits for it.
+  Future<void> removeCredential(String key) async {
+    _values.remove(key);
+    try {
+      await _secure.delete(key);
+      _dropLegacyAuthFile();
+    } catch (_) {
+      writeProperties(_authFile, _legacyValues);
+    }
+  }
+
+  /// Waits for the queued credential writes to reach the secret store.
+  Future<void> flushCredentials() => _writes;
 
   /// Reads a raw string setting, returning [defaultValue] when absent.
   String get(String key, [String defaultValue = '']) {
@@ -156,27 +280,47 @@ class SysConfig {
     return v ?? defaultValue;
   }
 
-  /// Writes a raw string setting through to disk immediately, splitting
-  /// app settings and credentials between `config.properties` and
-  /// `auth.properties` based on key type.
+  /// Writes a raw string setting through immediately: app settings to
+  /// `config.properties`, credentials to the secret store.
   void set(String key, String value) {
     _values[key] = value;
+    if (_isAuthKey(key)) {
+      // The secret store is asynchronous: keep the writes ordered
+      // behind each other and let [flushCredentials] await them.
+      _writes = _writes.then((_) => _writeCredential(key, value));
+      return;
+    }
     _persist();
   }
 
-  /// Writes both property files from the current in-memory map.
+  /// Writes one credential to the secret store.
+  Future<void> _writeCredential(String key, String value) async {
+    try {
+      await _secure.write(key, value);
+      _dropLegacyAuthFile();
+    } catch (_) {
+      // No keyring: keep the value in the legacy file.
+      writeProperties(_authFile, _legacyValues);
+    }
+  }
+
+  /// Drops one credential from the secret store.
+  Future<void> _removeCredential(String key) async {
+    try {
+      await _secure.delete(key);
+      _dropLegacyAuthFile();
+    } catch (_) {
+      writeProperties(_authFile, _legacyValues);
+    }
+  }
+
+  /// Writes the app settings file from the current in-memory map.
   void _persist() {
     final appValues = <String, String>{};
-    final authValues = <String, String>{};
     _values.forEach((k, v) {
-      if (_isAuthKey(k)) {
-        authValues[k] = v;
-      } else {
-        appValues[k] = v;
-      }
+      if (!_isAuthKey(k)) appValues[k] = v;
     });
     writeProperties(_appFile, appValues);
-    writeProperties(_authFile, authValues);
   }
 
   /// Reads a bool setting, accepting true/1/yes (and the false forms).
@@ -194,7 +338,13 @@ class SysConfig {
   /// Drops [key] entirely (used for nullable settings where an
   /// absent key means "follow the default").
   void remove(String key) {
-    if (_values.remove(key) != null) _persist();
+    final removed = _values.remove(key);
+    if (removed == null) return;
+    if (_isAuthKey(key)) {
+      _writes = _writes.then((_) => _removeCredential(key));
+      return;
+    }
+    _persist();
   }
 
   /// Typed accessors mirroring Kotlin `SysConfig`. Getters read with
@@ -211,11 +361,6 @@ class SysConfig {
 
   /// MPRIS media-keys integration (Linux only, on by default).
   bool get mprisEnabled => getBool('mpris.enabled', true);
-
-  /// Google OAuth client credentials (Desktop-type client), typed in
-  /// Settings; without them the Data API login refuses to start.
-  String get googleClientId => get('google.clientId');
-  String get googleClientSecret => get('google.clientSecret');
 
   /// Last.fm scrobbling credentials and session. Key/secret identify
   /// the API application; session key and username arrive at the end

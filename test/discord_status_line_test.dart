@@ -16,7 +16,6 @@ import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/core/player/player_state.dart';
 import 'package:nixietube/sys/discord.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/lastfm.dart';
 import 'package:nixietube/sys/mpris.dart';
 import 'package:nixietube/sys/sys_config.dart';
@@ -112,15 +111,12 @@ _pumpSettings(WidgetTester tester) async {
     configDirPath: dir.path,
   );
   addTearDown(player.dispose);
-  final oauth = GoogleOAuth();
-  addTearDown(oauth.close);
   final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
   addTearDown(art.close);
   final state = AppState(
     tube: tube,
     player: player,
     art: art,
-    oauth: oauth,
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: (_) async {},
   );

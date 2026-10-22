@@ -12,6 +12,7 @@ import 'screens/detail_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
 import 'screens/now_playing_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
 import 'widgets/player_bar.dart';
@@ -23,6 +24,11 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The first-run setup takes over the window until it is done: no
+    // rail, no player bar, just the setup.
+    if (context.select<AppState, bool>((s) => s.needsOnboarding)) {
+      return const OnboardingScreen();
+    }
     return Focus(
       autofocus: true,
       onKeyEvent: (node, event) {
@@ -196,7 +202,7 @@ class _Body extends StatelessWidget {
 /// stats/* beacons ack with 204 regardless of auth, so an expired
 /// LOGIN_INFO otherwise goes unnoticed: history silently stops
 /// recording. The banner only shows for a saved cookie session
-/// (not OAuth-only, which has no cookie to expire) and is hidden
+/// (a token-only session has no cookie to expire) and is hidden
 /// on the settings page, where the account card states it inline.
 class _SessionBanner extends StatelessWidget {
   const _SessionBanner();

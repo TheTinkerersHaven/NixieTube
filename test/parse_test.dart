@@ -87,6 +87,56 @@ void main() {
     });
   });
 
+  group('parseRowDuration', () {
+    test('reads the duration from the fixed column', () {
+      final li = {
+        'fixedColumns': [
+          {
+            'musicResponsiveListItemFixedColumnRenderer': {
+              'text': {
+                'runs': [_run('3:28')],
+              },
+            },
+          },
+        ],
+      };
+      expect(parseRowDuration(li), 208);
+    });
+
+    test('reads an hour-long duration', () {
+      final li = {
+        'fixedColumns': [
+          {
+            'musicResponsiveListItemFixedColumnRenderer': {
+              'text': {
+                'runs': [_run('1:02:11')],
+              },
+            },
+          },
+        ],
+      };
+      expect(parseRowDuration(li), 3731);
+    });
+
+    test('rows without a fixed column have no duration', () {
+      expect(parseRowDuration({'flexColumns': []}), 0);
+      expect(
+        parseRowDuration({
+          'fixedColumns': [
+            {
+              'musicResponsiveListItemFixedColumnRenderer': {
+                'text': {
+                  'runs': [_run('1.2M views')],
+                },
+              },
+            },
+          ],
+        }),
+        0,
+      );
+    });
+  });
+
   group('parsePanelVideo', () {
     test('byline with linked artist and release', () {
       final item = {
@@ -479,6 +529,34 @@ void main() {
       expect(pl.title, 'Track Thumb Playlist');
       expect(pl.thumbnails.length, 1);
       expect(pl.thumbnails.first.url, 'https://img/track1.jpg');
+    });
+
+    test('keeps the running time the row shows in its fixed column', () {
+      final res = {
+        'musicPlaylistShelfRenderer': {
+          'contents': [
+            {
+              'musicResponsiveListItemRenderer': {
+                'flexColumns': [
+                  _col([_run('Song', videoId: 'S1')]),
+                ],
+                'fixedColumns': [
+                  {
+                    'musicResponsiveListItemFixedColumnRenderer': {
+                      'text': {
+                        'runs': [_run('3:45')],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      };
+
+      final pl = buildPlaylist(res)!;
+      expect(pl.tracks.single.durationSec, 225);
     });
   });
 

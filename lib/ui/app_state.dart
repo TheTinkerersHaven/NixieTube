@@ -24,7 +24,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/painting.dart' show PaintingBinding;
 
 import '../core/artwork/artwork_store.dart';
-import '../core/innertube/gdata_api.dart';
+import '../core/innertube/account_library.dart';
 import '../core/innertube/auth_session.dart';
 import '../core/innertube/inner_tube.dart';
 import '../core/innertube/lyrics.dart';
@@ -35,7 +35,7 @@ import '../core/models/models.dart';
 import '../core/player/player_controller.dart';
 import '../core/player/player_state.dart';
 import '../sys/browser_cookies.dart';
-import '../sys/google_oauth.dart';
+import '../sys/cache_store.dart';
 import '../sys/paths.dart';
 import '../sys/sys_config.dart';
 import 'theme.dart' show ThemeSource, resolveColorScheme;
@@ -153,7 +153,7 @@ class DetailUiState {
 /// Open playlist with its tracks, or null when browsing the library root.
 class OpenPlaylist {
   OpenPlaylist(this.playlist, this.tracks);
-  GPlaylist playlist;
+  AccountPlaylist playlist;
   List<Track> tracks;
 }
 
@@ -318,7 +318,6 @@ class AppState extends ChangeNotifier {
     required InnerTube tube,
     required PlayerController player,
     required ArtworkStore art,
-    required GoogleOAuth oauth,
     required SysConfig config,
     required Future<void> Function(String url) openUrl,
     // Test seam: cookie session file. Production uses the shared
@@ -329,10 +328,9 @@ class AppState extends ChangeNotifier {
     _tube = tube;
     _player = player;
     _art = art;
-    _oauth = oauth;
+    _library = AccountLibrary(tube: tube);
     _config = config;
     _openUrl = openUrl;
-    _tube.authProvider = () => _oauth.validSession();
     _playerSub = _player.states.listen(_onPlayerState);
     _loadLocalRecents();
     _loadTrackMeta();
@@ -357,7 +355,7 @@ class AppState extends ChangeNotifier {
   late final InnerTube _tube;
   late final PlayerController _player;
   late final ArtworkStore _art;
-  late final GoogleOAuth _oauth;
+  late final AccountLibrary _library;
   late final SysConfig _config;
   late final Future<void> Function(String url) _openUrl;
 
@@ -374,7 +372,6 @@ class AppState extends ChangeNotifier {
   InnerTube get tube => _tube;
   PlayerController get player => _player;
   ArtworkStore get art => _art;
-  GoogleOAuth get oauth => _oauth;
   SysConfig get config => _config;
 
   /// Set by the startup audio probe when the native backend is
@@ -398,8 +395,9 @@ class AppState extends ChangeNotifier {
 
   /// Latest player snapshot for selective UI reads.
   PlayerState get playerState => _player.state;
-  GDataApi? get gdata =>
-      account == null ? null : GDataApi(tokenProvider: _oauth.accessToken);
+
+  /// The account library (playlists, likes, artists, subscriptions).
+  AccountLibrary get library => _library;
 
   @override
   void dispose() {
@@ -628,6 +626,25 @@ class AppState extends ChangeNotifier {
     return pid.startsWith('RDEM') || pid.startsWith('RDCLAK');
   }
 
+  /// True when [item] is the "Liked Music" auto-playlist the feed
+  /// offers as a suggested playlist.
+  ///
+  /// The home lists the liked songs in its own column, so the card
+  /// would only repeat it. Matched on the browse id, not the title:
+  /// the feed names the playlist differently per locale.
+  static bool isLikedPlaylistCard(ShelfItem item) =>
+      item is BrowseItem && item.browseId == 'VLLM';
+
+  /// The feed's shelves without the "Liked Music" card.
+  static List<Shelf> withoutLikedPlaylistCard(List<Shelf> shelves) => [
+    for (final shelf in shelves)
+      Shelf(
+        shelf.title,
+        shelf.items.where((item) => !isLikedPlaylistCard(item)).toList(),
+        continuation: shelf.continuation,
+      ),
+  ];
+
   /// Loads the next page of [shelf] (its continuation token) and appends
   /// the new items to it, replacing the shelf in [home.shelves]. Only one
   // load per shelf at a time; a shelf without a continuation is a no-op.
@@ -639,7 +656,8 @@ class AppState extends ChangeNotifier {
       if (more.items.isEmpty) return;
       final updated = Shelf(shelf.title, [
         ...shelf.items,
-        ...more.items,
+        // The feed's suggested "Liked Music" card never shows.
+        ...more.items.where((item) => !isLikedPlaylistCard(item)),
       ], continuation: more.continuation);
       home = home.copyWith(
         shelves: [
@@ -769,8 +787,8 @@ class AppState extends ChangeNotifier {
       );
       if (gen != _homeGen) return;
       home = home.copyWith(
-        shelves: _stampShelves(feed.shelves),
-        explore: _stampShelves(exploreShelves),
+        shelves: _stampShelves(withoutLikedPlaylistCard(feed.shelves)),
+        explore: _stampShelves(withoutLikedPlaylistCard(exploreShelves)),
         country: charts.country,
         globalTrending: charts.tracks
             .take(_globalTrendingMax)
@@ -1133,15 +1151,15 @@ class AppState extends ChangeNotifier {
   String? get account => testAccount ?? _account;
 
   /// Test-only sign-in stub: widget tests set this (with
-  /// [apiOverride]) to reach signed-in UI without running
+  /// [libraryOverride]) to reach signed-in UI without running
   /// the login flow, which would touch the real auth files
   /// on disk and the network.
   @visibleForTesting
   String? testAccount;
 
-  /// Test-only Data API stub (avoids network in widget tests).
+  /// Test-only library stub (avoids network in widget tests).
   @visibleForTesting
-  GDataApi? apiOverride;
+  AccountLibrary? libraryOverride;
 
   String? _accountAvatar;
   String? get accountAvatar => _accountAvatar;
@@ -1163,32 +1181,80 @@ class AppState extends ChangeNotifier {
   /// first check lands.
   bool get loginValid => _loginValid;
 
-  GDataApi? get _api {
-    if (apiOverride != null) return apiOverride;
-    // The Data API client is available once an account name is
-    // known or a Google sign-in token is stored. Gating only on
-    // the account name would break OAuth-first sign-in (the name
-    // is fetched after the token is minted) and skip Data API
-    // loads for a token stored in a previous session. The Data
-    // API needs the OAuth token, not the browser cookie.
-    if (account == null && !oauthSignedIn) return null;
-    return GDataApi(tokenProvider: _oauth.accessToken);
+  /// The account library in use: the test stub when set, the
+  /// InnerTube-backed one otherwise.
+  AccountLibrary get _api => libraryOverride ?? _library;
+
+  /// True when the account library is reachable (signed in).
+  bool get libraryAvailable => account != null;
+
+  /// True when the account session is usable: the browser cookie
+  /// session carries the library (playlists, liked songs, recent
+  /// activity, followed artists), so one sign-in covers them all.
+  bool get signedIn => hasCookieSession;
+
+  /// Whether the stored session has been read.
+  ///
+  /// The credentials come from the secret store, so the session is
+  /// restored asynchronously: until this is true the app does not know
+  /// yet whether the account is signed in.
+  bool _authLoaded = false;
+  bool get authLoaded => _authLoaded;
+
+  /// Whether the first-run setup still has to be shown.
+  ///
+  /// It shows once, on the first start: a fresh install has no
+  /// session yet, while an account that is already signed in has
+  /// nothing to set up. The session is read asynchronously, so the
+  /// setup waits for it — otherwise a returning user would see it
+  /// flash by.
+  bool get needsOnboarding =>
+      _onboardingRequested ||
+      (!config.getBool('onboarding.done') && !hasCookieSession && _authLoaded);
+
+  /// Whether the setup is being re-run on request.
+  bool _onboardingRequested = false;
+
+  /// Puts the first-run setup back, so it can be walked through again.
+  void restartOnboarding() {
+    _onboardingRequested = true;
+    notifyListeners();
   }
 
-  /// True when Data API calls can be attempted (signed in).
-  bool get gdataAvailable => account != null;
+  /// Marks the first-run setup as done, for good.
+  void completeOnboarding() {
+    _onboardingRequested = false;
+    config.setBool('onboarding.done', true);
+    notifyListeners();
+  }
 
-  /// True when the Google (OAuth) sign-in has a stored
-  /// token — required for the YouTube Data API (playlists,
-  /// liked songs, recent activity, followed artists), which
-  /// a browser cookie cannot serve.
-  bool get oauthSignedIn => _oauth.hasStoredToken;
-
-  List<GPlaylist> _playlists = [];
-  List<GPlaylist> get playlists => _playlists;
+  List<AccountPlaylist> _playlists = [];
+  List<AccountPlaylist> get playlists => _playlists;
 
   List<Track> _liked = [];
   List<Track> get liked => _liked;
+
+  /// The song count YouTube reports for the liked-music playlist.
+  ///
+  /// It counts every entry of the playlist, while the shelf renders
+  /// only the ones it can show, so it can be larger than the number
+  /// of listed rows — exactly as in YouTube Music itself.
+  int? _likedCount;
+
+  /// YouTube's own cover for the liked-music playlist.
+  String? _likedCover;
+
+  /// A short note when the liked list holds fewer songs than the
+  /// playlist counts, null when every song of it is listed.
+  ///
+  /// YouTube's playlist header counts every entry of the playlist while
+  /// its shelf only renders the ones it can serve, so the two differ
+  /// and the list has to say so.
+  String? get likedLoadNote {
+    final count = _likedCount;
+    if (count == null || _liked.length >= count) return null;
+    return '${_liked.length} of $count songs loaded';
+  }
 
   List<BrowseItem> _artists = [];
   List<BrowseItem> get artists => _artists;
@@ -1208,7 +1274,7 @@ class AppState extends ChangeNotifier {
   List<Track> get activity => _activity;
 
   /// Enriched track metadata remembered across launches (panel artists,
-  /// album, explicit flag), keyed by video id. Data API lists (liked,
+  /// album, explicit flag), keyed by video id. Library lists (liked,
   /// activity) carry thin credits — single channel artist, tag album
   /// or none, never explicit — and only a watch-next panel fills them
   /// in. Stamping the cache paints full rows instantly on cold start;
@@ -1217,10 +1283,41 @@ class AppState extends ChangeNotifier {
   static const _trackMetaCap = 500;
   final Map<String, _TrackMeta> _trackMeta = {};
 
+  /// The on-disk caches (JSON files next to the settings).
+  late final CacheStore _caches = CacheStore(dir: _config.directory);
+
+  /// The caches that used to be properties in the settings file.
+  static const _legacyCacheKeys = <String, String>{
+    'trackMeta': 'home.trackMeta',
+    'localRecents': 'home.localRecents',
+    'playCounts': 'home.playCounts',
+    'artistAvatars': 'home.artistAvatars',
+  };
+
+  /// Reads a cache from its own file.
+  ///
+  /// The first read after the upgrade still finds the cache in the
+  /// settings file (it held escaped JSON); it is moved to its file
+  /// once and the property is dropped.
+  String? _readCache(String name) {
+    final raw = _caches.read(name);
+    if (raw != null) return raw;
+    final key = _legacyCacheKeys[name];
+    if (key == null) return null;
+    final legacy = _config.get(key, '');
+    if (legacy.isEmpty) return null;
+    _caches.write(name, legacy);
+    _config.remove(key);
+    return legacy;
+  }
+
+  /// Writes a cache to its own file.
+  void _writeCache(String name, String json) => _caches.write(name, json);
+
   void _loadTrackMeta() {
     try {
-      final raw = _config.get('home.trackMeta', '');
-      if (raw.isEmpty) return;
+      final raw = _readCache('trackMeta');
+      if (raw == null) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
       decoded.forEach((k, v) {
@@ -1241,8 +1338,8 @@ class AppState extends ChangeNotifier {
           ..clear()
           ..addEntries(entries);
       }
-      _config.set(
-        'home.trackMeta',
+      _writeCache(
+        'trackMeta',
         jsonEncode({for (final e in entries) e.key: e.value.toJson()}),
       );
     } catch (_) {}
@@ -1392,8 +1489,8 @@ class AppState extends ChangeNotifier {
 
   void _loadLocalRecents() {
     try {
-      final raw = _config.get('home.localRecents', '');
-      if (raw.isEmpty) return;
+      final raw = _readCache('localRecents');
+      if (raw == null) return;
       final decoded = jsonDecode(raw);
       if (decoded is! List) return;
       _localRecents = decoded
@@ -1417,8 +1514,8 @@ class AppState extends ChangeNotifier {
 
   void _saveLocalRecents() {
     try {
-      _config.set(
-        'home.localRecents',
+      _writeCache(
+        'localRecents',
         jsonEncode([for (final t in _localRecents) t.toJson()]),
       );
     } catch (_) {}
@@ -1438,8 +1535,8 @@ class AppState extends ChangeNotifier {
 
   void _loadPlayCounts() {
     try {
-      final raw = _config.get('home.playCounts', '');
-      if (raw.isEmpty) return;
+      final raw = _readCache('playCounts');
+      if (raw == null) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
       decoded.forEach((k, v) {
@@ -1460,8 +1557,8 @@ class AppState extends ChangeNotifier {
           ..clear()
           ..addEntries(entries);
       }
-      _config.set(
-        'home.playCounts',
+      _writeCache(
+        'playCounts',
         jsonEncode({for (final e in entries) e.key: e.value}),
       );
     } catch (_) {}
@@ -1650,8 +1747,8 @@ class AppState extends ChangeNotifier {
   /// are negative cache (looked, none found).
   void _loadArtistAvatars() {
     try {
-      final raw = _config.get('home.artistAvatars', '');
-      if (raw.isEmpty) return;
+      final raw = _readCache('artistAvatars');
+      if (raw == null) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
       decoded.forEach((k, v) {
@@ -1671,8 +1768,8 @@ class AppState extends ChangeNotifier {
           ..clear()
           ..addEntries(entries);
       }
-      _config.set(
-        'home.artistAvatars',
+      _writeCache(
+        'artistAvatars',
         jsonEncode({for (final e in entries) e.key: e.value}),
       );
     } catch (_) {}
@@ -1697,12 +1794,11 @@ class AppState extends ChangeNotifier {
   bool _loginBusy = false;
   bool get loginBusy => _loginBusy;
 
-  bool _googleLoginJob = false;
   int _discoverGen = 0;
   int _avatarGen = 0;
 
   /// Loads fresh song suggestions from recent/liked seeds via mix stations.
-  /// Falls back to InnerTube home shelves when Data API history is missing.
+  /// Falls back to InnerTube home shelves when history is missing.
   Future<void> loadDiscover() async {
     final gen = ++_discoverGen;
     List<Track> distinct(List<Track> tracks) {
@@ -1810,7 +1906,6 @@ class AppState extends ChangeNotifier {
   /// the first frame instead of song covers.
   Future<void> _enrichRecentArtistArtwork() async {
     final api = _api;
-    if (api == null) return;
     final ids = _recentArtists
         .map((e) => e.browseId)
         .toSet()
@@ -1852,7 +1947,6 @@ class AppState extends ChangeNotifier {
   /// can never wipe the library — liked songs included.
   Future<void> loadLibrary() async {
     final api = _api;
-    if (api == null) return;
     _libraryLoading = true;
     notifyListeners();
     try {
@@ -1866,7 +1960,7 @@ class AppState extends ChangeNotifier {
             .catchError((_) => null),
       ]);
       final playlists = results[0];
-      if (playlists is List<GPlaylist>) _playlists = playlists;
+      if (playlists is List<AccountPlaylist>) _playlists = playlists;
       // Fire-and-forget like Kotlin: covers pop in per chunk without
       // parking the library behind the slowest artwork fetch.
       unawaited(_enrichPlaylistArtwork());
@@ -1885,7 +1979,12 @@ class AppState extends ChangeNotifier {
       final liked = results[3];
       if (liked is List<Track>) {
         _liked = _stampTrackMeta(liked);
+        // The playlist's own count, which can exceed the rows the
+        // shelf renders.
+        _likedCount = api.likedCount;
         _updateLikedPlaylistEntry();
+        // The playlist's own cover, fetched once.
+        if (_likedCover == null) unawaited(_loadLikedCover());
       }
     } finally {
       _libraryLoading = false;
@@ -1901,6 +2000,7 @@ class AppState extends ChangeNotifier {
         final full = await api.likedVideos();
         if (full.length > _liked.length) {
           _liked = _stampTrackMeta(full);
+          _likedCount = api.likedCount;
           _updateLikedPlaylistEntry();
           notifyListeners();
           // The longer tail can carry fresh placeholder credits.
@@ -1912,7 +2012,7 @@ class AppState extends ChangeNotifier {
 
   /// Fills missing playlist artwork in background chunks of 4 (Kotlin
   /// parity): largest InnerTube header art first, then the first tracks'
-  /// artwork as a fallback. Track covers also backfill [GPlaylist.arts]
+  /// artwork as a fallback. Track covers also backfill [AccountPlaylist.arts]
   /// whenever empty so cards and the header collage have something to show
   /// even when the header art resolved but no collage sources exist yet.
   /// Each resolved chunk refreshes the visible lists immediately instead
@@ -1927,7 +2027,7 @@ class AppState extends ChangeNotifier {
           String? art = pl.art;
           List<String> arts = pl.arts;
           // Always try InnerTube header art first — it may be larger/fresher
-          // than the GData thumbnail, which for some playlists is a track
+          // than the stored thumbnail, which for some playlists is a track
           // cover auto-generated by YouTube.
           try {
             final thumbs = await _tube.playlistArtwork(pl.id);
@@ -1937,7 +2037,7 @@ class AppState extends ChangeNotifier {
           } catch (_) {}
           if (arts.isEmpty && art == null && pl.itemCount > 0) {
             try {
-              final tracks = await _api!.playlistTracks(pl.id, max: 4);
+              final tracks = await _api.playlistTracks(pl.id, max: 4);
               final covers = tracks
                   .map((t) => t.displayArtwork)
                   .whereType<String>()
@@ -1950,7 +2050,7 @@ class AppState extends ChangeNotifier {
             } catch (_) {}
           }
           if (art == null || art.isEmpty) return pl;
-          return GPlaylist(
+          return AccountPlaylist(
             id: pl.id,
             title: pl.title,
             itemCount: pl.itemCount,
@@ -1994,11 +2094,15 @@ class AppState extends ChangeNotifier {
           .whereType<String>()
           .toList();
       _playlists = [
-        GPlaylist(
+        AccountPlaylist(
           id: '__liked',
           title: 'Liked songs',
-          itemCount: _liked.length,
-          art: collage.isEmpty ? null : collage.first,
+          // YouTube's own count for the playlist: it counts every
+          // entry, while the shelf only renders the ones it can show.
+          itemCount: _likedCount ?? _liked.length,
+          // The playlist's own cover, once it is fetched; the first
+          // song's art stands in until then.
+          art: _likedCover ?? (collage.isEmpty ? null : collage.first),
           arts: collage,
         ),
         ..._playlists.where((p) => p.id != '__liked'),
@@ -2006,14 +2110,38 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Fetches YouTube's cover for the liked-music playlist.
+  ///
+  /// The library's "Liked songs" card shows the playlist's own art
+  /// instead of a collage of the first songs.
+  Future<void> _loadLikedCover() async {
+    try {
+      final thumbs = await _tube.playlistArtwork('VLLM');
+      if (thumbs.isEmpty) return;
+      // The card is small: take the smallest cover that still fills it
+      // (the 1200px original is a needless download).
+      final sorted = [...thumbs]..sort((a, b) => a.width.compareTo(b.width));
+      var pick = sorted.first;
+      for (final t in sorted) {
+        pick = t;
+        if (t.width >= 512) break;
+      }
+      final url = pick.url;
+      if (url.isEmpty || url == _likedCover) return;
+      _likedCover = url;
+      _updateLikedPlaylistEntry();
+      notifyListeners();
+    } catch (_) {}
+  }
+
   /// Resolves distributor-placeholder credits ("Release") in [tracks]
   /// via InnerTube's watch-next panel, which names the real artist
-  /// when the Data API tags don't. Only placeholder tracks are
+  /// when the stored tags don't. Only placeholder tracks are
   /// fetched; everything else passes through untouched.
   Future<List<Track>> fixReleaseCredits(List<Track> tracks) async {
     // Placeholder credits and album-less rows alike resolve through
     // InnerTube's watch-next panel (which also carries the explicit
-    // flag the Data API never sends).
+    // flag the library list never sends).
     final targets = tracks
         .where((t) => hasGenericReleaseArtist(t) || t.album == null)
         .toList();
@@ -2040,17 +2168,16 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Creates a new playlist via the Data API and refreshes the library.
+  /// Creates a new playlist and refreshes the library.
   /// Returns the new playlist's id, or null on failure.
   Future<String?> createPlaylist(String title) async {
     final api = _api;
-    if (api == null) return null;
-    final id = await api.createPlaylist(title: title);
+    final id = await api.createPlaylist(title);
     if (id != null && id.isNotEmpty) {
       // Show the new playlist immediately; the refresh reconciles the
       // rest (counts, artwork) in the background.
       _playlists = [
-        GPlaylist(id: id, title: title, itemCount: 0),
+        AccountPlaylist(id: id, title: title, itemCount: 0),
         ..._playlists.where((p) => p.id != id),
       ];
       notifyListeners();
@@ -2062,7 +2189,6 @@ class AppState extends ChangeNotifier {
   /// Renames a playlist and refreshes the library.
   Future<bool> renamePlaylist(String playlistId, String newTitle) async {
     final api = _api;
-    if (api == null) return false;
     final ok = await api.renamePlaylist(playlistId, newTitle);
     if (ok) await loadLibrary();
     return ok;
@@ -2071,7 +2197,6 @@ class AppState extends ChangeNotifier {
   /// Deletes a playlist, closes it if open, and refreshes the library.
   Future<bool> deletePlaylist(String playlistId) async {
     final api = _api;
-    if (api == null) return false;
     final ok = await api.deletePlaylist(playlistId);
     if (ok) {
       if (_openPlaylist?.playlist.id == playlistId) _openPlaylist = null;
@@ -2084,10 +2209,9 @@ class AppState extends ChangeNotifier {
   /// place (no reload) if it is the one being viewed.
   Future<bool> removeTrackFromPlaylist(String playlistId, Track track) async {
     final api = _api;
-    if (api == null) return false;
     final itemId = await api.playlistItemId(playlistId, track.videoId);
     if (itemId == null) return false;
-    final ok = await api.removePlaylistItem(itemId);
+    final ok = await api.removeFromPlaylist(playlistId, track.videoId, itemId);
     if (ok) {
       final opened = _openPlaylist;
       if (opened != null && opened.playlist.id == playlistId) {
@@ -2095,7 +2219,7 @@ class AppState extends ChangeNotifier {
             .where((t) => t.videoId != track.videoId)
             .toList();
         _openPlaylist = OpenPlaylist(
-          GPlaylist(
+          AccountPlaylist(
             id: opened.playlist.id,
             title: opened.playlist.title,
             itemCount: remaining.length,
@@ -2114,12 +2238,12 @@ class AppState extends ChangeNotifier {
 
   /// Opens [pl], entering its screen immediately while tracks load.
   /// Stale loads (closed or superseded meanwhile) are dropped.
-  Future<void> openPlaylist(GPlaylist pl) async {
+  Future<void> openPlaylist(AccountPlaylist pl) async {
     final gen = ++_openPlaylistGen;
     if (pl.id == '__liked') {
       _openPlaylist = OpenPlaylist(pl, _stampLikedIds(List.of(_liked)));
-      // Panel enrichment (album/explicit/full credits — the Data API
-      // sends none) refreshes the open view progressively via
+      // Panel enrichment (album/explicit/full credits — the library
+      // lists send none) refreshes the open view progressively via
       // refreshTrackMeta, which republishes it per chunk.
       unawaited(refreshTrackMeta());
       unawaited(
@@ -2144,7 +2268,6 @@ class AppState extends ChangeNotifier {
       return;
     }
     final api = _api;
-    if (api == null) return;
     final current = _playlists.where((p) => p.id == pl.id).firstOrNull ?? pl;
     _openPlaylist = OpenPlaylist(current, []);
     _libraryLoading = true;
@@ -2230,11 +2353,6 @@ class AppState extends ChangeNotifier {
     _playlistDialogLoading = true;
     notifyListeners();
     final api = _api;
-    if (api == null) {
-      _playlistDialogLoading = false;
-      notifyListeners();
-      return;
-    }
     try {
       final mine = _playlists.where((p) => p.id != '__liked').toList();
       final results = await Future.wait(
@@ -2282,14 +2400,13 @@ class AppState extends ChangeNotifier {
   /// Adds/removes the dialog track to/from [playlistId], optimistically.
   Future<void> toggleTrackPlaylist(String playlistId, Track track) async {
     final api = _api;
-    if (api == null) return;
     final member = _playlistMembership[playlistId] == true;
     try {
       if (member) {
         var itemId = _playlistItemIds[playlistId];
         itemId ??= await api.playlistItemId(playlistId, track.videoId);
         if (itemId == null) return;
-        if (!await api.removePlaylistItem(itemId)) {
+        if (!await api.removeFromPlaylist(playlistId, track.videoId, itemId)) {
           _playlistDialogError = 'Could not remove from playlist.';
           notifyListeners();
           return;
@@ -2308,7 +2425,7 @@ class AppState extends ChangeNotifier {
       }
       _playlists = _playlists.map((pl) {
         if (pl.id != playlistId) return pl;
-        return GPlaylist(
+        return AccountPlaylist(
           id: pl.id,
           title: pl.title,
           itemCount: (pl.itemCount + (member ? -1 : 1)).clamp(0, 1 << 31),
@@ -2366,11 +2483,9 @@ class AppState extends ChangeNotifier {
     await rateTrackFeedback(context, id, rating);
   }
 
-  /// Rates a track via InnerTube with a Data API fallback, updating
-  /// player, views and liked songs. The button flips optimistically and is
-  /// reverted (with a failure result) if neither backend accepts the
-  /// change. Dislikes only go through InnerTube since the Data API can
-  /// only add/remove likes.
+  /// Rates a track via InnerTube, updating player, views and liked
+  /// songs. The button flips optimistically and is reverted (with a
+  /// failure result) if the backend rejects the change.
   Future<bool> rateTrack(String videoId, RatingStatus rating) async {
     if (rating == RatingStatus.unknown) return false;
     final previous =
@@ -2387,21 +2502,13 @@ class AppState extends ChangeNotifier {
     }
     notifyListeners();
 
-    final api = _api;
     var innerOk = false;
     try {
       innerOk = await _tube.rate(videoId, rating);
     } catch (_) {}
     debugPrint('[rate] $videoId -> $rating innerTube=$innerOk');
-    var fallbackOk = false;
-    if (!innerOk && rating != RatingStatus.dislike && api != null) {
-      try {
-        fallbackOk = await api.rate(videoId, rating == RatingStatus.like);
-      } catch (_) {}
-      debugPrint('[rate] $videoId -> $rating gdata=$fallbackOk');
-    }
-    if (!innerOk && !fallbackOk) {
-      debugPrint('[rate] $videoId FAILED on both paths');
+    if (!innerOk) {
+      debugPrint('[rate] $videoId FAILED');
       // Revert the optimistic change.
       _applyRating(videoId, previous);
       if (wasLiked) {
@@ -2706,7 +2813,6 @@ class AppState extends ChangeNotifier {
   /// Refreshes the account liked-ids set and restamps visible surfaces.
   Future<void> refreshLikedIds() async {
     final api = _api;
-    if (api == null) return;
     try {
       final ids = await api.likedVideoIds();
       _likedIds = ids;
@@ -3135,9 +3241,9 @@ class AppState extends ChangeNotifier {
         } catch (_) {}
       }
       // Public like count for the info panel (InnerTube stream responses
-      // carry none; the Data API statistics part does).
+      // carry none; the watch-next response does).
       final api = _api;
-      if (api != null && _player.state.current?.videoId == key) {
+      if (_player.state.current?.videoId == key) {
         try {
           final likes = await api.videoLikeCount(key);
           if (likes != null &&
@@ -3156,18 +3262,34 @@ class AppState extends ChangeNotifier {
   Future<void> loadAuth() async {
     _loadSearchHistory();
     try {
+      // The credentials live in the platform secret store; the legacy
+      // plain-text file is migrated (and deleted) on the first run.
+      await config.loadCredentials();
       final cookie = config.get('cookie');
-      if (cookie.isEmpty) return;
+      if (cookie.isEmpty) {
+        _authLoaded = true;
+        notifyListeners();
+        return;
+      }
       final session = AuthSession.fromCookie(cookie);
-      if (session == null) return;
+      if (session == null) {
+        _authLoaded = true;
+        notifyListeners();
+        return;
+      }
       final savedToken = config.get('sessionToken');
       _tube.auth = AuthSession(
         cookie: session.cookie,
         sapisidHash: session.sapisidHash,
         sessionToken: savedToken.isNotEmpty ? savedToken : null,
       );
+      _authLoaded = true;
+      notifyListeners();
       unawaited(_refreshAccountAfterAuth());
-    } catch (_) {}
+    } catch (_) {
+      _authLoaded = true;
+      notifyListeners();
+    }
   }
 
   Future<void> _refreshAccountAfterAuth() async {
@@ -3188,12 +3310,12 @@ class AppState extends ChangeNotifier {
           accessToken: s.accessToken,
           sessionToken: token,
         );
-        _saveAuth();
+        await _saveAuth();
       }
     } catch (_) {}
     unawaited(_refreshAvatar());
     // Personal rows + discover need no interaction: refresh like a login
-    // (loadLibrary is a no-op without an OAuth bearer). The home feed
+    // (loadLibrary needs the cookie session). The home feed
     // refetches too: startup's loadHome ran before the cookie was
     // restored, so without this it would stay anonymous/generic.
     // History counts seed quick-picks ranking the same way.
@@ -3205,18 +3327,22 @@ class AppState extends ChangeNotifier {
     unawaited(_refreshLoginValidity());
   }
 
-  void _saveAuth() {
+  Future<void> _saveAuth() async {
     final s = _tube.auth;
     if (s.cookie == null) return;
-    config.set('cookie', s.cookie!);
-    if (s.sapisidHash != null) config.set('sapisidHash', s.sapisidHash!);
-    if (s.sessionToken != null) config.set('sessionToken', s.sessionToken!);
+    await config.setCredential('cookie', s.cookie!);
+    if (s.sapisidHash != null) {
+      await config.setCredential('sapisidHash', s.sapisidHash!);
+    }
+    if (s.sessionToken != null) {
+      await config.setCredential('sessionToken', s.sessionToken!);
+    }
   }
 
   Future<void> _refreshAvatar() async {
     final gen = ++_avatarGen;
     try {
-      final avatar = await _api?.channelAvatar();
+      final avatar = await _api.accountAvatar();
       if (gen != _avatarGen) return;
       _accountAvatar = avatar;
       notifyListeners();
@@ -3263,7 +3389,7 @@ class AppState extends ChangeNotifier {
           );
         }
       } catch (_) {}
-      _saveAuth();
+      await _saveAuth();
       unawaited(_refreshAvatar());
       unawaited(loadLibrary());
       // The cookie unlocks the personalized home feed: refetch it so
@@ -3320,12 +3446,11 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Signs out everywhere: tubes, token stores, account display.
-  /// Equivalent to [logoutCookie] plus [logoutGoogle].
+  /// Signs out everywhere: the session, the account display and the
+  /// library rows.
   void logout() {
     _tube.auth = const AuthSession.anonymous();
     _tube.authProvider = null;
-    _oauth.logout();
     _account = null;
     _accountAvatar = null;
     _clearLibraryLists();
@@ -3361,9 +3486,9 @@ class AppState extends ChangeNotifier {
     _loginCheckedAt = 0;
   }
 
-  /// Signs out of the InnerTube browser-cookie session only. The
-  /// Google (OAuth) session is untouched. Account display and library
-  /// rows are cleared only when no OAuth session remains.
+  /// Signs out of the InnerTube browser-cookie session: it is the one
+  /// session the app has, so the account display and the library rows
+  /// are cleared with it.
   void logoutCookie() {
     _tube.auth = const AuthSession.anonymous();
     config.remove('cookie');
@@ -3374,7 +3499,7 @@ class AppState extends ChangeNotifier {
     if (current != null) {
       _player.updateTrackRating(current.videoId, RatingStatus.unknown);
     }
-    if (!oauthSignedIn) {
+    if (!signedIn) {
       _account = null;
       _accountAvatar = null;
       _clearLibraryLists();
@@ -3386,70 +3511,6 @@ class AppState extends ChangeNotifier {
     }
     notifyListeners();
   }
-
-  /// Signs out of the Google (OAuth) Data API session only. The
-  /// browser-cookie session is untouched. Account display and library
-  /// rows are cleared only when no cookie session remains.
-  void logoutGoogle() {
-    _oauth.logout();
-    _tube.authProvider = null;
-    if (!hasCookieSession) {
-      _account = null;
-      _accountAvatar = null;
-      _clearLibraryLists();
-    }
-    notifyListeners();
-  }
-
-  /// Completes the Google browser login, resolving the channel and loading
-  /// the library on success.
-  Future<bool> googleBrowserLogin() async {
-    if (_googleLoginJob) return false;
-    _googleLoginJob = true;
-    _loginBusy = true;
-    _loginDetail = null;
-    notifyListeners();
-    try {
-      final creds = _oauth.savedClient();
-      if (creds == null) {
-        _loginDetail = 'Set the OAuth client ID/secret first.';
-        return false;
-      }
-      final minted = await _oauth.loginBrowser(
-        creds.$1,
-        creds.$2,
-        (url) => _openUrl(url),
-        cancelled: () => !_googleLoginJob,
-      );
-      if (!minted || !_googleLoginJob) return false;
-      String? name;
-      try {
-        name = await _api?.channelName();
-      } catch (_) {}
-      if (name == null) return false;
-      _account = name;
-      _tube.authProvider = () => _oauth.validSession();
-      unawaited(_refreshAvatar());
-      unawaited(refreshCurrentRating());
-      unawaited(loadLibrary());
-      unawaited(refreshLikedIds());
-      return true;
-    } finally {
-      _googleLoginJob = false;
-      _loginBusy = false;
-      notifyListeners();
-    }
-  }
-
-  /// Aborts a pending Google browser login.
-  void cancelGoogleLogin() {
-    _googleLoginJob = false;
-    _loginBusy = false;
-    notifyListeners();
-  }
-
-  /// True while a Google login attempt is in flight.
-  bool get googleLoginActive => _googleLoginJob;
 
   /// Re-emits state after external config edits (e.g. settings toggles).
   void refreshConfig() => notifyListeners();
@@ -3635,23 +3696,10 @@ class AppState extends ChangeNotifier {
     }
     if (!ok) {
       try {
-        final cookieSession = _tube.auth;
-        AuthSession? oauthSession;
-        try {
-          oauthSession = await _tube.authProvider?.call();
-        } catch (_) {
-          oauthSession = null;
-        }
-        final cookiePresent = (cookieSession.cookie ?? '').isNotEmpty;
-        final bearerPresent = (oauthSession?.accessToken ?? '').isNotEmpty;
-        final tokenPresent = (cookieSession.sessionToken ?? '').isNotEmpty;
-        final tag = bearerPresent && !cookiePresent
-            ? 'BEARER_ONLY'
-            : !bearerPresent && cookiePresent
-            ? 'COOKIE_ONLY'
-            : cookiePresent && bearerPresent
-            ? 'BOTH'
-            : 'ANONYMOUS';
+        final session = _tube.auth;
+        final cookiePresent = (session.cookie ?? '').isNotEmpty;
+        final tokenPresent = (session.sessionToken ?? '').isNotEmpty;
+        final tag = cookiePresent ? 'COOKIE' : 'ANONYMOUS';
         final tokenTag = tokenPresent ? 'TOKEN_YES' : 'TOKEN_NO';
         File(_watchtimeLogPath).writeAsStringSync(
           '${DateTime.now().toUtc().toIso8601String()} FAILED $state $videoId '
@@ -3787,21 +3835,15 @@ class AppState extends ChangeNotifier {
   /// Resolves and toggles the subscription state for [channelId].
   Future<void> toggleSubscribe(String channelId) async {
     final api = _api;
-    if (api == null || _subscribeBusy.contains(channelId)) return;
+    if (_subscribeBusy.contains(channelId)) return;
     _subscribeBusy.add(channelId);
     try {
       if (_subscribed.contains(channelId)) {
-        final subId = await api.subscriptionId(channelId);
-        if (subId != null && await api.unsubscribe(subId)) {
+        if (await api.unsubscribe(channelId)) {
           _subscribed.remove(channelId);
         }
-      } else {
-        final subId = await api.subscriptionId(channelId);
-        if (subId != null) {
-          _subscribed.add(channelId);
-        } else if (await api.subscribe(channelId)) {
-          _subscribed.add(channelId);
-        }
+      } else if (await api.subscribe(channelId)) {
+        _subscribed.add(channelId);
       }
     } finally {
       _subscribeBusy.remove(channelId);
@@ -3812,21 +3854,19 @@ class AppState extends ChangeNotifier {
   /// Resolves a channel avatar URL, caching misses as empty. Used for
   /// creator rows where InnerTube only exposes wide banners.
   ///
-  /// Prefers the Data API channel thumbnail (true square avatar) and falls
-  /// back to InnerTube artist imagery (square preferred, largest
-  /// otherwise), mirroring Kotlin `resolveAuthorAvatar`.
+  /// Prefers the channel thumbnail (true square avatar) and falls back
+  /// to InnerTube artist imagery (square preferred, largest otherwise),
+  /// mirroring Kotlin `resolveAuthorAvatar`.
   Future<String?> artistAvatar(String channelId) async {
     if (channelId.isEmpty) return null;
     final cached = _artistAvatarCache[channelId];
     if (cached != null) return cached.isEmpty ? null : cached;
     final api = _api;
     String? url;
-    if (api != null) {
-      try {
-        url = (await api.channelAvatars([channelId]))[channelId];
-      } catch (_) {
-        url = null;
-      }
+    try {
+      url = (await api.channelAvatars([channelId]))[channelId];
+    } catch (_) {
+      url = null;
     }
     if (url == null || url.isEmpty) {
       try {
@@ -3865,7 +3905,7 @@ class AppState extends ChangeNotifier {
     if (!_ownChannelIdLoaded) {
       _ownChannelIdLoaded = true;
       try {
-        _ownChannelId = await _api?.ownChannelId();
+        _ownChannelId = await _api.ownChannelId();
       } catch (_) {
         _ownChannelId = null;
       }
@@ -3881,10 +3921,8 @@ class AppState extends ChangeNotifier {
   /// Primes the subscription state for [channelId].
   Future<void> refreshSubscription(String channelId) async {
     final api = _api;
-    if (api == null) return;
     try {
-      final subId = await api.subscriptionId(channelId);
-      if (subId != null) {
+      if (await api.isSubscribed(channelId)) {
         _subscribed.add(channelId);
       } else {
         _subscribed.remove(channelId);

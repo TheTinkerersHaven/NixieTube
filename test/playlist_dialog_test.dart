@@ -13,13 +13,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
-import 'package:nixietube/core/innertube/gdata_api.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
+import 'package:nixietube/core/innertube/account_library.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/playlist_dialog.dart';
@@ -63,8 +62,8 @@ class _FakeTube extends InnerTube {
   }) async => [];
 }
 
-class _FakeGData extends GDataApi {
-  _FakeGData() : super(tokenProvider: () async => 'tok');
+class _FakeLibrary extends AccountLibrary {
+  _FakeLibrary();
 
   /// Held membership: the test releases the per-playlist
   /// checks deterministically instead of racing them.
@@ -73,15 +72,15 @@ class _FakeGData extends GDataApi {
   final added = <String>[];
 
   @override
-  Future<List<GPlaylist>> playlists() async => const [
-    GPlaylist(
+  Future<List<AccountPlaylist>> playlists() async => const [
+    AccountPlaylist(
       id: 'pl1',
       title: 'Road Trip',
       itemCount: 12,
       art: 'https://x/a.jpg',
       arts: ['https://x/a.jpg'],
     ),
-    GPlaylist(
+    AccountPlaylist(
       id: 'pl2',
       title: 'Gym',
       itemCount: 3,
@@ -93,7 +92,7 @@ class _FakeGData extends GDataApi {
   @override
   Future<List<Track>> recentActivity({int max = 30}) async => [];
   @override
-  Future<List<ShelfItem>> subscriptions({int max = 50}) async => [];
+  Future<List<BrowseItem>> subscriptions({int max = 50}) async => [];
   @override
   Future<List<Track>> likedVideos({int max = 2000}) async => [];
   @override
@@ -102,7 +101,7 @@ class _FakeGData extends GDataApi {
     int max = 5000,
   }) async => [];
   @override
-  Future<String?> channelAvatar() async => null;
+  Future<String?> accountAvatar() async => null;
 
   @override
   Future<String?> playlistItemId(String playlistId, String videoId) async {
@@ -118,7 +117,11 @@ class _FakeGData extends GDataApi {
   }
 
   @override
-  Future<bool> removePlaylistItem(String itemId) async => true;
+  Future<bool> removeFromPlaylist(
+    String playlistId,
+    String videoId,
+    String setVideoId,
+  ) async => true;
 }
 
 const _track = Track(videoId: 'v9', title: 'Nine', durationSec: 200);
@@ -141,21 +144,18 @@ void main() {
     addTearDown(player.dispose);
     final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
     addTearDown(art.close);
-    final oauth = GoogleOAuth();
-    addTearDown(oauth.close);
     final state = AppState(
       tube: tube,
       player: player,
       art: art,
-      oauth: oauth,
       config: SysConfig(configPath: '${dir.path}/config.properties'),
       openUrl: (_) async {},
     );
     addTearDown(state.dispose);
     // Test-only sign-in: reaches the signed-in dialog UI
     // without touching the real auth files or the network.
-    final fake = _FakeGData();
-    state.apiOverride = fake;
+    final fake = _FakeLibrary();
+    state.libraryOverride = fake;
     state.testAccount = 'Tester';
 
     await state.loadLibrary();

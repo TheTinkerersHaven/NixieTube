@@ -30,6 +30,31 @@ int toDurationSec(String s) {
   return acc;
 }
 
+/// The running time of a list row when it sits in the fixed columns.
+///
+/// Playlist and liked-songs rows keep the duration beside the title
+/// (in `fixedColumns`) instead of inside the text columns, so
+/// [parseListItem] cannot see it. Returns 0 when the row carries no
+/// duration.
+int parseRowDuration(dynamic li) {
+  final fixed = nav(li, const ['fixedColumns']);
+  if (fixed is! List) return 0;
+  for (final col in fixed) {
+    final runs = nav(col, const [
+      'musicResponsiveListItemFixedColumnRenderer',
+      'text',
+      'runs',
+    ]);
+    if (runs is! List) continue;
+    for (final run in runs) {
+      final value = str(nav(run, const ['text']));
+      if (value == null || !_durationRe.hasMatch(value)) continue;
+      return toDurationSec(value);
+    }
+  }
+  return 0;
+}
+
 /// Thumbnails from a raw `thumbnails` array; entries without a URL are skipped.
 List<Thumbnail> parseThumbnailList(dynamic arr) {
   if (arr is! List) return [];
@@ -1417,7 +1442,11 @@ PlaylistDetail? buildPlaylist(dynamic res) {
       final li = nav(it, const ['musicResponsiveListItemRenderer']);
       if (li == null) continue;
       final t = parseListItem(li);
-      if (t != null) tracks.add(t);
+      if (t != null) {
+        // Playlist rows keep the running time in the fixed columns.
+        final duration = parseRowDuration(li);
+        tracks.add(duration > 0 ? t.copyWith(durationSec: duration) : t);
+      }
     }
   }
   final micro = nav(res, const ['microformat', 'microformatDataRenderer']);

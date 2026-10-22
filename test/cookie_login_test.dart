@@ -15,7 +15,6 @@ import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/discord.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/lastfm.dart';
 import 'package:nixietube/sys/mpris.dart';
 import 'package:nixietube/sys/sys_config.dart';
@@ -53,7 +52,6 @@ Future<({AppState state, List<String> opened})> _pumpSettings(
   Future<ResolvedStream?> Function(String videoId)? resolveStream,
   String? configPath,
   InnerTube? tube,
-  bool oauthDone = false,
 }) async {
   final dir = Directory.systemTemp.createTempSync('nt-cookie-login');
   addTearDown(() => dir.deleteSync(recursive: true));
@@ -66,23 +64,16 @@ Future<({AppState state, List<String> opened})> _pumpSettings(
     configDirPath: dir.path,
   );
   addTearDown(player.dispose);
-  final oauth = GoogleOAuth();
-  addTearDown(oauth.close);
   final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
   addTearDown(art.close);
   final opened = <String>[];
   final config = SysConfig(
     configPath: configPath ?? '${dir.path}/config.properties',
   );
-  if (oauthDone) {
-    config.set('client_id', 'test-client');
-    config.set('access_token', 'test-token');
-  }
   final state = AppState(
     tube: tube,
     player: player,
     art: art,
-    oauth: oauth,
     config: config,
     openUrl: (url) async {
       opened.add(url);
@@ -116,6 +107,14 @@ Future<({AppState state, List<String> opened})> _pumpSettings(
 }
 
 void main() {
+  testWidgets('the signed-out card offers the browser login', (tester) async {
+    await _pumpSettings(tester);
+    // The account card carries the one sign-in the app has: the
+    // browser-cookie session.
+    expect(find.text('YouTube Music account'), findsOneWidget);
+    expect(find.text('Log in with browser'), findsOneWidget);
+  });
+
   testWidgets('cookie login shows no login card when already signed in', (
     tester,
   ) async {
@@ -140,9 +139,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('logoutCookie clears only the cookie session', (
-    tester,
-  ) async {
+  testWidgets('logoutCookie clears only the cookie session', (tester) async {
     final dir = Directory.systemTemp.createTempSync('nt-logout-cookie');
     addTearDown(() => dir.deleteSync(recursive: true));
     final config = SysConfig(configPath: '${dir.path}/config.properties');

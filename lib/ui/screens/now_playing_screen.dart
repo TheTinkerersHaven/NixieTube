@@ -42,8 +42,8 @@ class NowPlayingScreen extends StatelessWidget {
     );
     final full = context.select<AppState, bool>((s) => s.lyricsFull);
     final signedIn = context.select<AppState, bool>((s) => s.account != null);
-    final gdataAvailable = context.select<AppState, bool>(
-      (s) => s.gdataAvailable,
+    final libraryAvailable = context.select<AppState, bool>(
+      (s) => s.libraryAvailable,
     );
     final hasQueue = context.select<AppState, bool>(
       (s) => s.playerState.queue.isNotEmpty,
@@ -117,10 +117,10 @@ class NowPlayingScreen extends StatelessWidget {
                             track,
                           ),
                         ),
-                        // Playlist add needs the Data API, so it
-                        // rides the menu rather than the transport
-                        // row (matching the old bottom-bar button).
-                        if (signedIn && gdataAvailable)
+                        // Playlist add rides the menu rather than
+                        // the transport row (matching the old
+                        // bottom-bar button).
+                        if (signedIn && libraryAvailable)
                           M3EFabMenuItem(
                             icon: const Icon(Icons.playlist_add_rounded),
                             label: 'Add to playlist',
@@ -598,8 +598,46 @@ class _TabsColumn extends StatelessWidget {
   }
 }
 
-class _TabsContent extends StatelessWidget {
+/// The lyrics list's scroll state, shared by the tab strip and the
+/// page it shows.
+///
+/// The tab strip owns it: switching tabs disposes the page — and with
+/// it the list's state — so the controller (and the offset it
+/// remembers) has to outlive that.
+class _LyricsScroll {
+  _LyricsScroll() {
+    ctrl.addListener(_remember);
+  }
+
+  /// The list's scroll controller.
+  final ScrollController ctrl = ScrollController();
+
+  /// Where the reader left the lyrics.
+  double offset = 0;
+
+  void _remember() {
+    if (ctrl.hasClients) offset = ctrl.offset;
+  }
+
+  void dispose() => ctrl.dispose();
+}
+
+class _TabsContent extends StatefulWidget {
   const _TabsContent();
+
+  @override
+  State<_TabsContent> createState() => _TabsContentState();
+}
+
+class _TabsContentState extends State<_TabsContent> {
+  /// The lyrics list's scroll state.
+  final _LyricsScroll _lyrics = _LyricsScroll();
+
+  @override
+  void dispose() {
+    _lyrics.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -619,7 +657,11 @@ class _TabsContent extends StatelessWidget {
           const SizedBox(height: 8),
           Expanded(
             child: TabBarView(
-              children: [_UpNextTab(), _LyricsTab(), _InfoTab()],
+              children: [
+                _UpNextTab(),
+                _LyricsTab(lyrics: _lyrics),
+                _InfoTab(),
+              ],
             ),
           ),
         ],
@@ -969,16 +1011,20 @@ Future<void> _showQueueRowMenu(
 }
 
 class _LyricsTab extends StatefulWidget {
+  const _LyricsTab({required this.lyrics});
+
+  /// The lyrics list's scroll state, owned by the tab strip (above the
+  /// pages) so it outlives a page switch.
+  final _LyricsScroll lyrics;
+
   @override
   State<_LyricsTab> createState() => _LyricsTabState();
 }
 
 class _LyricsTabState extends State<_LyricsTab> {
-  final ScrollController _ctrl = ScrollController();
-
   @override
   void dispose() {
-    _ctrl.dispose();
+    // The controller belongs to the tab strip, not to this page.
     super.dispose();
   }
 
@@ -1029,7 +1075,8 @@ class _LyricsTabState extends State<_LyricsTab> {
         ),
         Expanded(
           child: _LyricsBody(
-            ctrl: _ctrl,
+            ctrl: widget.lyrics.ctrl,
+            restoreOffset: () => widget.lyrics.offset,
             large: false,
             tabIndex: _LyricsBody.lyricsTabIndex,
           ),
@@ -1044,10 +1091,18 @@ class _LyricsTabState extends State<_LyricsTab> {
 /// the loaded list, so content reveals in place), the synced
 /// list when loaded, a static note when nothing was found.
 class _LyricsBody extends StatelessWidget {
-  const _LyricsBody({required this.ctrl, required this.large, this.tabIndex});
+  const _LyricsBody({
+    required this.ctrl,
+    required this.large,
+    this.tabIndex,
+    this.restoreOffset,
+  });
 
   final ScrollController ctrl;
   final bool large;
+
+  /// The scroll offset to restore when the list is built again.
+  final double? Function()? restoreOffset;
 
   /// Tab strip index this instance lives on, when inside the tab
   /// strip — [lyricsTabIndex] for the Lyrics tab, null in the
@@ -1100,6 +1155,7 @@ class _LyricsBody extends StatelessWidget {
           state: state,
           large: large,
           visibleTabIndex: tabIndex,
+          restoreOffset: restoreOffset,
         );
       },
     );

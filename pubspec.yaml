@@ -1,7 +1,7 @@
 name: nixietube
 description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
-version: 0.2.2+4
+version: 0.3.0+40
 
 environment:
   sdk: ^3.13.5
@@ -27,11 +27,17 @@ dependencies:
   dbus: ^0.8.0
   # Discord Rich Presence is a pure-Dart IPC client (lib/sys/discord_ipc.dart),
   # so there is no RPC SDK dependency and no Rust/native bridge.
+  # 1.8.0 exports a RoundedPolygon that clashes with m3e_core's own
+  # (both names are visible to m3e_core's loading indicator), so the app
+  # stays on 1.7.x until m3e_core catches up.
   material_ui: ^1.7.0
   # Loading skeletons for the home feed (replaces the spinner while shelves
   # resolve, so the layout is stable and content reveals in place).
   skeletonizer: ^3.0.0
   m3e_core: ^1.1.4
+  # Credentials live in the platform secret store (libsecret on Linux)
+  # instead of a plain-text file.
+  flutter_secure_storage: ^11.2.0
   # System accent (Material You) color schemes: the desktop
   # accent via XDG portal/GTK on Linux, wallpaper colors on
   # Android. Only DynamicColorBuilder is used; seed schemes
@@ -52,3 +58,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # The app logo, shown in the first-run setup.
+    - assets/icon/nixietube.png

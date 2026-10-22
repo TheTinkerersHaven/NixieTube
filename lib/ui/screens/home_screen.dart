@@ -775,29 +775,52 @@ class _QuickPicksGrid extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Quick picks',
-                    style: Theme.of(context).textTheme.titleLarge,
+            _PersonalHeading(
+              title: 'Quick picks',
+              trailing: (height) => Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    tooltip: 'Play quick picks',
+                    // As tall as the heading text, not the 48px default.
+                    padding: EdgeInsets.zero,
+                    iconSize: height * 0.8,
+                    splashRadius: height / 2,
+                    // No 48px tap-target padding: the button is exactly
+                    // as tall as the heading text.
+                    style: const ButtonStyle(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    constraints: BoxConstraints.tightFor(
+                      height: height,
+                      width: height,
+                    ),
+                    onPressed: playList.isEmpty
+                        ? null
+                        : () => state.playSongs(playList, 0),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  tooltip: 'Play quick picks',
-                  onPressed: playList.isEmpty
-                      ? null
-                      : () => state.playSongs(playList, 0),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.shuffle_rounded),
-                  tooltip: 'Shuffle quick picks',
-                  onPressed: playList.isEmpty
-                      ? null
-                      : () => state.playShuffled(playList),
-                ),
-              ],
+                  IconButton(
+                    icon: const Icon(Icons.shuffle_rounded),
+                    tooltip: 'Shuffle quick picks',
+                    padding: EdgeInsets.zero,
+                    iconSize: height * 0.8,
+                    splashRadius: height / 2,
+                    // No 48px tap-target padding: the button is exactly
+                    // as tall as the heading text.
+                    style: const ButtonStyle(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    constraints: BoxConstraints.tightFor(
+                      height: height,
+                      width: height,
+                    ),
+                    onPressed: playList.isEmpty
+                        ? null
+                        : () => state.playShuffled(playList),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 8),
             // Fixed height from the column count so the grid stays lazy:
@@ -821,6 +844,86 @@ class _QuickPicksGrid extends StatelessWidget {
   }
 }
 
+/// The height of a personal-block heading: the title's line height.
+///
+/// The row hugs the text instead of the tallest control in it, and the
+/// trailing controls are built for exactly this height.
+double _headingHeight(ThemeData theme) {
+  final style = theme.textTheme.titleLarge;
+  final size = style?.fontSize ?? 22;
+  return size * (style?.height ?? 1.3);
+}
+
+/// The heading of a personal-block column.
+///
+/// Both columns use it, so "Quick picks" and "Liked songs" sit on the
+/// same line: the title lives in a box of the title's own line height,
+/// and the trailing controls are built for that height too.
+class _PersonalHeading extends StatelessWidget {
+  const _PersonalHeading({
+    required this.title,
+    required this.trailing,
+    this.note,
+  });
+
+  /// The heading text.
+  final String title;
+
+  /// A caption next to the title (the liked list's loaded count).
+  final String? note;
+
+  /// The controls on the right, built for the heading's height.
+  final Widget Function(double height) trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final height = _headingHeight(theme);
+    return Row(
+      children: [
+        Expanded(
+          child: SizedBox(
+            height: height,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Row(
+                // The note sits on the title's baseline, so it reads as
+                // a caption of it.
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Flexible(
+                    child: Text(title, style: theme.textTheme.titleLarge),
+                  ),
+                  if (note != null) ...[
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Tooltip(
+                        message:
+                            'YouTube counts every song of the playlist, but '
+                            'its playlist page only serves the ones it '
+                            'renders — the rest cannot be loaded.',
+                        child: Text(
+                          note!,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+        trailing(height),
+      ],
+    );
+  }
+}
+
 /// Liked songs list: rows under a header with Play all. Fills the height
 /// given by the parent (grid height on wide windows, 400px when stacked)
 /// with the rows scrolling inside, like Kotlin's measured column.
@@ -835,22 +938,25 @@ class _LikedSideList extends StatelessWidget {
     final playingId = context.select<AppState, String?>(
       (s) => s.playerState.current?.videoId,
     );
+    final note = state.likedLoadNote;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Liked songs',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+        _PersonalHeading(
+          title: 'Liked songs',
+          // How many of the playlist's songs are listed, next to the
+          // title it belongs to.
+          note: note,
+          trailing: (height) => M3ETextButton(
+            // As tall as the heading text, not the button's own height.
+            decoration: M3EButtonDecoration(
+              minimumSize: Size(0, height),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            M3ETextButton(
-              onPressed: liked.isEmpty ? null : () => state.playSongs(liked, 0),
-              child: const Text('Play all'),
-            ),
-          ],
+            onPressed: liked.isEmpty ? null : () => state.playSongs(liked, 0),
+            child: const Text('Play all'),
+          ),
         ),
         const SizedBox(height: 8),
         Expanded(

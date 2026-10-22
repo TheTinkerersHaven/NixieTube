@@ -50,3 +50,23 @@ bool highContrastOf(BuildContext context) {
     return false;
   }
 }
+
+/// Scrolls [controller] to [offset], honoring the reduced-motion
+/// setting.
+///
+/// A zero-length scroll animation is not allowed by the framework, so
+/// the reduced case jumps instead of animating — which is the very
+/// motion the setting turns off.
+void scrollToOffset(
+  BuildContext context,
+  ScrollController controller,
+  double offset, {
+  Duration duration = const Duration(milliseconds: 300),
+  Curve curve = Curves.easeOut,
+}) {
+  if (readMotionDuration(context, duration) == Duration.zero) {
+    controller.jumpTo(offset);
+    return;
+  }
+  controller.animateTo(offset, duration: duration, curve: curve);
+}

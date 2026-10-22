@@ -1,7 +1,7 @@
-// Pure metadata helpers ported from Kotlin `GDataApi` companion logic
+// Pure metadata helpers ported from the Kotlin client's companion logic
 // (artist fixup, album inference, durations, music/region filters).
 //
-// No networking here — the API client in `gdata_api.dart` will call these.
+// No networking here — pure helpers the InnerTube client calls.
 
 import 'dart:io' show Platform;
 
@@ -10,7 +10,7 @@ import '../models/models.dart';
 /// YouTube topic id for music.
 const musicTopicId = '/m/04rlf';
 
-/// The Data API's deleted/private video stub id, never a real track.
+/// The deleted/private video stub id, never a real track.
 const deletedVideoId = 'UCBR8-60-B28hp2BmDPdntcQ';
 
 /// Lowercases, maps every non-alphanumeric run to a single space, trims.
@@ -91,7 +91,7 @@ bool hasReleaseType(String value) {
 /// ("Release") rather than a real artist.
 ///
 /// Distributor uploads ("Release - Topic" channels) often carry no
-/// artist in their tags, so Data API `fixup` falls back to the
+/// artist in their tags, so `fixup` falls back to the
 /// placeholder and only InnerTube's watch-next panel names the real
 /// credit. Such tracks need [InnerTube.enrichTrack] to heal.
 bool hasGenericReleaseArtist(Track track) {
@@ -144,7 +144,7 @@ String? _artistFromTags(String title, List<String> tags) {
   return null;
 }
 
-/// Reconciles a Data API title/owner pair into an (artist, title) pair.
+/// Reconciles a title/owner pair into an (artist, title) pair.
 /// Topic channels already carry the real artist; distributor
 /// "Release - Topic" channels do not, so video tags win there. Label
 /// uploads titled "Artist - Track" split, unless the suffix is a version
@@ -254,7 +254,7 @@ ReleaseKind? albumKindFromTags(
   return null;
 }
 
-/// ISO-8601 Data API durations ("PT4M13S") to seconds; 0 when unparseable.
+/// ISO-8601 durations ("PT4M13S") to seconds; 0 when unparseable.
 int isoDuration(String? raw) {
   final v = (raw ?? '').trim();
   if (v.isEmpty) return 0;

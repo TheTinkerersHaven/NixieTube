@@ -22,6 +22,7 @@ class LyricsList extends StatefulWidget {
     required this.state,
     this.large = false,
     this.visibleTabIndex,
+    this.restoreOffset,
   });
 
   final ScrollController ctrl;
@@ -37,6 +38,16 @@ class LyricsList extends StatefulWidget {
   /// offstage list would page the TabBarView back to it. Null (the
   /// fullscreen view) always follows.
   final int? visibleTabIndex;
+
+  /// The scroll offset to restore on the first build, or null to keep
+  /// the normal behaviour (follow the active line).
+  ///
+  /// A callback, not a value: switching tabs in the Now Playing view
+  /// disposes the list's page, so the list is built again from
+  /// scratch and the offset has to be read at that moment — otherwise
+  /// the reader would lose their place and land back on the active
+  /// line.
+  final double? Function()? restoreOffset;
 
   @override
   State<LyricsList> createState() => _LyricsListState();
@@ -54,6 +65,21 @@ class _LyricsListState extends State<LyricsList> {
   /// would remount two rows on every line change and the animation
   /// would never play. Doubles as the auto-scroll measuring point.
   List<GlobalKey> _rowKeys = const [];
+
+  /// Set while the first build restores a scroll offset: the
+  /// follow-scroll must not fight the restore.
+  bool _restoring = false;
+
+  /// The offset to restore, read when the list is built.
+  double? _restoreTo;
+
+  @override
+  void initState() {
+    super.initState();
+    final restore = widget.restoreOffset?.call();
+    _restoreTo = restore;
+    _restoring = restore != null && restore > 0;
+  }
 
   void _ensureKeys(int count) {
     if (_rowKeys.length != count) {
@@ -81,6 +107,20 @@ class _LyricsListState extends State<LyricsList> {
       // Before the first timestamp nothing is sung yet: leave -1 so
       // no line highlights early.
     }
+    if (_restoring) {
+      // The list was rebuilt (the tab page was disposed): put the
+      // reader back where they were, and keep the follow-scroll quiet
+      // until the next line change.
+      _restoring = false;
+      if (currentIndex >= 0) _autoIndex = currentIndex;
+      final offset = _restoreTo ?? 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!ctrl.hasClients) return;
+        if (ctrl.offset > 0) return;
+        ctrl.jumpTo(offset.clamp(0.0, ctrl.position.maxScrollExtent));
+      });
+    }
     if (currentIndex >= 0 && currentIndex != _autoIndex) {
       _autoIndex = currentIndex;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -100,6 +140,8 @@ class _LyricsListState extends State<LyricsList> {
         if (currentIndex < 0 || currentIndex >= _rowKeys.length) return;
         final ctx = _rowKeys[currentIndex].currentContext;
         if (ctx != null) {
+          // A zero duration makes ensureVisible jump instead of
+          // animate, which is what the reduced-motion setting asks for.
           Scrollable.ensureVisible(
             ctx,
             alignment: 0.35,
@@ -120,13 +162,11 @@ class _LyricsListState extends State<LyricsList> {
                 0.0,
                 ctrl.position.maxScrollExtent,
               );
-          ctrl.animateTo(
+          scrollToOffset(
+            context,
+            ctrl,
             target,
-            duration: readMotionDuration(
-              context,
-              const Duration(milliseconds: 300),
-            ),
-            curve: Curves.easeOut,
+            duration: const Duration(milliseconds: 300),
           );
         }
       });

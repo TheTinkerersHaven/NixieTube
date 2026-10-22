@@ -14,7 +14,6 @@ import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
-import 'package:nixietube/sys/google_oauth.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/lyrics_list.dart';
@@ -60,7 +59,6 @@ void main() {
       tube: tube,
       player: player,
       art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
-      oauth: GoogleOAuth(),
       config: SysConfig(configPath: '${dir.path}/config.properties'),
       openUrl: (_) async {},
     );
@@ -130,7 +128,6 @@ void main() {
       tube: tube,
       player: player,
       art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
-      oauth: GoogleOAuth(),
       config: SysConfig(configPath: '${dir.path}/config.properties'),
       openUrl: (_) async {},
     );
@@ -198,7 +195,6 @@ void main() {
       tube: tube,
       player: player,
       art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
-      oauth: GoogleOAuth(),
       config: SysConfig(configPath: '${dir.path}/config.properties'),
       openUrl: (_) async {},
     );
@@ -253,5 +249,89 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
     }
     expect(ctrl.offset, greaterThan(0));
+  });
+
+  testWidgets('switching tabs keeps the lyrics scroll position', (
+    tester,
+  ) async {
+    final dir = Directory.systemTemp.createTempSync('nt-lyrics-tabs');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = InnerTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: _IdleEngine(),
+      tube: tube,
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+    final lines = [
+      for (var i = 0; i < 30; i++)
+        LyricLine(timeMs: i * 60000, text: 'line $i'),
+    ];
+    // Mirrors the Now Playing tab strip: the controller and the
+    // remembered offset live above the pages, so they survive the page
+    // disposal a tab switch causes.
+    final ctrl = ScrollController();
+    addTearDown(ctrl.dispose);
+    var offset = 0.0;
+    ctrl.addListener(() {
+      if (ctrl.hasClients) offset = ctrl.offset;
+    });
+    late TabController tabs;
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          home: DefaultTabController(
+            length: 3,
+            initialIndex: 1,
+            child: Builder(
+              builder: (context) {
+                tabs = DefaultTabController.of(context);
+                return Scaffold(
+                  body: TabBarView(
+                    children: [
+                      const SizedBox.shrink(),
+                      LyricsList(
+                        ctrl: ctrl,
+                        lyrics: lines,
+                        positionMs: 0,
+                        state: state,
+                        visibleTabIndex: 1,
+                        restoreOffset: () => offset,
+                      ),
+                      const SizedBox.shrink(),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Scroll the lyrics by hand.
+    ctrl.jumpTo(400);
+    await tester.pump();
+    expect(offset, greaterThan(0));
+
+    // Away and back: the list must not jump.
+    tabs.animateTo(0);
+    await tester.pumpAndSettle();
+    tabs.animateTo(1);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(ctrl.offset, closeTo(400, 1));
   });
 }
