@@ -30,7 +30,7 @@ dependencies:
   # 1.8.0 exports a RoundedPolygon that clashes with m3e_core's own
   # (both names are visible to m3e_core's loading indicator), so the app
   # stays on 1.7.x until m3e_core catches up.
-  material_ui: ^1.7.0
+  material_ui: ^1.8.0
   # Loading skeletons for the home feed (replaces the spinner while shelves
   # resolve, so the layout is stable and content reveals in place).
   skeletonizer: ^3.0.0
