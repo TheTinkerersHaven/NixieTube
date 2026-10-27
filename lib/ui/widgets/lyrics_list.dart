@@ -22,6 +22,7 @@ class LyricsList extends StatefulWidget {
     required this.state,
     this.large = false,
     this.visibleTabIndex,
+    this.tabController,
     this.restoreOffset,
   });
 
@@ -38,6 +39,11 @@ class LyricsList extends StatefulWidget {
   /// offstage list would page the TabBarView back to it. Null (the
   /// fullscreen view) always follows.
   final int? visibleTabIndex;
+
+  /// The tab strip's controller, when this list lives inside the tab
+  /// strip. Used to gate auto-scroll to the active tab. Null in the
+  /// fullscreen view (always follows playback).
+  final TabController? tabController;
 
   /// The scroll offset to restore on the first build, or null to keep
   /// the normal behaviour (follow the active line).
@@ -130,7 +136,8 @@ class _LyricsListState extends State<LyricsList> {
         // an ancestor PageView would page the TabBarView back here.
         final tabIndex = widget.visibleTabIndex;
         if (tabIndex != null) {
-          final tabs = DefaultTabController.maybeOf(context);
+          final tabs = widget.tabController ??
+              DefaultTabController.maybeOf(context);
           if (tabs == null || tabs.index != tabIndex || tabs.indexIsChanging) {
             return;
           }

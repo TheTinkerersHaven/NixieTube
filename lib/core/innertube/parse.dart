@@ -4,6 +4,8 @@
 // stay in `inner_tube.dart`; search ranking that needs extra fetches calls
 // back through helpers here.
 
+import 'dart:math' show log;
+
 import '../models/models.dart';
 import 'json.dart';
 import 'metadata.dart' show canonical;
@@ -1142,6 +1144,33 @@ void parseSearchShelf(
 /// Exact full-query title matches still outscore everything; ties keep
 /// YouTube's order (stable sort), so plain single-word queries behave
 /// exactly as before.
+/// Log-scaled popularity bonus from a YouTube view-count string such as
+/// "1,234,567 views", "1.2M views", "1.2B views". Returns 0 when the
+/// count is missing or unparseable, so unknown popularity never outranks
+/// a known one by accident; the bonus is capped so it can break ties
+/// between equally-titled recordings but cannot override a real text
+/// match advantage.
+int _viewsBonus(String views) {
+  if (views.isEmpty) return 0;
+  final m = RegExp(r'([\d.,]+)\s*([KMBkmb]?)').firstMatch(views.trim());
+  if (m == null) return 0;
+  final numStr = m.group(1)!.replaceAll(',', '');
+  final value = double.tryParse(numStr);
+  if (value == null || value <= 0) return 0;
+  final mult = switch (m.group(2)!.toUpperCase()) {
+    'K' => 1e3,
+    'M' => 1e6,
+    'B' => 1e9,
+    _ => 1.0,
+  };
+  final total = value * mult;
+  // log10 of 1B = 9; scale to ~0..90 so a 1B-view original beats a
+  // 10k-view cover (~40) by ~50 points, within the tie-break range.
+  final logValue = (total <= 0) ? 0.0 : (log(total) / log(10));
+  final scaled = (logValue * 10).round();
+  return scaled.clamp(0, 90);
+}
+
 List<SongItem> rankSearchSongs(
   Iterable<SongItem> songs,
   String query, {
@@ -1179,6 +1208,11 @@ List<SongItem> rankSearchSongs(
     if (titleTokens.every(queryTokens.contains)) points += 100;
     if (artistHits > 0) points += 50;
     if (isDominant(s)) points += 25;
+    // Popularity: YouTube's view count is the only signal we have for
+    // "which recording of this title is the canonical one" (e.g.
+    // "Godzilla" → Eminem). Add a log-scaled bonus so a 1B-view
+    // original outranks a 10k-view cover when text match is equal.
+    points += _viewsBonus(s.track.views);
     return points;
   }
 

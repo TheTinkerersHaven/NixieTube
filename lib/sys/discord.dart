@@ -64,10 +64,21 @@ String discordStatusTextKey(DiscordStatusText mode) => switch (mode) {
 /// else yields no large image.
 String? discordArtwork(String? url) {
   if (url == null || url.isEmpty) return null;
-  if (!url.contains('googleusercontent')) return null;
-  final m = RegExp(r'=w(\d+)-h(\d+)').firstMatch(url);
-  if (m == null) return null;
-  return url.replaceFirst(RegExp(r'=w\d+-h\d+[^?]*'), '=w540-h540-l90-rj');
+  if (url.contains('googleusercontent')) {
+    final m = RegExp(r'=w(\d+)-h(\d+)').firstMatch(url);
+    if (m == null) return null;
+    return url.replaceFirst(RegExp(r'=w\d+-h\d+[^?]*'), '=w540-h540-l90-rj');
+  }
+  if (url.contains('i.ytimg.com')) {
+    // Video stills are 16:9; Discord crops the large image to a square
+    // thumbnail itself, so the raw still is fine. Force https and a
+    // high-res variant when the URL carries a size suffix.
+    var u = url;
+    if (u.startsWith('//')) u = 'https:$u';
+    if (u.startsWith('http://')) u = u.replaceFirst('http://', 'https://');
+    return u;
+  }
+  return null;
 }
 
 /// Discord caps these fields at 128 characters.
@@ -102,7 +113,7 @@ DiscordActivity? presenceActivity(
   final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   final posSec = s.positionMs ~/ 1000;
   final durSec = s.durationMs ~/ 1000;
-  final art = discordArtwork(track.displayArtwork);
+  final art = discordArtwork(track.bestArtwork);
   return DiscordActivity(
     name: name,
     details: title,
@@ -141,6 +152,18 @@ const discordReconnectInterval = Duration(seconds: 35);
 /// Ceiling the reconnect delay backs off to. Keeps a client that is being
 /// restarted in a loop from being probed once per second forever.
 const discordRetryMaxInterval = Duration(seconds: 60);
+
+/// How long a playing session runs on the pushed start timestamp before
+/// presence is re-sent to correct clock drift.
+const discordResyncInterval = Duration(seconds: 30);
+
+/// How far the live position may run ahead of (or behind) the pushed
+/// presence's implication of "last seen position + elapsed" before the
+/// push is re-sent immediately: misses this band mean a seek.
+const discordSeekRealignment = Duration(milliseconds: 1200);
+
+/// How long a track may stay paused before its presence is withdrawn.
+const discordPauseHideAfter = Duration(minutes: 15);
 
 /// The real client: a pure-Dart IPC link, no native bridge involved.
 class _NativeDiscordRpc implements DiscordRpc {
@@ -192,6 +215,23 @@ class DiscordPresence extends ChangeNotifier {
   late final DiscordRpc _rpc;
   String _status = 'disabled';
   String _dedup = '';
+
+  /// When playback paused on the current track, the moment it paused;
+  /// cleared on play or track change. Presence is withdrawn once this
+  /// ages past [discordPauseHideAfter].
+  DateTime? _pausedAt;
+  String? _pausedTrackId;
+
+  /// Position bookkeeping for [update]'s resync cadence: the last pushed
+  /// elapsed reading, whether playback was running then, and when it was
+  /// pushed. Discord ticks the elapsed clock itself from the pushed
+  /// start timestamp, so a re-push is owed only when the player diverged
+  /// from that clock (a seek within the same track) or periodically, to
+  /// correct small drift — one frame per ~half a minute, not on every
+  /// 500 ms tick.
+  int _pushedPosMs = 0;
+  bool _pushedPlaying = false;
+  DateTime _pushedAt = DateTime.now();
   bool _initialized = false;
 
   /// Whether an [DiscordRpc.initialize] has ever completed. The native
@@ -246,7 +286,7 @@ class DiscordPresence extends ChangeNotifier {
   void setAppId(String value) {
     if (_appId == value) return;
     _appId = value;
-    _dedup = '';
+    _forgetPresence();
     if (_enabled) {
       unawaited(shutdown());
     }
@@ -256,7 +296,7 @@ class DiscordPresence extends ChangeNotifier {
   void setEnabled(bool value) {
     if (_enabled == value) return;
     _enabled = value;
-    _dedup = '';
+    _forgetPresence();
     if (!value) {
       _cancelRetry();
       unawaited(shutdown());
@@ -275,16 +315,26 @@ class DiscordPresence extends ChangeNotifier {
   void setStatusText(DiscordStatusText value) {
     if (_statusText == value) return;
     _statusText = value;
-    _dedup = '';
+    _forgetPresence();
     final last = _last;
     if (_enabled && last != null) unawaited(update(last));
     notifyListeners();
   }
 
-  /// Forgets the last pushed state so the next update re-sends even
-  /// when nothing changed (used after reconnects).
+  /// Forgets the pushed presence: content and position bookkeeping,
+  /// so the next update re-sends even when nothing changed and the
+  /// resync cadence starts from a clean slate (used after reconnects).
   void invalidate() {
+    _forgetPresence();
+  }
+
+  void _forgetPresence() {
     _dedup = '';
+    _pushedPosMs = 0;
+    _pushedPlaying = false;
+    _pushedAt = DateTime.now();
+    _pausedAt = null;
+    _pausedTrackId = null;
   }
 
   Future<void> _ensureInitialized() {
@@ -368,27 +418,66 @@ class DiscordPresence extends ChangeNotifier {
     }
     _armRetry();
     final track = s.current;
-    final key =
-        '${track?.videoId}:${s.playing}:${track?.rating.index}:${s.positionMs ~/ 15}';
-    if (key == _dedup) return;
+    // Track how long the current track has been paused; presence is
+    // withdrawn once it exceeds [discordPauseHideAfter].
+    if (s.playing || track == null) {
+      _pausedAt = null;
+      _pausedTrackId = track?.videoId;
+    } else if (_pausedTrackId != track.videoId) {
+      _pausedAt = DateTime.now();
+      _pausedTrackId = track.videoId;
+    } else {
+      _pausedAt ??= DateTime.now();
+    }
+    final pausedTooLong = !s.playing &&
+        track != null &&
+        _pausedAt != null &&
+        DateTime.now().difference(_pausedAt!) >= discordPauseHideAfter;
+    final key = pausedTooLong
+        ? '${track.videoId}:hidden'
+        : '${track?.videoId}:${s.playing}:${track?.rating.index}';
+    if (key == _dedup && !_resyncDue(s)) return;
     if (!await _ensureConnected()) return;
     try {
-      if (track == null) {
+      if (track == null || pausedTooLong) {
         if (_connected) {
           await _rpc.clearActivity();
         }
-        _dedup = key;
+        _notePush(s, key);
         _setStatus('idle');
         return;
       }
       final activity = presenceActivity(s, _statusText);
       if (activity == null) return;
       await _rpc.setActivity(activity);
-      _dedup = key;
+      _notePush(s, key);
       _setStatus('active');
     } catch (e) {
-      _setStatus('idle');
+      _setStatus('idle: $e');
     }
+  }
+
+  /// True when the pushed presence no longer matches what the player
+  /// reports: the position ran away from the clock the pushed start
+  /// timestamp implies (a seek), or a playing session reached its
+  /// periodic correction.
+  bool _resyncDue(PlayerState s) {
+    final sinceMs = DateTime.now().difference(_pushedAt).inMilliseconds;
+    final expectedMs = _pushedPlaying ? _pushedPosMs + sinceMs : _pushedPosMs;
+    if ((s.positionMs - expectedMs).abs() >
+        discordSeekRealignment.inMilliseconds) {
+      return true;
+    }
+    return _pushedPlaying && sinceMs >= discordResyncInterval.inMilliseconds;
+  }
+
+  /// Remembers what was just pushed so [_resyncDue] can tell a drift
+  /// correction from a content change.
+  void _notePush(PlayerState s, String key) {
+    _dedup = key;
+    _pushedPosMs = s.positionMs;
+    _pushedPlaying = s.playing;
+    _pushedAt = DateTime.now();
   }
 
   /// Keeps the handshake ready while the presence is enabled. A tick
@@ -437,7 +526,7 @@ class DiscordPresence extends ChangeNotifier {
     if (_connected) return;
     final last = _last;
     if (last == null) return;
-    _dedup = '';
+    _forgetPresence();
     await update(last);
   }
 
@@ -449,7 +538,7 @@ class DiscordPresence extends ChangeNotifier {
   /// [_initialized] false forever, so re-enabling the presence could
   /// never hand it back — the status line would stay dead until restart.
   Future<void> shutdown() async {
-    _dedup = '';
+    _forgetPresence();
     final wasInitialized = _initialized;
     _initialized = false;
     _initFuture = null;

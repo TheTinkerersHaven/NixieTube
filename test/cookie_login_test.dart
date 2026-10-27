@@ -5,6 +5,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fakes.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -13,7 +15,6 @@ import 'package:nixietube/core/innertube/auth_session.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/discord.dart';
 import 'package:nixietube/sys/lastfm.dart';
 import 'package:nixietube/sys/mpris.dart';
@@ -22,30 +23,6 @@ import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/settings_screen.dart';
 import 'package:nixietube/ui/theme.dart';
 
-class _FakeEngine implements PlayerEngine {
-  @override
-  Future<String?> play(String url) async => null;
-  @override
-  Future<void> pause() async {}
-  @override
-  Future<void> resume() async {}
-  @override
-  Future<void> stop() async {}
-  @override
-  Future<void> seekTo(int ms) async {}
-  @override
-  Future<void> setVolume(int volume) async {}
-  @override
-  int positionMs() => 0;
-  @override
-  int durationMs() => 0;
-  @override
-  bool isPlaying() => false;
-  @override
-  Future<void> release() async {}
-  @override
-  void addListener(PlayerEngineListener listener) {}
-}
 
 Future<({AppState state, List<String> opened})> _pumpSettings(
   WidgetTester tester, {
@@ -58,7 +35,7 @@ Future<({AppState state, List<String> opened})> _pumpSettings(
   tube ??= InnerTube();
   addTearDown(tube.close);
   final player = PlayerController(
-    engine: _FakeEngine(),
+    engine: FakeEngine(),
     tube: tube,
     resolveStream: resolveStream,
     configDirPath: dir.path,

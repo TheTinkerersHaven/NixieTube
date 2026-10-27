@@ -7,13 +7,13 @@ import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nixietube/core/player/player_engine.dart';
 import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/lyrics_list.dart';

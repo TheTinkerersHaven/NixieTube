@@ -291,7 +291,15 @@ class BrowserCookies {
         } catch (_) {}
       }, onError: (_) {});
       try {
-        ws.add(jsonEncode({'id': 1, 'method': 'Storage.getCookies'}));
+        ws.add(
+          jsonEncode({
+            'id': 1,
+            'method': 'Storage.getCookies',
+            'params': {
+              'urls': ['https://youtube.com', 'https://music.youtube.com'],
+            },
+          }),
+        );
         final resp = await answer.future.timeout(const Duration(seconds: 15));
         final result = resp['result'];
         if (result is Map && result['cookies'] is List) {

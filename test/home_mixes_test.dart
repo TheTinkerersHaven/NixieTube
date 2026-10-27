@@ -5,23 +5,20 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fakes.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
-class _FakeEngine implements PlayerEngine {
+class _FakeEngine extends FakeEngine {
   int pos = 0;
   @override
   Future<String?> play(String url) async => null;
-  @override
-  Future<void> pause() async {}
-  @override
-  Future<void> resume() async {}
   @override
   Future<void> stop() async {
     pos = 0;
@@ -33,17 +30,11 @@ class _FakeEngine implements PlayerEngine {
   }
 
   @override
-  Future<void> setVolume(int volume) async {}
-  @override
   int positionMs() => pos;
   @override
   int durationMs() => 0;
   @override
   bool isPlaying() => false;
-  @override
-  Future<void> release() async {}
-  @override
-  void addListener(PlayerEngineListener listener) {}
 }
 
 /// InnerTube double serving one scripted mix playlist and radio list.

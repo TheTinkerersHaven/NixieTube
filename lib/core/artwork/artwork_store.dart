@@ -62,10 +62,6 @@ String upgradeArt(String url) {
 String _originalArt(String url) =>
     url.replaceAll(RegExp(r'=w\d+-h\d+[^?]*'), '');
 
-/// PNG signature, followed by an 8-byte chunk header: the IHDR width and
-/// height are two big-endian 32-bit values at bytes 16..24.
-const _pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-
 /// Rewrites Google image size params up to [targetWidth]; never downscales.
 String upscaleArtworkUrl(String url, int targetWidth) {
   final re = RegExp(r'=w(\d+)(?:-h(\d+))?');
@@ -102,6 +98,36 @@ img.Image? _decode(List<int> bytes) {
     return img.decodeImage(Uint8List.fromList(bytes));
   } catch (_) {
     return null;
+  }
+}
+
+/// Re-encodes an image payload as a JPEG at quality 85 on a worker
+/// isolate, so the disk cache stores a compact copy instead of the
+/// full-resolution original (which can be several MB). Returns the
+/// original bytes unchanged when decoding fails or the payload is
+/// already small enough that re-encoding would not help. Lossless
+/// PNGs (transparency) are kept as-is.
+Future<Uint8List> _compressBytes(Uint8List bytes) async {
+  if (bytes.length < 64 * 1024) return bytes;
+  // Only re-encode JPEGs; PNGs are already compressed and re-encoding
+  // them to JPEG would cost quality for no benefit (and could break
+  // callers that rely on lossless pixels).
+  if (bytes.length < 2 || bytes[0] != 0xFF || bytes[1] != 0xD8) {
+    return bytes;
+  }
+  try {
+    return await Isolate.run<Uint8List>(() {
+      final img.Image? decoded = img.decodeImage(bytes);
+      if (decoded == null) return bytes;
+      if (decoded.hasAlpha) return bytes;
+      try {
+        return Uint8List.fromList(img.encodeJpg(decoded, quality: 85));
+      } catch (_) {
+        return bytes;
+      }
+    });
+  } catch (_) {
+    return bytes;
   }
 }
 
@@ -152,17 +178,11 @@ List<(int, int, int)>? coverBands(img.Image src) {
   return out;
 }
 
-/// Job kinds for the persistent artwork workers.
-const _jobImage = 0;
-const _jobBanner = 1;
-const _jobTilePng = 2;
-
 /// Persistent worker main: one warm isolate per pool, listening for jobs
 /// and replying on each job's own reply port. Spawned once and reused,
 /// so artwork loads never pay an isolate spawn per decode.
 void _workerMain(List<dynamic> args) {
   final SendPort announce = args[0] as SendPort;
-  final int kind = args[1] as int;
   final jobs = ReceivePort();
   announce.send(jobs.sendPort);
   jobs.listen((dynamic message) {
@@ -170,17 +190,19 @@ void _workerMain(List<dynamic> args) {
     final SendPort replyTo = job[0] as SendPort;
     final Uint8List bytes = job[1] as Uint8List;
     try {
-      // Banner and tile jobs share one decode (full frame, never
-      // cropped or trimmed); only the reply encoding differs.
+      // Banner and image jobs share one decode (full frame, never
+      // cropped or trimmed). Tile renders no longer produce a
+      // separate file: the UI decodes directly from the cached
+      // (compressed) source bytes.
       final rendered = _decode(bytes);
-      if (kind == _jobTilePng) {
-        replyTo.send(rendered == null ? null : img.encodePng(rendered));
-      } else {
-        replyTo.send(rendered);
-      }
+      replyTo.send(rendered);
     } catch (_) {
       replyTo.send(null);
     }
+    // This worker is free again: re-offer it so the pool can dispatch
+    // the next queued job. Without this the pool stalls after its first
+    // job.
+    announce.send(jobs.sendPort);
     // This worker is free again: re-offer it so the pool can dispatch the
     // next queued job. Without this the pool only ever sees each worker
     // idle once and stalls after its first `_poolSize` jobs.
@@ -197,9 +219,7 @@ const _poolSize = 2;
 /// own ReceivePort, so results can't be misattributed. No isolates exist
 /// until the first job (tests that never decode pay no spawn cost).
 class _ArtPool {
-  _ArtPool(this._kind);
-
-  final int _kind;
+  _ArtPool();
 
   ReceivePort? _announce;
   final List<Future<Isolate>> _isolates = [];
@@ -214,7 +234,7 @@ class _ArtPool {
         _drain();
       });
     for (var i = 0; i < _poolSize; i++) {
-      _isolates.add(Isolate.spawn(_workerMain, [_announce!.sendPort, _kind]));
+      _isolates.add(Isolate.spawn(_workerMain, [_announce!.sendPort]));
     }
   }
 
@@ -257,9 +277,8 @@ class ArtworkStore {
   ArtworkStore({Dio? dio, String? cacheDirPath})
     : _dio = dio ?? newResilientClient(),
       _dirPath = cacheDirPath ?? '${cacheDir().path}/art2',
-      _imagePool = _ArtPool(_jobImage),
-      _bannerPool = _ArtPool(_jobBanner),
-      _tilePool = _ArtPool(_jobTilePng) {
+      _imagePool = _ArtPool(),
+      _bannerPool = _ArtPool() {
     // Ensure directory exists - use sync for constructor, but this is fine
     // as it only happens once during initialization
     Directory(_dirPath).createSync(recursive: true);
@@ -273,7 +292,6 @@ class ArtworkStore {
 
   final _ArtPool _imagePool;
   final _ArtPool _bannerPool;
-  final _ArtPool _tilePool;
 
   /// Shuts down the HTTP client and the worker pools. In-flight jobs
   /// fail fast; call once at app/test teardown.
@@ -281,7 +299,6 @@ class ArtworkStore {
     _dio.close();
     _imagePool.dispose();
     _bannerPool.dispose();
-    _tilePool.dispose();
   }
 
   /// Deletes every cached artwork file (raw bytes and tile renders) so
@@ -308,18 +325,21 @@ class ArtworkStore {
     } catch (_) {}
   }
 
-  // `.img4`/`.tile7`: bump to invalidate the artwork cache — previously
+  // `.img4`/`.tile8`: bump to invalidate the artwork cache — previously
   // cached bytes/renders are re-fetched and re-rendered with the
   // current pipeline. img4 fetches higher-resolution sources for
-  // HiDPI tiles; tile7 stores the whole frame with no client-side crop
-  // or bar trimming (a cover's own black border is kept).
+  // HiDPI tiles; tile8 stores the whole frame (capped at 768px long
+  // side) with no client-side crop or bar trimming.
   String _rawFile(String url) => '$_dirPath/${_sha1Hex(url)}.img4';
   String _sourceFile(String url) => '$_dirPath/${_sha1Hex(url)}.source4.img';
 
   /// On-disk path of the finished tile render for [url]. Stable
   /// across launches (content hash), so tiles, player and MPRIS share
   /// one render instead of each decoding.
-  String tileFilePath(String url) => '$_dirPath/${_sha1Hex(url)}.tile7.png';
+  /// On-disk path of the cached (compressed) source bytes for [url].
+  /// Tiles and the UI decode directly from this file, so there is no
+  /// separate rendered copy on disk.
+  String tileFilePath(String url) => _rawFile(url);
 
   void _noteFailure(Map<String, int> failures, String url) {
     failures[url] = (failures[url] ?? 0) + 1;
@@ -335,9 +355,11 @@ class ArtworkStore {
     if (existing != null) return existing as Future<T>;
     final future = block();
     _inflight[url] = future;
-    future.whenComplete(() {
-      if (identical(_inflight[url], future)) _inflight.remove(url);
-    });
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_inflight[url], future)) unawaited(_inflight.remove(url));
+      }),
+    );
     return future;
   }
 
@@ -427,6 +449,7 @@ class ArtworkStore {
           _noteFailure(_failures, url);
           return null;
         }
+        bytes = await _compressBytes(Uint8List.fromList(bytes));
         await _writeAtomicallyAsync(_rawFile(url), bytes);
       }
       try {
@@ -450,7 +473,7 @@ class ArtworkStore {
     final hit = _bannerPng[key];
     if (hit != null) return hit;
     if (_bannerPng.length >= _bannerPngCap) {
-      _bannerPng.remove(_bannerPng.keys.first);
+      unawaited(_bannerPng.remove(_bannerPng.keys.first));
     }
     Future<Uint8List> build() async {
       final image = await source(url);
@@ -485,6 +508,7 @@ class ArtworkStore {
           _noteFailure(_sourceFailures, url);
           return null;
         }
+        bytes = await _compressBytes(Uint8List.fromList(bytes));
         await _writeAtomicallyAsync(_sourceFile(url), bytes);
       }
       try {
@@ -531,21 +555,8 @@ class ArtworkStore {
           _noteFailure(_failures, url);
           return null;
         }
+        bytes = await _compressBytes(Uint8List.fromList(bytes));
         await _writeAtomicallyAsync(_rawFile(url), bytes);
-      }
-      Uint8List? png;
-      try {
-        png = await _tilePool.run<Uint8List>(Uint8List.fromList(bytes));
-      } catch (_) {
-        png = null;
-      }
-      if (png == null) {
-        _noteFailure(_failures, url);
-        return null;
-      }
-      if (!await _writeAtomicallyAsync(target.path, png)) {
-        _noteFailure(_failures, url);
-        return null;
       }
       return target;
     });
@@ -577,22 +588,18 @@ class ArtworkStore {
   Future<(int, int)?> tileSize(String url) async {
     if (url.trim().isEmpty) return null;
     try {
-      final header = await File(tileFilePath(url))
-          .openRead(0, 24)
-          .fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
-      if (header.length < 24) return null;
-      for (var i = 0; i < _pngSignature.length; i++) {
-        if (header[i] != _pngSignature[i]) return null;
-      }
-      int be32(int at) =>
-          (header[at] << 24) |
-          (header[at + 1] << 16) |
-          (header[at + 2] << 8) |
-          header[at + 3];
-      final width = be32(16);
-      final height = be32(20);
-      if (width <= 0 || height <= 0) return null;
-      return (width, height);
+      final bytes = await File(tileFilePath(url)).readAsBytes();
+      if (bytes.isEmpty) return null;
+      return await Isolate.run<(int, int)?>(() {
+        try {
+          final img.Image? decoded = img.decodeImage(bytes);
+          if (decoded == null) return null;
+          if (decoded.width <= 0 || decoded.height <= 0) return null;
+          return (decoded.width, decoded.height);
+        } catch (_) {
+          return null;
+        }
+      });
     } catch (_) {
       return null;
     }

@@ -40,8 +40,8 @@ void main() {
       onChanged: (v) => selected = v,
     );
     // Each label is mounted twice (label + checkedLabel cross-fade).
-    expect(find.text('Alpha'), findsWidgets);
-    expect(find.text('Beta'), findsWidgets);
+    expect(find.text('Alpha'), findsNWidgets(2));
+    expect(find.text('Beta'), findsNWidgets(2));
     await tester.tap(find.byType(M3EToggleButton).at(1));
     await tester.pumpAndSettle();
     expect(selected, 1);

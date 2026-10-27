@@ -18,7 +18,7 @@
 // The credentials used to live in a plain-text `auth.properties` next
 // to the settings; that file is migrated into the secret store on the
 // first start and then deleted (see [SysConfig.loadCredentials]).
-import 'dart:io' show File;
+import 'dart:io';
 
 import 'paths.dart';
 import 'secure_store.dart';
@@ -104,7 +104,11 @@ Map<String, String> readProperties(File file) {
 }
 
 /// Writes a map as a Java-properties file.
-void writeProperties(File file, Map<String, String> values) {
+void writeProperties(
+  File file,
+  Map<String, String> values, {
+  bool restrictive = false,
+}) {
   try {
     file.parent.createSync(recursive: true);
     final buf = StringBuffer();
@@ -117,6 +121,16 @@ void writeProperties(File file, Map<String, String> values) {
       buf.writeln('$key=$value');
     }
     file.writeAsStringSync('$buf');
+    if (restrictive) {
+      // The fallback holds secrets: no world/group read. dart:io has no
+      // chmod, so shell out on Linux; elsewhere the file is still the
+      // best-effort fallback it always was.
+      try {
+        if (Platform.isLinux) {
+          Process.runSync('chmod', ['600', file.path]);
+        }
+      } catch (_) {}
+    }
   } catch (_) {}
 }
 
@@ -251,24 +265,16 @@ class SysConfig {
   /// works again.
   Future<void> setCredential(String key, String value) async {
     _values[key] = value;
-    try {
-      await _secure.write(key, value);
-      // The store holds it now: the plain-text copy can go.
-      _dropLegacyAuthFile();
-    } catch (_) {
-      writeProperties(_authFile, _legacyValues);
-    }
-  }
-
-  /// Drops a credential from the secret store and waits for it.
-  Future<void> removeCredential(String key) async {
-    _values.remove(key);
-    try {
-      await _secure.delete(key);
-      _dropLegacyAuthFile();
-    } catch (_) {
-      writeProperties(_authFile, _legacyValues);
-    }
+    final done = _writes.then((_) async {
+      try {
+        await _secure.write(key, value);
+        _dropLegacyAuthFile();
+      } catch (_) {
+        writeProperties(_authFile, _legacyValues, restrictive: true);
+      }
+    });
+    _writes = done;
+    await done;
   }
 
   /// Waits for the queued credential writes to reach the secret store.
@@ -300,7 +306,7 @@ class SysConfig {
       _dropLegacyAuthFile();
     } catch (_) {
       // No keyring: keep the value in the legacy file.
-      writeProperties(_authFile, _legacyValues);
+      writeProperties(_authFile, _legacyValues, restrictive: true);
     }
   }
 
@@ -310,7 +316,7 @@ class SysConfig {
       await _secure.delete(key);
       _dropLegacyAuthFile();
     } catch (_) {
-      writeProperties(_authFile, _legacyValues);
+      writeProperties(_authFile, _legacyValues, restrictive: true);
     }
   }
 

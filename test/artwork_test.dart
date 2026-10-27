@@ -2,6 +2,7 @@
 // stripping, palette bands, URL upgrades, and the end-to-end disk-cache
 // path with seeded bytes.
 
+import 'dart:async' show unawaited;
 import 'dart:convert';
 import 'dart:io';
 
@@ -173,13 +174,13 @@ void main() {
           request.response
             ..statusCode = HttpStatus.notFound
             ..headers.contentType = ContentType.html
-            ..write('<html><body>Not found</body></html>')
-            ..close();
+            ..write('<html><body>Not found</body></html>');
+          unawaited(request.response.close());
         } else {
           request.response
             ..headers.contentType = ContentType('image', 'png')
-            ..add(good)
-            ..close();
+            ..add(good);
+          unawaited(request.response.close());
         }
       });
       addTearDown(() => server.close(force: true));
@@ -223,7 +224,7 @@ void main() {
       final file = await store.file(url);
       expect(file, isNotNull);
       expect(file!.existsSync(), isTrue);
-      expect(file.path.endsWith('.tile7.png'), isTrue);
+      expect(file.path.endsWith('.img4'), isTrue);
       // cachedFile resolves the same on-disk render.
       final cached = await store.cachedFile(url);
       expect(cached, isNotNull);
@@ -312,11 +313,11 @@ void main() {
       // Renders the on-disk tile file from the seeded raw bytes.
       final file = await store.file(url);
       expect(file, isNotNull);
-      expect(File('${dir.path}/$hex.tile7.png').existsSync(), isTrue);
+      expect(File('${dir.path}/$hex.img4').existsSync(), isTrue);
       // Clearing removes every cached artwork file.
       store.clearCache();
       expect(File('${dir.path}/$hex.img4').existsSync(), isFalse);
-      expect(File('${dir.path}/$hex.tile7.png').existsSync(), isFalse);
+      expect(File('${dir.path}/$hex.img4').existsSync(), isFalse);
     });
 
     test('transient failures retry, and clearCache resets the skips', () async {
@@ -331,12 +332,11 @@ void main() {
         if (serveGood) {
           request.response
             ..headers.contentType = ContentType.binary
-            ..add(good)
-            ..close();
+            ..add(good);
+          unawaited(request.response.close());
         } else {
-          request.response
-            ..statusCode = HttpStatus.serviceUnavailable
-            ..close();
+          request.response.statusCode = HttpStatus.serviceUnavailable;
+          unawaited(request.response.close());
         }
       });
       addTearDown(() => server.close(force: true));
@@ -383,8 +383,8 @@ void main() {
         requests++;
         request.response
           ..headers.contentType = ContentType.binary
-          ..add(good)
-          ..close();
+          ..add(good);
+        unawaited(request.response.close());
       });
       addTearDown(() => server.close(force: true));
       final store = ArtworkStore(cacheDirPath: dir.path);
@@ -408,8 +408,8 @@ void main() {
       server.listen((request) {
         request.response
           ..headers.contentType = ContentType.binary
-          ..add(bytes)
-          ..close();
+          ..add(bytes);
+        unawaited(request.response.close());
       });
       addTearDown(() => server.close(force: true));
       return server;

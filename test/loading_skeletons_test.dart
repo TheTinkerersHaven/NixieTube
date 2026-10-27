@@ -7,6 +7,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fakes.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -16,7 +18,6 @@ import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/detail_screen.dart';
@@ -28,30 +29,6 @@ import 'package:nixietube/ui/widgets/loading_placeholders.dart';
 import 'package:nixietube/ui/widgets/lyrics_list.dart';
 import 'package:nixietube/ui/widgets/track_row.dart';
 
-class _FakeEngine implements PlayerEngine {
-  @override
-  Future<String?> play(String url) async => null;
-  @override
-  Future<void> pause() async {}
-  @override
-  Future<void> resume() async {}
-  @override
-  Future<void> stop() async {}
-  @override
-  Future<void> seekTo(int ms) async {}
-  @override
-  Future<void> setVolume(int volume) async {}
-  @override
-  int positionMs() => 0;
-  @override
-  int durationMs() => 200000;
-  @override
-  bool isPlaying() => false;
-  @override
-  Future<void> release() async {}
-  @override
-  void addListener(PlayerEngineListener listener) {}
-}
 
 /// InnerTube with held detail fetches: tests release the
 /// background load deterministically instead of racing it.
@@ -83,7 +60,7 @@ Future<({AppState state, T tube})> _boot<T extends InnerTube>(
   addTearDown(() => dir.deleteSync(recursive: true));
   addTearDown(tube.close);
   final player = PlayerController(
-    engine: _FakeEngine(),
+    engine: FakeEngine(),
     tube: tube,
     resolveStream:
         resolveStream ??

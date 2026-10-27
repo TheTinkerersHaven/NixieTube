@@ -30,12 +30,16 @@ class LibraryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Full watch: the backdrop palette resolves asynchronously
-    // (ensurePalette → notifyListeners), and a select on openedPlaylist /
-    // account would miss that and leave the wash stuck on the fallback.
-    final state = context.watch<AppState>();
-    final opened = state.openedPlaylist;
-    final account = state.account;
+    // Narrow selects, not a full watch: the screen now rebuilds only for
+    // playlist and sign-in changes, and the async backdrop palette
+    // (ensurePalette → cached bands) arrives through state.paletteTick
+    // instead of an app-wide notification. state.read() below covers
+    // all imperative calls (callbacks), which never need reactivity.
+    final state = context.read<AppState>();
+    final opened = context.select<AppState, OpenPlaylist?>(
+      (s) => s.openedPlaylist,
+    );
+    final account = context.select<AppState, String?>((s) => s.account);
     // Backdrop fills the whole screen, header row included: the
     // title and settings icon sit on the wash, like Now Playing.
     return Stack(
@@ -43,7 +47,11 @@ class LibraryScreen extends StatelessWidget {
       children: [
         if (opened != null && account != null)
           RepaintBoundary(
-            child: PaletteBackdrop(palette: _paletteFor(state, opened)),
+            child: ListenableBuilder(
+              listenable: state.paletteTick,
+              builder: (context, _) =>
+                  PaletteBackdrop(palette: _paletteFor(state, opened)),
+            ),
           ),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -78,6 +86,7 @@ class LibraryScreen extends StatelessWidget {
                     M3EFabMenuDown(
                       icon: const Icon(Icons.more_vert_rounded),
                       closeIcon: const Icon(Icons.close_rounded),
+                      tooltip: 'More actions',
                       size: M3EFabSize.small,
                       color: M3EFabColor.surface,
                       position: M3EFabMenuPosition.right,
@@ -165,8 +174,12 @@ class LibraryScreen extends StatelessWidget {
         ],
       ),
     );
-    if (name == null || name.isEmpty) return;
+    if (name == null || name.isEmpty) {
+      controller.dispose();
+      return;
+    }
     final id = await state.createPlaylist(name);
+    controller.dispose();
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -218,7 +231,13 @@ class LibraryScreen extends StatelessWidget {
     OpenPlaylist opened,
   ) {
     final pl = opened.playlist;
-    final note = state.likedLoadNote;
+    // Narrow selects: playlist view rebuilds only when the liked
+    // note or the account fields it paints actually change.
+    final note = context.select<AppState, String?>((s) => s.likedLoadNote);
+    final account = context.select<AppState, String?>((s) => s.account);
+    final accountAvatar = context.select<AppState, String?>(
+      (s) => s.accountAvatar,
+    );
     return AlbumPlaylistView(
       title: pl.title,
       subtitle: pl.id == '__liked'
@@ -228,21 +247,25 @@ class LibraryScreen extends StatelessWidget {
       art: pl.art,
       arts: playlistViewArts(pl),
       owner: pl.id == '__liked'
-          ? (state.account != null ? ArtistRef(state.account!) : null)
+          ? (account != null ? ArtistRef(account) : null)
           : (pl.owner.isEmpty
                 ? null
                 : ArtistRef(
                     pl.owner,
                     browseId: pl.ownerId.isEmpty ? null : pl.ownerId,
                   )),
-      ownerAvatarUrl: pl.id == '__liked' ? state.accountAvatar : null,
+      ownerAvatarUrl: pl.id == '__liked' ? accountAvatar : null,
       tracks: opened.tracks,
       numbered: false,
       topPadding: 16,
-      listLoading: state.libraryLoading && opened.tracks.isEmpty,
+      // libraryLoading rides the palette of list-empty states: select
+      // it so skeleton fills only appear while loading fresh.
+      listLoading:
+          context.select<AppState, bool>((s) => s.libraryLoading) &&
+          opened.tracks.isEmpty,
       // Own playlists can be edited (remove tracks); the liked list is
       // read-only.
-      removable: pl.id != '__liked' && state.account != null,
+      removable: pl.id != '__liked' && account != null,
       onRemoveTrack: pl.id == '__liked'
           ? null
           : (t) => state.removeTrackFromPlaylist(pl.id, t),
@@ -284,9 +307,11 @@ class LibraryScreen extends StatelessWidget {
       if (newName == null ||
           newName.isEmpty ||
           newName == opened.playlist.title) {
+        controller.dispose();
         return;
       }
       final ok = await state.renamePlaylist(opened.playlist.id, newName);
+      controller.dispose();
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -332,13 +357,18 @@ class LibraryScreen extends StatelessWidget {
   }
 
   Widget _tabs(BuildContext context, AppState state) {
-    if (state.libraryLoading && state.playlists.isEmpty) {
+    // Narrow selects: tabs re-render only for loading-state change
+    // and count changes, not for every app notification.
+    final loading = context.select<AppState, bool>(
+      (s) => s.libraryLoading && s.playlists.isEmpty,
+    );
+    final counts = context.select<AppState, (int, int)>(
+      (s) => (s.playlists.length, s.artists.length),
+    );
+    if (loading) {
       return const Center(child: M3ELoadingIndicator());
     }
-    final tabs = [
-      'Playlists (${state.playlists.length})',
-      'Artists (${state.artists.length})',
-    ];
+    final tabs = ['Playlists (${counts.$1})', 'Artists (${counts.$2})'];
     return DefaultTabController(
       length: 2,
       child: Column(
@@ -358,38 +388,52 @@ class LibraryScreen extends StatelessWidget {
   }
 
   Widget _playlistsTab(BuildContext context, AppState state) {
-    if (state.playlists.isEmpty) {
+    // Identity-stable select: identical playlists (unchanged order) do
+    // not trigger a layout pass.
+    final playlists = context.select<AppState, List<AccountPlaylist>>(
+      (s) => s.playlists,
+    );
+    if (playlists.isEmpty) {
       return const Center(child: Text('No playlists yet.'));
     }
     return LayoutBuilder(
       builder: (context, constraints) {
         final cols = (constraints.maxWidth / 150).floor().clamp(2, 8);
-        return GridView.count(
-          crossAxisCount: cols,
+        return GridView.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cols,
+            childAspectRatio: 1.0,
+          ),
           padding: const EdgeInsets.fromLTRB(
             screenPadding,
             screenPadding,
             screenPadding,
             screenPadding + playerBarClearance,
           ),
-          // Square cells for the square overlay tiles; anything else
-          // leaves an empty band that reads as a non-square tile.
-          childAspectRatio: 1.0,
-          children: [
-            for (final pl in state.playlists)
-              QuickPickCard(
-                title: pl.title,
-                subtitle: '${pl.itemCount} songs',
-                art: pl.art ?? (pl.arts.isNotEmpty ? pl.arts.first : null),
-                onTap: () => state.openPlaylist(pl),
-              ),
-          ],
+          itemCount: playlists.length,
+          itemBuilder: (context, index) {
+            final pl = playlists[index];
+            return QuickPickCard(
+              title: pl.title,
+              subtitle: '${pl.itemCount} songs',
+              art: pl.art ?? (pl.arts.isNotEmpty ? pl.arts.first : null),
+              onTap: () => state.openPlaylist(pl),
+            );
+          },
         );
       },
     );
   }
 
   Widget _artistsTab(BuildContext context, AppState state) {
+    // Narrow selects: artist rails rebuild only when roster or
+    // listening history changes.
+    final artists = context.select<AppState, List<BrowseItem>>(
+      (s) => s.artists,
+    );
+    final recent = context.select<AppState, List<BrowseItem>>(
+      (s) => s.recentArtists,
+    );
     return ListView(
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
@@ -400,7 +444,7 @@ class LibraryScreen extends StatelessWidget {
       children: [
         BrowseRail(
           title: 'Followed',
-          items: state.artists,
+          items: artists,
           circular: true,
           onOpen: (item) => state.go(Screen.detail, detail: item),
         ),
@@ -409,7 +453,7 @@ class LibraryScreen extends StatelessWidget {
           style: Theme.of(context).textTheme.titleLarge,
         ),
         const SizedBox(height: 8),
-        for (final a in state.recentArtists)
+        for (final a in recent)
           ListTile(
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 4,

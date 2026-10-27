@@ -108,7 +108,8 @@ class AccountLibrary {
   Future<bool> subscribe(String channelId) => _tube.subscribeTo(channelId);
 
   /// Unsubscribes from a channel.
-  Future<bool> unsubscribe(String channelId) => _tube.unsubscribeFrom(channelId);
+  Future<bool> unsubscribe(String channelId) =>
+      _tube.unsubscribeFrom(channelId);
 
   /// Public like count of a video.
   Future<int?> videoLikeCount(String videoId) => _tube.videoLikeCount(videoId);

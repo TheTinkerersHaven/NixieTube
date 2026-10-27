@@ -416,6 +416,29 @@ class HomeMix {
   final String subtitle;
   final List<Thumbnail> thumbnails;
 
+  /// Largest thumbnail by width, regardless of shape.
+  String? get bestArtwork {
+    if (thumbnails.isEmpty) return null;
+    var best = thumbnails.first;
+    for (final t in thumbnails.skip(1)) {
+      if (t.width >= best.width) best = t;
+    }
+    return best.url;
+  }
+
+  /// Prefer a true 1:1 cover over a larger 16:9 frame.
+  String? get displayArtwork {
+    String? best;
+    var bestW = -1;
+    for (final t in thumbnails) {
+      if (t.isSquare && t.width >= bestW) {
+        bestW = t.width;
+        best = t.url;
+      }
+    }
+    return best ?? bestArtwork;
+  }
+
   /// Mix playlist page id (`VLRD…`), when the mix opens as a page.
   final String? browseId;
 
@@ -450,6 +473,29 @@ class BrowseItem extends ShelfItem {
   final String subtitle;
   final String browseId;
   final List<Thumbnail> thumbnails;
+
+  /// Largest thumbnail by width, regardless of shape.
+  String? get bestArtwork {
+    if (thumbnails.isEmpty) return null;
+    var best = thumbnails.first;
+    for (final t in thumbnails.skip(1)) {
+      if (t.width >= best.width) best = t;
+    }
+    return best.url;
+  }
+
+  /// Prefer a true 1:1 cover over a larger 16:9 frame.
+  String? get displayArtwork {
+    String? best;
+    var bestW = -1;
+    for (final t in thumbnails) {
+      if (t.isSquare && t.width >= bestW) {
+        bestW = t.width;
+        best = t.url;
+      }
+    }
+    return best ?? bestArtwork;
+  }
   final ReleaseKind? kind;
   final String? browseParams;
 
@@ -508,6 +554,29 @@ class AlbumDetail {
   final String subtitle;
   final String description;
   final List<Thumbnail> thumbnails;
+
+  /// Largest thumbnail by width, regardless of shape.
+  String? get bestArtwork {
+    if (thumbnails.isEmpty) return null;
+    var best = thumbnails.first;
+    for (final t in thumbnails.skip(1)) {
+      if (t.width >= best.width) best = t;
+    }
+    return best.url;
+  }
+
+  /// Prefer a true 1:1 cover over a larger 16:9 frame.
+  String? get displayArtwork {
+    String? best;
+    var bestW = -1;
+    for (final t in thumbnails) {
+      if (t.isSquare && t.width >= bestW) {
+        bestW = t.width;
+        best = t.url;
+      }
+    }
+    return best ?? bestArtwork;
+  }
   final List<Track> tracks;
   final ReleaseKind? kind;
   final String year;
@@ -533,6 +602,29 @@ class ArtistDetail {
   final String name;
   final String description;
   final List<Thumbnail> thumbnails;
+
+  /// Largest thumbnail by width, regardless of shape.
+  String? get bestArtwork {
+    if (thumbnails.isEmpty) return null;
+    var best = thumbnails.first;
+    for (final t in thumbnails.skip(1)) {
+      if (t.width >= best.width) best = t;
+    }
+    return best.url;
+  }
+
+  /// Prefer a true 1:1 cover over a larger 16:9 frame.
+  String? get displayArtwork {
+    String? best;
+    var bestW = -1;
+    for (final t in thumbnails) {
+      if (t.isSquare && t.width >= bestW) {
+        bestW = t.width;
+        best = t.url;
+      }
+    }
+    return best ?? bestArtwork;
+  }
   final List<Track> topSongs;
   final List<BrowseItem> albums;
   final List<BrowseItem> singlesAndEps;
@@ -556,6 +648,29 @@ class PlaylistDetail {
   final String title;
   final String subtitle;
   final List<Thumbnail> thumbnails;
+
+  /// Largest thumbnail by width, regardless of shape.
+  String? get bestArtwork {
+    if (thumbnails.isEmpty) return null;
+    var best = thumbnails.first;
+    for (final t in thumbnails.skip(1)) {
+      if (t.width >= best.width) best = t;
+    }
+    return best.url;
+  }
+
+  /// Prefer a true 1:1 cover over a larger 16:9 frame.
+  String? get displayArtwork {
+    String? best;
+    var bestW = -1;
+    for (final t in thumbnails) {
+      if (t.isSquare && t.width >= bestW) {
+        bestW = t.width;
+        best = t.url;
+      }
+    }
+    return best ?? bestArtwork;
+  }
   final List<Track> tracks;
   final ArtistRef? author;
 }

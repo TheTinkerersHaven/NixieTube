@@ -95,6 +95,7 @@ class NowPlayingScreen extends StatelessWidget {
                     M3EFabMenuDown(
                       icon: const Icon(Icons.more_vert_rounded),
                       closeIcon: const Icon(Icons.close_rounded),
+                      tooltip: 'More actions',
                       size: M3EFabSize.small,
                       color: M3EFabColor.surface,
                       position: M3EFabMenuPosition.right,
@@ -321,7 +322,7 @@ class _TransportColumnState extends State<_TransportColumn> {
                     InkWell(
                       onTap: () {
                         state.closeNow();
-                        state.openArtist(track.artists[i], track);
+                        unawaited(state.openArtist(track.artists[i], track));
                       },
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -348,7 +349,7 @@ class _TransportColumnState extends State<_TransportColumn> {
             InkWell(
               onTap: () {
                 state.closeNow();
-                state.openAlbum(track, track.album!);
+                unawaited(state.openAlbum(track, track.album!));
               },
               child: Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -629,43 +630,61 @@ class _TabsContent extends StatefulWidget {
   State<_TabsContent> createState() => _TabsContentState();
 }
 
-class _TabsContentState extends State<_TabsContent> {
+class _TabsContentState extends State<_TabsContent> with TickerProviderStateMixin {
   /// The lyrics list's scroll state.
   final _LyricsScroll _lyrics = _LyricsScroll();
 
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    final state = context.read<AppState>();
+    _tabController = TabController(
+      length: 3,
+      vsync: this,
+      initialIndex: state.nowPlayingTabIndex.clamp(0, 2),
+    );
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging) {
+        context.read<AppState>().nowPlayingTabIndex = _tabController.index;
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _tabController.dispose();
     _lyrics.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        children: [
-          const TabBar(
-            tabs: [
-              Tab(text: 'Up next'),
-              Tab(text: 'Lyrics'),
-              Tab(text: 'Info'),
+    return Column(
+      children: [
+        TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Up next'),
+            Tab(text: 'Lyrics'),
+            Tab(text: 'Info'),
+          ],
+        ),
+        // A little air under the tab strip so the
+        // first row of content doesn't crowd it.
+        const SizedBox(height: 8),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _UpNextTab(),
+              _LyricsTab(lyrics: _lyrics, tabController: _tabController),
+              _InfoTab(),
             ],
           ),
-          // A little air under the tab strip so the
-          // first row of content doesn't crowd it.
-          const SizedBox(height: 8),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _UpNextTab(),
-                _LyricsTab(lyrics: _lyrics),
-                _InfoTab(),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -697,9 +716,9 @@ Future<void> _handleNowMenu(
     case _NowMenuAction.openYoutube:
       await state.openUrl('https://www.youtube.com/watch?v=${track.videoId}');
     case _NowMenuAction.clearUpNext:
-      if (context.mounted) _confirmClearQueue(context, state);
+      if (context.mounted) unawaited(_confirmClearQueue(context, state));
     case _NowMenuAction.sleepTimer:
-      if (context.mounted) _showSleepTimerSheet(context);
+      if (context.mounted) unawaited(_showSleepTimerSheet(context));
   }
 }
 
@@ -994,7 +1013,7 @@ Future<void> _showQueueRowMenu(
         state.player.moveQueue(index, index < cur ? cur : cur + 1);
       }
     case _QueueRowAction.addToPlaylist:
-      state.openPlaylistDialog(track);
+      unawaited(state.openPlaylistDialog(track));
     case _QueueRowAction.copyLink:
       await Clipboard.setData(
         ClipboardData(text: 'https://youtu.be/${track.videoId}'),
@@ -1011,11 +1030,15 @@ Future<void> _showQueueRowMenu(
 }
 
 class _LyricsTab extends StatefulWidget {
-  const _LyricsTab({required this.lyrics});
+  const _LyricsTab({required this.lyrics, required this.tabController});
 
   /// The lyrics list's scroll state, owned by the tab strip (above the
   /// pages) so it outlives a page switch.
   final _LyricsScroll lyrics;
+
+  /// The tab strip's controller, used to gate auto-scroll to the
+  /// active tab (replaces the old DefaultTabController lookup).
+  final TabController tabController;
 
   @override
   State<_LyricsTab> createState() => _LyricsTabState();
@@ -1079,6 +1102,7 @@ class _LyricsTabState extends State<_LyricsTab> {
             restoreOffset: () => widget.lyrics.offset,
             large: false,
             tabIndex: _LyricsBody.lyricsTabIndex,
+          tabController: widget.tabController,
           ),
         ),
       ],
@@ -1095,6 +1119,7 @@ class _LyricsBody extends StatelessWidget {
     required this.ctrl,
     required this.large,
     this.tabIndex,
+    this.tabController,
     this.restoreOffset,
   });
 
@@ -1108,6 +1133,10 @@ class _LyricsBody extends StatelessWidget {
   /// strip — [lyricsTabIndex] for the Lyrics tab, null in the
   /// fullscreen view (which always follows playback).
   final int? tabIndex;
+
+  /// The tab strip's controller, when this body lives inside the tab
+  /// strip. Null in the fullscreen view (always follows playback).
+  final TabController? tabController;
 
   /// Index of the lyrics tab in the Now Playing tab strip
   /// (Up next 0, Lyrics 1, Info 2).
@@ -1129,6 +1158,7 @@ class _LyricsBody extends StatelessWidget {
           state: state,
           large: large,
           visibleTabIndex: tabIndex,
+          tabController: tabController,
         ),
       );
     }
@@ -1155,6 +1185,7 @@ class _LyricsBody extends StatelessWidget {
           state: state,
           large: large,
           visibleTabIndex: tabIndex,
+          tabController: tabController,
           restoreOffset: restoreOffset,
         );
       },
@@ -1201,45 +1232,55 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
           RepaintBoundary(child: PaletteBackdrop(palette: widget.palette)),
           Padding(
             padding: const EdgeInsets.fromLTRB(
+              0,
               screenPadding,
-              screenPadding,
-              screenPadding,
+              0,
               0,
             ),
             child: Column(
               children: [
-                Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.fullscreen_exit_rounded),
-                      tooltip: 'Exit fullscreen lyrics',
-                      onPressed: state.collapseLyrics,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.track.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          Text(
-                            widget.track.artistNames(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(color: scheme.onSurfaceVariant),
-                          ),
-                        ],
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: screenPadding),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.fullscreen_exit_rounded),
+                        tooltip: 'Exit fullscreen lyrics',
+                        onPressed: state.collapseLyrics,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.track.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            Text(
+                              widget.track.artistNames(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 8),
-                Expanded(child: _LyricsBody(ctrl: _ctrl, large: true)),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: screenPadding,
+                    ),
+                    child: _LyricsBody(ctrl: _ctrl, large: true),
+                  ),
+                ),
                 const PlayerBar(tappable: false),
               ],
             ),
@@ -1338,7 +1379,9 @@ class _InfoTab extends StatelessWidget {
                             InkWell(
                               onTap: () {
                                 state.closeNow();
-                                state.openArtist(track.artists[i], track);
+                                unawaited(
+                                  state.openArtist(track.artists[i], track),
+                                );
                               },
                               child: Text(
                                 track.artists[i].name,
@@ -1377,7 +1420,7 @@ class _InfoTab extends StatelessWidget {
                 ? null
                 : () {
                     state.closeNow();
-                    state.openAlbum(track, track.album!);
+                    unawaited(state.openAlbum(track, track.album!));
                   },
           )
         else

@@ -9,59 +9,19 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import 'fakes.dart';
+
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/auth_session.dart';
-import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/now_playing_screen.dart';
 import 'package:nixietube/ui/theme.dart';
 
-class _FakeEngine implements PlayerEngine {
-  @override
-  Future<String?> play(String url) async => null;
-  @override
-  Future<void> pause() async {}
-  @override
-  Future<void> resume() async {}
-  @override
-  Future<void> stop() async {}
-  @override
-  Future<void> seekTo(int ms) async {}
-  @override
-  Future<void> setVolume(int volume) async {}
-  @override
-  int positionMs() => 0;
-  @override
-  int durationMs() => 200000;
-  @override
-  bool isPlaying() => false;
-  @override
-  Future<void> release() async {}
-  @override
-  void addListener(PlayerEngineListener listener) {}
-}
-
-class _FakeTube extends InnerTube {
-  bool rateResult = true;
-
-  @override
-  Future<bool> rate(String videoId, RatingStatus rating) async => rateResult;
-
-  @override
-  Future<RatingStatus> rating(String videoId) async => RatingStatus.indifferent;
-
-  @override
-  Future<Track> enrichTrack(Track track) async => track;
-}
-
-/// Backend that delays the rate response so the loading state
-/// can be observed mid-write.
-class _SlowTube extends _FakeTube {
+class _SlowTube extends FakeTube {
   @override
   Future<bool> rate(String videoId, RatingStatus rating) async {
     await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -72,7 +32,7 @@ class _SlowTube extends _FakeTube {
 /// Fake backend where only `q2` is liked server-side and only `q2`
 /// reports a length in its watch-next read, so both halves of the Up Next
 /// metadata pass (like states + lengths) are exercised without network.
-class _QueueStampTube extends _FakeTube {
+class _QueueStampTube extends FakeTube {
   @override
   Future<Map<String, ({RatingStatus rating, Map<String, int> durations})>>
   watchInfos(List<String> videoIds, {int concurrency = 8}) async => {
@@ -82,12 +42,12 @@ class _QueueStampTube extends _FakeTube {
   };
 }
 
-Future<AppState> _boot(WidgetTester tester, _FakeTube tube) async {
+Future<AppState> _boot(WidgetTester tester, FakeTube tube) async {
   final dir = Directory.systemTemp.createTempSync('nt-rating-test');
   addTearDown(() => dir.deleteSync(recursive: true));
   addTearDown(tube.close);
   final player = PlayerController(
-    engine: _FakeEngine(),
+    engine: FakeEngine(),
     tube: tube,
     resolveStream: (id) async =>
         ResolvedStream(url: 'https://x/$id', bitrate: 1),
@@ -131,7 +91,7 @@ Finder _likeButton() => find.byWidgetPredicate(
 
 void main() {
   testWidgets('successful like stays highlighted', (tester) async {
-    final tube = _FakeTube()..rateResult = true;
+    final tube = FakeTube()..rateResult = true;
     final state = await _boot(tester, tube);
     expect(state.player.state.current?.rating, RatingStatus.unknown);
     await tester.tap(find.byIcon(Icons.thumb_up_outlined));
@@ -145,7 +105,7 @@ void main() {
   });
 
   testWidgets('failed like reverts and shows a SnackBar', (tester) async {
-    final tube = _FakeTube()..rateResult = false;
+    final tube = FakeTube()..rateResult = false;
     final state = await _boot(tester, tube);
     await tester.tap(find.byIcon(Icons.thumb_up_outlined));
     await tester.pump();
@@ -223,7 +183,7 @@ void main() {
   testWidgets(
     'tapping like on an already-liked track sends indifferent (unlike)',
     (tester) async {
-      final tube = _FakeTube()..rateResult = true;
+      final tube = FakeTube()..rateResult = true;
       final state = await _boot(tester, tube);
       // Start with the track already liked.
       state.player.updateTrackRating(
@@ -237,8 +197,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       // Rate should have been called with indifferent.
-      // The fake tube doesn't track the argument, but the button
-      // should now show "Like" (not "Remove like").
+      expect(tube.lastRatedRating, RatingStatus.indifferent);
+      // The button should now show "Like" (not "Remove like").
       expect(tester.widget<IconButton>(_likeButton()).tooltip, 'Like');
       state.player.dispose();
       await tester.pump();

@@ -1,8 +1,11 @@
 name: Build
 
 on:
+  # Every push so red tests fail fast, not only at tag time.
   push:
+    branches: [main]
     tags: ['v*']
+  pull_request: {}
   workflow_dispatch: {}
 
 jobs:
@@ -16,8 +19,26 @@ jobs:
       - run: flutter pub get
       - run: dart analyze
 
-  build-linux:
+  test:
     needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Pub cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - run: flutter pub get
+      - run: flutter test
+
+  build-linux:
+    needs: [analyze, test]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ github.ref_name }}
@@ -31,6 +52,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
       - run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev file \
@@ -123,10 +145,13 @@ jobs:
         id: changelog
         run: |
           TAG_VER="${GITHUB_REF_NAME#v}"
+          # Literal prefix match on the version: interpolating into a
+          # regex would let a `+` in a tag become a quantifier and
+          # match nothing, failing the release.
           awk -v ver="$TAG_VER" '
             /^## \[/ {
               if (capture) exit
-              if ($0 ~ "## \\[" ver "\\]") { capture=1; next }
+              if (index($0, "## [" ver "] ") == 1) { capture=1; next }
               capture=0
             }
             capture { print }

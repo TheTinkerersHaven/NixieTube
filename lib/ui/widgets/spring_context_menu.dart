@@ -92,7 +92,7 @@ Future<T?> showSpringMenu<T>({
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent &&
             event.logicalKey == LogicalKeyboardKey.escape) {
-          dismiss();
+          unawaited(dismiss());
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
@@ -168,7 +168,7 @@ class _SpringMenuBodyState<T> extends State<_SpringMenuBody<T>>
         Timer(Duration(milliseconds: i * _staggerMs), () {
           if (!mounted) return;
           setState(() => _visible[i] = true);
-          _ctrls[i].animateTo(1.0);
+          unawaited(_ctrls[i].animateTo(1.0));
         }),
       );
     }
@@ -204,7 +204,7 @@ class _SpringMenuBodyState<T> extends State<_SpringMenuBody<T>>
       _timers.add(
         Timer(Duration(milliseconds: i * _staggerMs), () {
           if (!mounted) return;
-          _ctrls[idx].animateTo(0.0);
+          unawaited(_ctrls[idx].animateTo(0.0));
         }),
       );
     }

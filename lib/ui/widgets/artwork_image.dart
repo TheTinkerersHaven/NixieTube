@@ -5,7 +5,6 @@
 
 import 'dart:async';
 import 'dart:io' show File;
-import 'dart:math' show min;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -57,7 +56,6 @@ class ArtworkImage extends StatefulWidget {
 class _ArtworkImageState extends State<ArtworkImage> {
   String? _loadedUrl;
   File? _file;
-  (int, int)? _tileSize;
   Timer? _retryTimer;
   bool _retried = false;
   bool _failed = false;
@@ -90,7 +88,6 @@ class _ArtworkImageState extends State<ArtworkImage> {
       _retryTimer?.cancel();
       _retryTimer = null;
       _file = null;
-      _tileSize = null;
       _loadedUrl = null;
       _failed = false;
       _waitingSquareKey = null;
@@ -115,8 +112,7 @@ class _ArtworkImageState extends State<ArtworkImage> {
       // forever with nothing left to load.
       if (_effectiveUrl() != _loadedUrl) {
         _file = null;
-        _tileSize = null;
-        setState(_maybeLoad);
+          setState(_maybeLoad);
       }
     }
   }
@@ -144,7 +140,7 @@ class _ArtworkImageState extends State<ArtworkImage> {
       final cover = state.cachedSquareCover(key);
       if (cover != null && cover.isNotEmpty) return cover;
       if (_frameKey != key) {
-        state.ensureSquareCover(key);
+        unawaited(state.ensureSquareCover(key));
         if (_isNonSquareFrame(u)) return null;
       }
     }
@@ -168,7 +164,6 @@ class _ArtworkImageState extends State<ArtworkImage> {
     if (u == null) {
       _loadedUrl = null;
       _file = null;
-      _tileSize = null;
       final key = widget.squareCoverKey;
       final raw = widget.url;
       final squareWait =
@@ -208,21 +203,22 @@ class _ArtworkImageState extends State<ArtworkImage> {
     if (u == _loadedUrl) return;
     _loadedUrl = u;
     _failed = false;
-    // ignore: discarded_futures
-    context
-        .read<AppState>()
-        .art
-        .file(u)
-        .then(
-          (f) => _onRender(u, f),
-          onError: (_) {
-            // A failed load behaves like a missing file: placeholder now,
-            // one delayed retry (see _maybeRetry).
-            if (!mounted || _loadedUrl != u) return;
-            _maybeRetry();
-            setState(() => _failed = true);
-          },
-        );
+    unawaited(
+      context
+          .read<AppState>()
+          .art
+          .file(u)
+          .then(
+            (f) => _onRender(u, f),
+            onError: (_) {
+              // A failed load behaves like a missing file: placeholder now,
+              // one delayed retry (see _maybeRetry).
+              if (!mounted || _loadedUrl != u) return;
+              _maybeRetry();
+              setState(() => _failed = true);
+            },
+          ),
+    );
   }
 
   /// Shows the resolved render for [u], then refines the decode width from
@@ -239,22 +235,6 @@ class _ArtworkImageState extends State<ArtworkImage> {
       return;
     }
     setState(() => _file = f);
-    unawaited(_refineDecodeSize(u));
-  }
-
-  /// Reads the tile's pixel size (24-byte PNG header, no full decode) and
-  /// stamps it so the next build decodes the long side wide enough for
-  /// BoxFit.cover to fill the box from the short side. Fire and forget:
-  /// the tile is already shown; this only sharpens it.
-  Future<void> _refineDecodeSize(String u) async {
-    (int, int)? size;
-    try {
-      size = await context.read<AppState>().art.tileSize(u);
-    } catch (_) {
-      size = null;
-    }
-    if (!mounted || _loadedUrl != u) return;
-    setState(() => _tileSize = size);
   }
 
   /// One delayed retry when resolution yields nothing: a flaky boot-time
@@ -286,16 +266,27 @@ class _ArtworkImageState extends State<ArtworkImage> {
       context.select<AppState, int>((s) => s.squareCoverTick.value);
     }
     final scheme = Theme.of(context).colorScheme;
-    Widget placeholder() => Container(
-      width: widget.expand ? null : widget.size,
-      height: widget.expand ? null : widget.size,
-      color: scheme.surfaceContainerHigh,
-      child: Icon(
-        Icons.album_rounded,
-        size: widget.iconSize,
-        color: scheme.onSurfaceVariant,
-      ),
-    );
+    Widget placeholder() => widget.expand
+        ? SizedBox.expand(
+            child: Container(
+              color: scheme.surfaceContainerHigh,
+              child: Icon(
+                Icons.album_rounded,
+                size: widget.iconSize,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        : Container(
+            width: widget.size,
+            height: widget.size,
+            color: scheme.surfaceContainerHigh,
+            child: Icon(
+              Icons.album_rounded,
+              size: widget.iconSize,
+              color: scheme.onSurfaceVariant,
+            ),
+          );
     Widget frame(Widget child) => widget.circular
         ? ClipOval(
             child: widget.expand
@@ -332,34 +323,18 @@ class _ArtworkImageState extends State<ArtworkImage> {
         false;
     Widget child;
     if (file != null) {
-      // Decode so the crop covers the box without upscaling: a 48px row
-      // on a 2x screen needs 96 bitmap pixels on the tile's short side,
-      // otherwise the box cover-fit upscales the short side into softness
-      // (a 16:9 video still lands about 1.8× too small). BoxFit.cover
-      // fills the square box from the long side, so decode the long side
-      // wide enough for the short side to reach dpr size — capped at the
-      // render's actual pixels, so nothing is invented.
-      final dpr = MediaQuery.devicePixelRatioOf(context);
-      final targetShort = (widget.size * dpr).round().clamp(1, 2048);
-      int decodeWidth = targetShort;
-      if (_tileSize != null) {
-        final (tw, th) = _tileSize!;
-        final aspect = tw / th;
-        decodeWidth = (targetShort * aspect.clamp(1, 2048)).round();
-        decodeWidth = decodeWidth.clamp(1, min(tw, 2048));
-      }
-      child = Image.file(
-        file,
-        width: widget.expand ? null : widget.size,
-        height: widget.expand ? null : widget.size,
-        cacheWidth: decodeWidth,
-        fit: BoxFit.cover,
-        // Medium filtering: grid geometry is rarely integer logical
-        // pixels, so every tile resamples fractionally — low quality
-        // reads as grain on those resamples.
-        filterQuality: FilterQuality.medium,
-        gaplessPlayback: true,
-        errorBuilder: (context, _, _) => placeholder(),
+      // Decode at the source's native resolution so tiles stay crisp
+      // at any display size; Flutter downsamples for display. Capping
+      // the decode (cacheWidth) here previously upscaled small decodes
+      // into blur on larger tiles.
+      child = SizedBox.expand(
+        child: Image.file(
+          file,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.medium,
+          gaplessPlayback: true,
+          errorBuilder: (context, _, _) => placeholder(),
+        ),
       );
     } else if (_failed || (!hasUrl && !ancestorLoading)) {
       // Settled without art (or a failed load): the static album icon.
@@ -370,9 +345,11 @@ class _ArtworkImageState extends State<ArtworkImage> {
       // above would paint a flat box with a lone shimmering glyph; the
       // Bone paints the shimmer across the full tile while any skeleton
       // scope (this tile's or an ancestor's) is enabled.
-      child = Bone.square(size: widget.size);
+      child = widget.expand
+          ? SizedBox.expand(child: Bone.square(size: widget.size))
+          : Bone.square(size: widget.size);
     }
-    return Skeletonizer(
+    final result = Skeletonizer(
       enabled: skeleton,
       // Late cover swaps (frame → resolved square art) crossfade
       // instead of popping: the switcher keys on the backing file.
@@ -386,5 +363,6 @@ class _ArtworkImageState extends State<ArtworkImage> {
         ),
       ),
     );
+    return widget.expand ? SizedBox.expand(child: result) : result;
   }
 }

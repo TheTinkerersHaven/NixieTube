@@ -3,6 +3,8 @@
 // purpose: rating is one tap, everything else (queue, playlists,
 // link, remove) lives in the ⋮ spring menu and the right-click menu.
 
+import 'dart:async' show unawaited;
+
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -274,7 +276,7 @@ class TrackRow extends StatelessWidget {
               .showSnackBar(const SnackBar(content: Text('Queued next')));
         }
       case TrackRowAction.addToPlaylist:
-        state.openPlaylistDialog(track);
+        unawaited(state.openPlaylistDialog(track));
       case TrackRowAction.copyLink:
         await Clipboard.setData(
           ClipboardData(text: 'https://youtu.be/${track.videoId}'),
@@ -297,7 +299,7 @@ class TrackRow extends StatelessWidget {
     final position = box == null
         ? Offset.zero
         : box.localToGlobal(Offset(box.size.width, 0));
-    _showMenu(context, context.read<AppState>(), position);
+    unawaited(_showMenu(context, context.read<AppState>(), position));
   }
 }
 

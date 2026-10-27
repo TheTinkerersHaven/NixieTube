@@ -60,12 +60,12 @@ class DetailScreen extends StatelessWidget {
     } else if (detail.album != null) {
       final album = detail.album!;
       final fallbackArt = (item != null && item.thumbnails.isNotEmpty)
-          ? item.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url
+          ? item.bestArtwork
           : null;
       // Album browse art first — fall back to the first track's cover,
       // matching the playlist enrichment pattern.
       String? albumArt = album.thumbnails.isNotEmpty
-          ? album.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url
+          ? album.bestArtwork
           : (album.tracks
                     .map((t) => t.displayArtwork)
                     .whereType<String>()
@@ -88,10 +88,10 @@ class DetailScreen extends StatelessWidget {
     } else if (detail.playlist != null) {
       final pl = detail.playlist!;
       final fallbackArt = (item != null && item.thumbnails.isNotEmpty)
-          ? item.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url
+          ? item.bestArtwork
           : null;
       final plArt = pl.thumbnails.isNotEmpty
-          ? pl.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url
+          ? pl.bestArtwork
           : fallbackArt;
       body = AlbumPlaylistView(
         title: pl.title.isNotEmpty ? pl.title : (item?.title ?? 'Playlist'),
@@ -187,7 +187,7 @@ class _ArtistDetailView extends StatelessWidget {
     );
     final banner = artist.thumbnails.isEmpty
         ? null
-        : artist.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url;
+        : artist.bestArtwork;
     return ListView(
       // Deep enough that the banner survives scrolling through the
       // top songs instead of unmounting and reloading on return.
@@ -223,8 +223,8 @@ class _ArtistDetailView extends StatelessWidget {
             M3EFilledButton.icon(
               onPressed: artist.topSongs.isEmpty
                   ? null
-                  : () => state.playArtistSongs(artist, false),
-              icon: const Icon(Icons.play_arrow_rounded),
+                  : () => state.playArtistSongs(artist, true),
+              icon: const Icon(Icons.shuffle_rounded),
               label: const Text('Shuffle'),
             ),
             M3EOutlinedButton.icon(

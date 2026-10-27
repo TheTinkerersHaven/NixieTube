@@ -88,7 +88,10 @@ void main() {
         discordArtwork('https://lh3.googleusercontent.com/a=w480-h360'),
         'https://lh3.googleusercontent.com/a=w540-h540-l90-rj',
       );
-      expect(discordArtwork('https://i.ytimg.com/vi/x/hqdefault.jpg'), isNull);
+      expect(
+        discordArtwork('https://i.ytimg.com/vi/x/hqdefault.jpg'),
+        'https://i.ytimg.com/vi/x/hqdefault.jpg',
+      );
       expect(discordArtwork(null), isNull);
     });
   });

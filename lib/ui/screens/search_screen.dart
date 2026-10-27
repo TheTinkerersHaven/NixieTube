@@ -1,6 +1,8 @@
 // Search screen ported from Kotlin `searchPanel`: query field, section
 // filter chips, and categorized results.
 
+import 'dart:async' show unawaited;
+
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
@@ -28,9 +30,6 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
-    _focus.addListener(() {
-      context.read<AppState>().searchFieldFocused = _focus.hasFocus;
-    });
   }
 
   @override
@@ -43,7 +42,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void _submit(AppState state) {
     final q = _controller.text.trim();
     if (q.isEmpty) return;
-    state.searchFor(q);
+    unawaited(state.searchFor(q));
   }
 
   @override
@@ -60,20 +59,24 @@ class _SearchScreenState extends State<SearchScreen> {
             decoration: InputDecoration(
               labelText: 'Search songs, releases, artists',
               prefixIcon: const Icon(Icons.search_rounded),
-              suffixIcon: _controller.text.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close_rounded),
-                      onPressed: () {
-                        _controller.clear();
-                        setState(() {});
-                      },
-                    ),
+              suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _controller,
+                builder: (context, value, _) => value.text.isEmpty
+                    ? const SizedBox.shrink()
+                    : IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        tooltip: 'Clear search',
+                        onPressed: () {
+                          _controller.clear();
+                          state.clearSearch();
+                          _focus.requestFocus();
+                        },
+                      ),
+              ),
               border: const OutlineInputBorder(),
             ),
             textInputAction: TextInputAction.search,
             onSubmitted: (_) => _submit(state),
-            onChanged: (_) => setState(() {}),
           ),
         ),
         if (search.query.isNotEmpty) _filters(context, state),
@@ -133,21 +136,35 @@ class _SearchScreenState extends State<SearchScreen> {
       return _noResults(context, state);
     }
     final playingId = state.playerState.current?.videoId;
-    return ListView(
+    // Flatten the sections into a lazy list so off-screen rows (and
+    // their artwork decodes) are only built when scrolled into view.
+    final rows = <({int kind, String? key, List<ShelfItem>? items, ShelfItem? item})>[];
+    for (final key in keys) {
+      rows.add((kind: 0, key: key, items: sections[key]!, item: null));
+      for (final item in sections[key]!) {
+        rows.add((kind: 1, key: null, items: null, item: item));
+      }
+      rows.add((kind: 2, key: null, items: null, item: null));
+    }
+    return ListView.builder(
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
         0,
         screenPadding,
         screenPadding + playerBarClearance,
       ),
-      children: [
-        for (final key in keys) ...[
-          _sectionHeader(context, state, key, sections[key]!),
-          for (final item in sections[key]!)
-            _sectionItem(context, state, item, playingId),
-          const SizedBox(height: 16),
-        ],
-      ],
+      itemCount: rows.length,
+      itemBuilder: (context, i) {
+        final r = rows[i];
+        switch (r.kind) {
+          case 0:
+            return _sectionHeader(context, state, r.key!, r.items!);
+          case 1:
+            return _sectionItem(context, state, r.item!, playingId);
+          default:
+            return const SizedBox(height: 16);
+        }
+      },
     );
   }
 
@@ -196,7 +213,7 @@ class _SearchScreenState extends State<SearchScreen> {
       leading: ArtworkImage(
         b.thumbnails.isEmpty
             ? null
-            : b.thumbnails.reduce((a, x) => a.width >= x.width ? a : x).url,
+            : b.bestArtwork,
         size: 48,
         radius: rowArtRadius,
         iconSize: 24,
@@ -276,7 +293,7 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
             onTap: () {
               _controller.text = q;
-              state.searchFor(q);
+              unawaited(state.searchFor(q));
             },
           ),
       ],

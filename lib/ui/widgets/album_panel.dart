@@ -526,17 +526,21 @@ class _OwnerRowState extends State<_OwnerRow> {
     _clickable = false;
 
     final state = context.read<AppState>();
-    state.artistAvatar(channelId).then((url) {
-      if (!mounted || _channelId != channelId) return;
-      if (url != null && url.isNotEmpty) {
-        setState(() => _avatar = url);
-      }
-    });
+    unawaited(
+      state.artistAvatar(channelId).then((url) {
+        if (!mounted || _channelId != channelId) return;
+        if (url != null && url.isNotEmpty) {
+          setState(() => _avatar = url);
+        }
+      }),
+    );
 
-    state.isAuthorClickable(channelId).then((isArtist) {
-      if (!mounted || _channelId != channelId) return;
-      setState(() => _clickable = isArtist);
-    });
+    unawaited(
+      state.isAuthorClickable(channelId).then((isArtist) {
+        if (!mounted || _channelId != channelId) return;
+        setState(() => _clickable = isArtist);
+      }),
+    );
   }
 
   @override

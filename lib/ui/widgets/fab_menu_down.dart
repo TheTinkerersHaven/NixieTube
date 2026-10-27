@@ -32,6 +32,7 @@ class M3EFabMenuDown extends StatefulWidget {
     this.size = M3EFabSize.medium,
     this.position = M3EFabMenuPosition.right,
     this.decoration,
+    this.tooltip,
     this.onOpenChanged,
   }) : assert(items.length > 0, 'A FAB menu requires at least one item.');
 
@@ -61,6 +62,9 @@ class M3EFabMenuDown extends StatefulWidget {
 
   /// Custom styling parameters for the menu and FAB.
   final M3EFabMenuDecoration? decoration;
+
+  /// Optional tooltip for the trigger FAB.
+  final String? tooltip;
 
   /// Callback triggered whenever the open/closed state toggles.
   final ValueChanged<bool>? onOpenChanged;
@@ -184,9 +188,8 @@ class _M3EFabMenuDownState extends State<M3EFabMenuDown>
     setState(() => _open = true);
     widget.onOpenChanged?.call(true);
 
-    _fabShapeCtrl
-      ..motion = _dec.fabShapeMotion.toMotion()
-      ..animateTo(1.0);
+    _fabShapeCtrl.motion = _dec.fabShapeMotion.toMotion();
+    unawaited(_fabShapeCtrl.animateTo(1.0));
     _revealMenuItems();
   }
 
@@ -207,8 +210,8 @@ class _M3EFabMenuDownState extends State<M3EFabMenuDown>
           setState(() => _itemVisible[i] = true);
           _itemCtrls[i]
             ..motion = _dec.expandMotion.toMotion()
-            ..value = 0.0
-            ..animateTo(1.0);
+            ..value = 0.0;
+          unawaited(_itemCtrls[i].animateTo(1.0));
         }),
       );
     }
@@ -229,7 +232,7 @@ class _M3EFabMenuDownState extends State<M3EFabMenuDown>
       _staggerTimers.add(
         Timer(Duration(milliseconds: i * _dec.expandStaggerMs), () {
           if (!mounted || gen != _closeGen) return;
-          _itemCtrls[idx].animateTo(0.0);
+          unawaited(_itemCtrls[idx].animateTo(0.0));
         }),
       );
     }
@@ -254,9 +257,8 @@ class _M3EFabMenuDownState extends State<M3EFabMenuDown>
       ),
     );
 
-    _fabShapeCtrl
-      ..motion = _dec.fabShapeMotion.toMotion()
-      ..animateTo(0.0);
+    _fabShapeCtrl.motion = _dec.fabShapeMotion.toMotion();
+    unawaited(_fabShapeCtrl.animateTo(0.0));
   }
 
   @override
@@ -296,6 +298,7 @@ class _M3EFabMenuDownState extends State<M3EFabMenuDown>
                     color: widget.color,
                     size: widget.size,
                     cornerRadius: radius,
+                    tooltip: widget.tooltip,
                     onPressed: _toggle,
                   ),
                 ),

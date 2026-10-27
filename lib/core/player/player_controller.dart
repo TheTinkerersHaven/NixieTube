@@ -120,7 +120,7 @@ class PlayerController implements PlayerEngineListener {
     }
     _random = random ?? Random();
     _configDirPath = configDirPath;
-    _engine.setVolume(80);
+    unawaited(_engine.setVolume(80));
     _engine.addListener(this);
   }
 
@@ -259,7 +259,7 @@ class PlayerController implements PlayerEngineListener {
     _ticker?.cancel();
     _ticker = null;
     _prefetchGen++;
-    _states.close();
+    unawaited(_states.close());
   }
 
   @override

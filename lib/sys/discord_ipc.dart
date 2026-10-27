@@ -276,6 +276,9 @@ class _IpcSession {
   final Socket socket;
   final RpcFrameReader reader = RpcFrameReader();
   final Completer<void> handshake = Completer<void>();
+  // Cancelled by _retire() when the session is torn down, not in the
+  // function that creates it — so the rule stays off by design here.
+  // ignore: cancel_subscriptions
   StreamSubscription<List<int>>? subscription;
 }
 
@@ -294,6 +297,7 @@ class DiscordIpcClient implements DiscordRpc {
 
   _IpcSession? _session;
   bool _connected = false;
+  Future<void>? _connectInFlight;
   String? _clientId;
   int _nonce = 0;
 
@@ -318,6 +322,21 @@ class DiscordIpcClient implements DiscordRpc {
     if (_clientId == null || _clientId!.isEmpty) {
       throw StateError('no Discord application id configured');
     }
+    // Serialize: a second caller while one is in flight awaits the
+    // same attempt instead of opening a parallel socket (the
+    // superseded session would otherwise leave its handshake
+    // completer dangling for the full timeout).
+    if (_connectInFlight != null) return _connectInFlight!;
+    final future = _doConnect();
+    _connectInFlight = future;
+    try {
+      await future;
+    } finally {
+      _connectInFlight = null;
+    }
+  }
+
+  Future<void> _doConnect() async {
     await disconnect();
     final session = _IpcSession(await _openSocket());
     _session = session;
@@ -343,7 +362,7 @@ class DiscordIpcClient implements DiscordRpc {
   @override
   Future<void> setActivity(DiscordActivity activity) async {
     if (!isConnected) throw StateError('Discord IPC link is not up');
-    _send(
+    await _send(
       encodeSetActivityFrame(
         processId: pid,
         activity: activity,
@@ -356,7 +375,7 @@ class DiscordIpcClient implements DiscordRpc {
   @override
   Future<void> clearActivity() async {
     if (!isConnected) return;
-    _send(
+    await _send(
       encodeSetActivityFrame(
         processId: pid,
         activity: null,
@@ -376,7 +395,7 @@ class DiscordIpcClient implements DiscordRpc {
   Future<void> disconnect() async {
     if (_connected) {
       try {
-        _write(_opClose, '{}');
+        await _write(_opClose, '{}');
       } catch (_) {}
     }
     _connected = false;
@@ -387,13 +406,14 @@ class DiscordIpcClient implements DiscordRpc {
 
   String _nextNonce() => '$pid-${_nonce++}';
 
-  void _send(Uint8List frame) {
+  Future<void> _send(Uint8List frame) async {
     final session = _session;
     if (session == null) throw StateError('Discord IPC link is not up');
     session.socket.add(frame);
+    await session.socket.flush();
   }
 
-  void _write(int opcode, String payload) =>
+  Future<void> _write(int opcode, String payload) =>
       _send(encodeRpcFrame(opcode, payload));
 
   void _onData(_IpcSession session, List<int> chunk) {
@@ -413,9 +433,7 @@ class DiscordIpcClient implements DiscordRpc {
           _onPayload(session, frame.payload);
         case _opPing:
           // The server checks we are alive; echo the nonce back.
-          try {
-            _write(_opPong, frame.payload);
-          } catch (_) {}
+          unawaited(_write(_opPong, frame.payload).catchError((_) {}));
         case _opClose:
           _onRemoteClose(session, frame.payload);
         default:
@@ -494,6 +512,10 @@ class DiscordIpcClient implements DiscordRpc {
   /// Tears a session down for good: stop listening first, so nothing it
   /// still has queued can be mistaken for the next session's traffic.
   Future<void> _retire(_IpcSession session) async {
+    final handshake = session.handshake;
+    if (!handshake.isCompleted) {
+      handshake.completeError(StateError('Discord IPC link closed'));
+    }
     try {
       await session.subscription?.cancel();
     } catch (_) {}

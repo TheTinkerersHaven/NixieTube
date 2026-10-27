@@ -43,6 +43,19 @@ void _configureImageCache() {
   PaintingBinding.instance.imageCache.maximumSizeBytes = cacheSizeBytes;
 }
 
+
+/// Clears the in-memory image cache when the OS reports memory
+/// pressure, so a long scroll session can't pin decoded covers
+/// forever. The disk cache is the real store; the in-memory cache
+/// is only a render shortcut.
+class _ImageCachePressureObserver extends WidgetsBindingObserver {
+  @override
+  void didHaveMemoryPressure() {
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  }
+}
+
 /// App entrypoint: wires services (player, auth, tray, MPRIS,
 /// Discord, Last.fm), restores the session, and runs the app. All
 /// service startups are best-effort so none can break launch.
@@ -51,6 +64,7 @@ void main(List<String> args) {
   // desktop_webview_window); the main app continues below.
   if (runWebViewTitleBarWidget(args)) return;
   WidgetsFlutterBinding.ensureInitialized();
+  WidgetsBinding.instance.addObserver(_ImageCachePressureObserver());
   // Configure adaptive image cache based on available memory.
   _configureImageCache();
   JustAudioMediaKit.ensureInitialized();

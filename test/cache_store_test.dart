@@ -5,38 +5,15 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fakes.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/cache_store.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
-class _FakeEngine implements PlayerEngine {
-  @override
-  Future<String?> play(String url) async => null;
-  @override
-  Future<void> pause() async {}
-  @override
-  Future<void> resume() async {}
-  @override
-  Future<void> stop() async {}
-  @override
-  Future<void> seekTo(int ms) async {}
-  @override
-  Future<void> setVolume(int volume) async {}
-  @override
-  int positionMs() => 0;
-  @override
-  int durationMs() => 0;
-  @override
-  bool isPlaying() => false;
-  @override
-  Future<void> release() async {}
-  @override
-  void addListener(PlayerEngineListener listener) {}
-}
 
 void main() {
   group('cache store', () {
@@ -57,7 +34,7 @@ void main() {
       config.set('home.playCounts', '{"v1":3}');
 
       final tube = InnerTube();
-      final player = PlayerController(engine: _FakeEngine(), tube: tube);
+      final player = PlayerController(engine: FakeEngine(), tube: tube);
       final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
       final state = AppState(
         tube: tube,

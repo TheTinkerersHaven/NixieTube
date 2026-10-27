@@ -547,10 +547,10 @@ class _DebugCard extends StatelessWidget {
         Text('Artwork cache', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 4),
         Text(
-          'Delete every cached cover (raw downloads + rendered crops), '
-          'reset failed-download skips, and drop decoded images from '
-          'memory, so all artwork re-fetches and re-renders from '
-          'scratch on the next display.',
+          'Delete every cached cover (raw downloads + rendered tiles + '
+          'square-cover map), reset failed-download skips, and drop decoded '
+          'images from memory, so all artwork re-fetches and re-renders '
+          'from scratch on the next display.',
           style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: scheme.onSurfaceVariant),
         ),

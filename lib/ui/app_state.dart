@@ -6,7 +6,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File, FileMode;
+import 'dart:io' show File;
 import 'dart:math' show Random;
 
 import 'package:material_ui/material_ui.dart'
@@ -20,10 +20,13 @@ import 'package:material_ui/material_ui.dart'
         Text,
         ValueNotifier,
         debugPrint;
+import 'package:dio/dio.dart';
+
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/painting.dart' show PaintingBinding;
 
 import '../core/artwork/artwork_store.dart';
+import 'playback_reporter.dart';
 import '../core/innertube/account_library.dart';
 import '../core/innertube/auth_session.dart';
 import '../core/innertube/inner_tube.dart';
@@ -225,15 +228,7 @@ bool sameNavigationName(String left, String right) {
   return a.isNotEmpty && a == navigationName(right);
 }
 
-/// Re-check cookie expiry this often so an expired LOGIN_INFO is
-/// detected without spamming browse requests.
-const _loginCheckIntervalMs = 300000;
-
-/// Watchtime heartbeat cadence while playing.
-const _reportHeartbeatMs = 10000;
-
 /// Watchtime failure log (successes stay silent).
-const _watchtimeLogPath = '/tmp/nixietube-watchtime.log';
 
 /// Remembered panel enrichment for one track (see
 /// `AppState._trackMeta`): fuller artists, album, explicit flag.
@@ -331,6 +326,11 @@ class AppState extends ChangeNotifier {
     _library = AccountLibrary(tube: tube);
     _config = config;
     _openUrl = openUrl;
+    _playback = PlaybackReporter(
+      tube: tube,
+      config: config,
+      notify: _safeNotify,
+    );
     _playerSub = _player.states.listen(_onPlayerState);
     _loadLocalRecents();
     _loadTrackMeta();
@@ -353,6 +353,7 @@ class AppState extends ChangeNotifier {
   }
 
   late final InnerTube _tube;
+  late final PlaybackReporter _playback;
   late final PlayerController _player;
   late final ArtworkStore _art;
   late final AccountLibrary _library;
@@ -368,6 +369,15 @@ class AppState extends ChangeNotifier {
   /// outlive the state in tests when the network lags past teardown,
   /// and must not notify afterwards.
   bool _disposed = false;
+
+  /// Notifies only while the state is alive. Every call site that
+  /// can run after an `await` or on a timer goes through this: the
+  /// framework still lets a stray `notifyListeners()` on a disposed
+  /// `ChangeNotifier` through in debug, so the guard matters.
+  void _safeNotify() {
+    if (_disposed) return;
+    notifyListeners();
+  }
 
   InnerTube get tube => _tube;
   PlayerController get player => _player;
@@ -390,7 +400,7 @@ class AppState extends ChangeNotifier {
     _audioBackendError = message;
     _player.backendUnavailable = true;
     _player.backendUnavailableReason = message;
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Latest player snapshot for selective UI reads.
@@ -402,8 +412,11 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _playerSub?.cancel();
+    _paletteHoldTimer?.cancel();
+    _paletteHoldTimer = null;
+    unawaited(_playerSub?.cancel());
     progressTick.dispose();
+    paletteTick.dispose();
     volumeTick.dispose();
     squareCoverTick.dispose();
     displayScheme.dispose();
@@ -443,7 +456,7 @@ class AppState extends ChangeNotifier {
     if (screen == Screen.detail && detail != null) {
       _loadDetail(detail);
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Returns to the pushed screen, if any. Detail entries reload on
@@ -458,7 +471,7 @@ class AppState extends ChangeNotifier {
     if (entry.screen == Screen.detail && entry.detail != null) {
       _loadDetail(entry.detail!);
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Opens an artist page, resolving unlinked credits first.
@@ -651,6 +664,10 @@ class AppState extends ChangeNotifier {
   Future<void> loadMoreShelf(Shelf shelf) async {
     if (!shelf.hasMore || _loadingMoreShelves.contains(shelf.title)) return;
     _loadingMoreShelves.add(shelf.title);
+    // Notify for the spinner: without this the flag is read (as a
+    // plain method call in build) only on unrelated notifications, so
+    // the in-flight indicator never shows while the fetch runs.
+    _safeNotify();
     try {
       final more = await tube.loadMoreShelf(shelf.continuation!);
       if (more.items.isEmpty) return;
@@ -665,9 +682,10 @@ class AppState extends ChangeNotifier {
             if (s.title == shelf.title) updated else s,
         ],
       );
-      notifyListeners();
+      _safeNotify();
     } finally {
       _loadingMoreShelves.remove(shelf.title);
+      _safeNotify();
     }
   }
 
@@ -765,7 +783,7 @@ class AppState extends ChangeNotifier {
   Future<void> loadHome() async {
     final gen = ++_homeGen;
     home = home.copyWith(loading: true, error: null);
-    notifyListeners();
+    _safeNotify();
     try {
       final homeFuture = _tube.home();
       // Explore feeds the pinned editorial sections; its failure must
@@ -801,12 +819,12 @@ class AppState extends ChangeNotifier {
       home = home.copyWith(
         error: e is TimeoutException
             ? 'Home timed out — check connection.'
-            : e.toString(),
+            : friendlyError(e),
       );
     } finally {
       if (gen == _homeGen) {
         home = home.copyWith(loading: false);
-        notifyListeners();
+        _safeNotify();
       }
     }
   }
@@ -849,7 +867,6 @@ class AppState extends ChangeNotifier {
   File get _searchHistoryFile => File('${configDir().path}/search-history.txt');
 
   List<String> searchHistory = [];
-  bool searchFieldFocused = false;
 
   void _loadSearchHistory() {
     try {
@@ -875,19 +892,23 @@ class AppState extends ChangeNotifier {
       query,
       ...searchHistory.where((q) => q.toLowerCase() != query.toLowerCase()),
     ].take(12).toList();
-    try {
-      _searchHistoryFile.writeAsStringSync('${searchHistory.join('\n')}\n');
-    } catch (_) {}
+    unawaited(() async {
+      try {
+        await _searchHistoryFile.writeAsString('${searchHistory.join('\n')}\n');
+      } catch (_) {}
+    }());
   }
 
   /// Clears the in-memory and persisted search history.
   void clearSearchHistory() {
     searchHistory = [];
-    try {
-      final f = _searchHistoryFile;
-      if (f.existsSync()) f.deleteSync();
-    } catch (_) {}
-    notifyListeners();
+    unawaited(() async {
+      try {
+        final f = _searchHistoryFile;
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+    }());
+    _safeNotify();
   }
 
   /// Drops one query from the in-memory and persisted search history.
@@ -897,10 +918,12 @@ class AppState extends ChangeNotifier {
     final kept = searchHistory.where((q) => q.toLowerCase() != key).toList();
     if (kept.length == searchHistory.length) return;
     searchHistory = kept;
-    try {
-      _searchHistoryFile.writeAsStringSync('${searchHistory.join('\n')}\n');
-    } catch (_) {}
-    notifyListeners();
+    unawaited(() async {
+      try {
+        await _searchHistoryFile.writeAsString('${searchHistory.join('\n')}\n');
+      } catch (_) {}
+    }());
+    _safeNotify();
   }
 
   /// Runs a search and enriches song rows, cancelling older queries.
@@ -910,7 +933,7 @@ class AppState extends ChangeNotifier {
     _recordSearchHistory(normalized);
     final gen = ++_searchGen;
     search = SearchUiState(query: normalized, loading: true);
-    notifyListeners();
+    _safeNotify();
     try {
       final sections = await _tube.search(normalized);
       if (gen != _searchGen) return;
@@ -919,7 +942,7 @@ class AppState extends ChangeNotifier {
         loading: false,
         sections: _stampSearchSections(sections),
       );
-      notifyListeners();
+      _safeNotify();
       final songs =
           sections['Songs']
               ?.whereType<SongItem>()
@@ -957,10 +980,16 @@ class AppState extends ChangeNotifier {
       search = SearchUiState(
         query: normalized,
         loading: false,
-        error: e.toString(),
+        error: friendlyError(e),
       );
     }
-    notifyListeners();
+    _safeNotify();
+  }
+
+  /// Clears the current search results and query.
+  void clearSearch() {
+    search = SearchUiState();
+    _safeNotify();
   }
 
   /// Runs [searchFor] and navigates to the Search screen.
@@ -1114,8 +1143,8 @@ class AppState extends ChangeNotifier {
   void _loadDetail(BrowseItem item) {
     final gen = ++_detailGen;
     detail = DetailUiState(loading: true);
-    notifyListeners();
-    () async {
+    _safeNotify();
+    unawaited(() async {
       try {
         if (item.browseId.startsWith('UC')) {
           final artist = await _tube.artist(item.browseId);
@@ -1139,10 +1168,10 @@ class AppState extends ChangeNotifier {
         }
       } catch (e) {
         if (gen != _detailGen) return;
-        detail = DetailUiState(loading: false, error: e.toString());
+        detail = DetailUiState(loading: false, error: friendlyError(e));
       }
-      notifyListeners();
-    }();
+      _safeNotify();
+    }());
   }
 
   // ---------- Account / library ----------
@@ -1179,7 +1208,7 @@ class AppState extends ChangeNotifier {
   /// Re-checked at most every [_loginCheckIntervalMs]; starts
   /// optimistic so the UI doesn't flash "expired" before the
   /// first check lands.
-  bool get loginValid => _loginValid;
+  bool get loginValid => _playback.loginValid;
 
   /// The account library in use: the test stub when set, the
   /// InnerTube-backed one otherwise.
@@ -1218,14 +1247,14 @@ class AppState extends ChangeNotifier {
   /// Puts the first-run setup back, so it can be walked through again.
   void restartOnboarding() {
     _onboardingRequested = true;
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Marks the first-run setup as done, for good.
   void completeOnboarding() {
     _onboardingRequested = false;
     config.setBool('onboarding.done', true);
-    notifyListeners();
+    _safeNotify();
   }
 
   List<AccountPlaylist> _playlists = [];
@@ -1475,7 +1504,7 @@ class AppState extends ChangeNotifier {
         );
       }
       if (cacheChanged) _saveTrackMeta();
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -1610,7 +1639,7 @@ class AppState extends ChangeNotifier {
       _playCounts = merged;
       _savePlayCounts();
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   List<Track> _discover = [];
@@ -1661,7 +1690,7 @@ class AppState extends ChangeNotifier {
       _pinnedPicks = [..._pinnedPicks, item];
     }
     _savePinnedPicks();
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Snapshot encoding for one pin (static so it stays unit-testable
@@ -1869,7 +1898,7 @@ class AppState extends ChangeNotifier {
           .toList(),
     );
     if (_discover.isEmpty) return;
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Rebuilds the recent-artists list from activity credits.
@@ -1936,7 +1965,7 @@ class AppState extends ChangeNotifier {
             browseParams: e.browseParams,
           );
         }).toList();
-        notifyListeners();
+        _safeNotify();
       }
     } catch (_) {}
   }
@@ -1948,7 +1977,7 @@ class AppState extends ChangeNotifier {
   Future<void> loadLibrary() async {
     final api = _api;
     _libraryLoading = true;
-    notifyListeners();
+    _safeNotify();
     try {
       final results = await Future.wait<Object?>([
         api.playlists().then<Object?>((v) => v).catchError((_) => null),
@@ -1988,26 +2017,26 @@ class AppState extends ChangeNotifier {
       }
     } finally {
       _libraryLoading = false;
-      notifyListeners();
+      _safeNotify();
     }
     // Cached enrichment already painted above; the refresh heals
     // whatever the cache missed, chunk by chunk.
     unawaited(refreshTrackMeta());
     unawaited(loadDiscover());
     // Full liked list for library completeness, in the background.
-    () async {
+    unawaited(() async {
       try {
         final full = await api.likedVideos();
         if (full.length > _liked.length) {
           _liked = _stampTrackMeta(full);
           _likedCount = api.likedCount;
           _updateLikedPlaylistEntry();
-          notifyListeners();
+          _safeNotify();
           // The longer tail can carry fresh placeholder credits.
           unawaited(refreshTrackMeta());
         }
       } catch (_) {}
-    }();
+    }());
   }
 
   /// Fills missing playlist artwork in background chunks of 4 (Kotlin
@@ -2130,7 +2159,7 @@ class AppState extends ChangeNotifier {
       if (url.isEmpty || url == _likedCover) return;
       _likedCover = url;
       _updateLikedPlaylistEntry();
-      notifyListeners();
+      _safeNotify();
     } catch (_) {}
   }
 
@@ -2180,7 +2209,7 @@ class AppState extends ChangeNotifier {
         AccountPlaylist(id: id, title: title, itemCount: 0),
         ..._playlists.where((p) => p.id != id),
       ];
-      notifyListeners();
+      _safeNotify();
       await loadLibrary();
     }
     return id;
@@ -2230,7 +2259,7 @@ class AppState extends ChangeNotifier {
           ),
           remaining,
         );
-        notifyListeners();
+        _safeNotify();
       }
     }
     return ok;
@@ -2260,18 +2289,18 @@ class AppState extends ChangeNotifier {
                   )
                   .toList(),
             );
-            notifyListeners();
+            _safeNotify();
           }
         }),
       );
-      notifyListeners();
+      _safeNotify();
       return;
     }
     final api = _api;
     final current = _playlists.where((p) => p.id == pl.id).firstOrNull ?? pl;
     _openPlaylist = OpenPlaylist(current, []);
     _libraryLoading = true;
-    notifyListeners();
+    _safeNotify();
     try {
       var tracks = await api.playlistTracks(pl.id);
       // Empty credits and distributor placeholders alike resolve
@@ -2306,7 +2335,7 @@ class AppState extends ChangeNotifier {
                   )
                   .toList(),
             );
-            notifyListeners();
+            _safeNotify();
           }
         }),
       );
@@ -2314,7 +2343,7 @@ class AppState extends ChangeNotifier {
       // A stale load must not clear the new view's spinner.
       if (gen == _openPlaylistGen) {
         _libraryLoading = false;
-        notifyListeners();
+        _safeNotify();
       }
     }
   }
@@ -2325,7 +2354,7 @@ class AppState extends ChangeNotifier {
     ++_openPlaylistGen;
     _openPlaylist = null;
     _libraryLoading = false;
-    notifyListeners();
+    _safeNotify();
   }
 
   // ---------- Playlist dialog ----------
@@ -2351,21 +2380,28 @@ class AppState extends ChangeNotifier {
     _playlistItemIds.clear();
     _playlistDialogError = null;
     _playlistDialogLoading = true;
-    notifyListeners();
+    _safeNotify();
     final api = _api;
     try {
       final mine = _playlists.where((p) => p.id != '__liked').toList();
+      var failed = 0;
       final results = await Future.wait(
         mine.map((pl) async {
           try {
             final itemId = await api.playlistItemId(pl.id, track.videoId);
             return MapEntry(pl.id, itemId);
           } catch (_) {
+            failed++;
             return MapEntry(pl.id, null);
           }
         }),
       );
       if (_playlistDialogTrack?.videoId != track.videoId) return;
+      if (failed > 0) {
+        _playlistDialogError =
+            'Some playlists could not be checked; toggling them '
+            'may add a duplicate.';
+      }
       // Fresh map identities: the dialog selects the
       // membership map, and `select` only rebuilds on a
       // changed (==) value — mutating the old map in place
@@ -2383,7 +2419,7 @@ class AppState extends ChangeNotifier {
     } finally {
       if (_playlistDialogTrack?.videoId == track.videoId) {
         _playlistDialogLoading = false;
-        notifyListeners();
+        _safeNotify();
       }
     }
   }
@@ -2394,7 +2430,7 @@ class AppState extends ChangeNotifier {
     _playlistMembership = {};
     _playlistItemIds.clear();
     _playlistDialogError = null;
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Adds/removes the dialog track to/from [playlistId], optimistically.
@@ -2408,7 +2444,7 @@ class AppState extends ChangeNotifier {
         if (itemId == null) return;
         if (!await api.removeFromPlaylist(playlistId, track.videoId, itemId)) {
           _playlistDialogError = 'Could not remove from playlist.';
-          notifyListeners();
+          _safeNotify();
           return;
         }
         // Copy-on-write (see openPlaylistDialog): the dialog
@@ -2418,7 +2454,7 @@ class AppState extends ChangeNotifier {
       } else {
         if (!await api.addToPlaylist(playlistId, track.videoId)) {
           _playlistDialogError = 'Could not add to playlist.';
-          notifyListeners();
+          _safeNotify();
           return;
         }
         _playlistMembership = {..._playlistMembership, playlistId: true};
@@ -2439,7 +2475,7 @@ class AppState extends ChangeNotifier {
         unawaited(openPlaylist(_openPlaylist!.playlist));
       }
     } finally {
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -2500,7 +2536,7 @@ class AppState extends ChangeNotifier {
     } else {
       _likedIds.remove(videoId);
     }
-    notifyListeners();
+    _safeNotify();
 
     var innerOk = false;
     try {
@@ -2516,7 +2552,7 @@ class AppState extends ChangeNotifier {
       } else {
         _likedIds.remove(videoId);
       }
-      notifyListeners();
+      _safeNotify();
       return false;
     }
     // Backend accepted: maintain the liked list.
@@ -2563,7 +2599,7 @@ class AppState extends ChangeNotifier {
         opened.tracks.map(update).toList(),
       );
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Returns [d] with [update] applied to its album/playlist tracks, or
@@ -2628,7 +2664,7 @@ class AppState extends ChangeNotifier {
         );
         if (stamped == null) return;
         detail = stamped;
-        notifyListeners();
+        _safeNotify();
       }),
     );
   }
@@ -2829,7 +2865,7 @@ class AppState extends ChangeNotifier {
         }
       }
       if (local.isNotEmpty) _player.updateTrackRatings(local);
-      notifyListeners();
+      _safeNotify();
     } catch (_) {}
   }
 
@@ -2875,7 +2911,7 @@ class AppState extends ChangeNotifier {
     final track = _player.state.current;
     final key = track?.videoId;
     _lyrics = [];
-    notifyListeners();
+    _safeNotify();
     if (track != null && key != null && key.isNotEmpty) {
       unawaited(_fetchLyricsFor(key));
     }
@@ -2896,20 +2932,20 @@ class AppState extends ChangeNotifier {
     if (cached != null) {
       if (_player.state.current?.videoId == key) {
         _lyrics = cached;
-        notifyListeners();
+        _safeNotify();
       }
       return;
     }
     final gen = ++_lyricsGen;
     _lyricsLoading = true;
-    notifyListeners();
+    _safeNotify();
     try {
       if (source == LyricsSource.ytmusic) {
         final lines = await fetchYtmLyrics(key);
         if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
         _lyricsCache[cacheKey] = lines;
         _lyrics = lines;
-        notifyListeners();
+        _safeNotify();
         return;
       }
       try {
@@ -2975,7 +3011,7 @@ class AppState extends ChangeNotifier {
     if (_config.reportPlayback) {
       // Fire-and-forget: beacons never touch UI state (see
       // _reportPlaybackProgress), so reporting can't jank playback.
-      unawaited(_reportPlaybackProgress(s));
+      unawaited(_playback.report(s));
     }
     // New tracks entered Up Next (play, radio mix, autoplay advance):
     // stamp their like states and track lengths. Keyed on ids only so the
@@ -2994,14 +3030,14 @@ class AppState extends ChangeNotifier {
       _lastLyricKey = key;
       _lyrics = [];
       _noteLocalHistory(track);
-      notifyListeners();
+      _safeNotify();
       unawaited(_resolveCurrentMetadata(track));
-      ensureSquareCover(key);
+      unawaited(ensureSquareCover(key));
       unawaited(_refreshPalette(_playerArtwork(track)));
       return;
     }
     if (track == null || key == null) {
-      notifyListeners();
+      _safeNotify();
       return;
     }
     // Pure progress ticks (position polling) bump a lightweight notifier
@@ -3017,7 +3053,7 @@ class AppState extends ChangeNotifier {
       volumeTick.value++;
       return;
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Bumped on player updates that carry only playback progress. Sliders
@@ -3039,13 +3075,14 @@ class AppState extends ChangeNotifier {
   Future<void> _refreshPalette(String? url) async {
     if (url == null || url.isEmpty) {
       _coverPalette = [];
-      notifyListeners();
+      _safeNotify();
       return;
     }
     final cached = _paletteCache[url];
     if (cached != null) {
       _coverPalette = cached;
-      notifyListeners();
+      paletteTick.value++;
+      _safeNotify();
       return;
     }
     try {
@@ -3057,6 +3094,7 @@ class AppState extends ChangeNotifier {
           .map((b) => Color.fromRGBO(b.$1, b.$2, b.$3, 1))
           .toList();
       _paletteCache[url] = colors;
+      paletteTick.value++;
       final hold = _paletteHoldUntil;
       if (hold != null && DateTime.now().isBefore(hold)) {
         // Transition running: hold the result instead of rebuilding
@@ -3065,7 +3103,7 @@ class AppState extends ChangeNotifier {
         return;
       }
       _coverPalette = colors;
-      notifyListeners();
+      _safeNotify();
     } catch (_) {}
   }
 
@@ -3079,6 +3117,11 @@ class AppState extends ChangeNotifier {
   /// opted into resolution re-check their video's cached cover.
   final ValueNotifier<int> squareCoverTick = ValueNotifier(0);
 
+  /// Bumped whenever a palette resolves or the cache resets: the
+  /// backdrop washes listen to this instead of watching the whole
+  /// app state, so ~2 Hz progress notifications never recompute them.
+  final ValueNotifier<int> paletteTick = ValueNotifier(0);
+
   /// Bumped when the on-disk artwork cache is cleared (Settings debug
   /// action), so every visible artwork tile re-downloads/re-renders.
   final ValueNotifier<int> artworkCacheTick = ValueNotifier(0);
@@ -3091,12 +3134,15 @@ class AppState extends ChangeNotifier {
   /// Debug-only: Settings → Debug → "Clear artwork cache".
   void clearArtworkCache() {
     _art.clearCache();
+    _tube.clearSquareCovers();
     _paletteCache.clear();
     _coverPalette = [];
+    paletteTick.value++;
+    squareCoverTick.value++;
     // Same-path re-renders must not decode stale pixels from memory.
     PaintingBinding.instance.imageCache.clear();
     artworkCacheTick.value++;
-    notifyListeners();
+    _safeNotify();
     unawaited(_refreshPalette(_player.state.current?.displayArtwork));
   }
 
@@ -3170,7 +3216,7 @@ class AppState extends ChangeNotifier {
   /// independent of the Now Playing cover.
   Future<List<Color>?> ensurePalette(String? url) async {
     if (url == null || url.isEmpty) {
-      notifyListeners();
+      _safeNotify();
       return null;
     }
     final cached = _paletteCache[url];
@@ -3178,22 +3224,23 @@ class AppState extends ChangeNotifier {
     try {
       final image = await _art.image(url);
       if (image == null) {
-        notifyListeners();
+        _safeNotify();
         return null;
       }
       final bands = coverBands(image);
       if (bands == null) {
-        notifyListeners();
+        _safeNotify();
         return null;
       }
       final colors = bands
           .map((b) => Color.fromRGBO(b.$1, b.$2, b.$3, 1))
           .toList();
       _paletteCache[url] = colors;
-      notifyListeners();
+      paletteTick.value++;
+      _safeNotify();
       return colors;
     } catch (_) {
-      notifyListeners();
+      _safeNotify();
       return null;
     }
   }
@@ -3268,13 +3315,13 @@ class AppState extends ChangeNotifier {
       final cookie = config.get('cookie');
       if (cookie.isEmpty) {
         _authLoaded = true;
-        notifyListeners();
+        _safeNotify();
         return;
       }
       final session = AuthSession.fromCookie(cookie);
       if (session == null) {
         _authLoaded = true;
-        notifyListeners();
+        _safeNotify();
         return;
       }
       final savedToken = config.get('sessionToken');
@@ -3284,11 +3331,11 @@ class AppState extends ChangeNotifier {
         sessionToken: savedToken.isNotEmpty ? savedToken : null,
       );
       _authLoaded = true;
-      notifyListeners();
+      _safeNotify();
       unawaited(_refreshAccountAfterAuth());
     } catch (_) {
       _authLoaded = true;
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -3299,7 +3346,7 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       _account = 'YouTube Music account';
     }
-    notifyListeners();
+    _safeNotify();
     try {
       final token = await _tube.fetchSessionToken();
       if (token != null) {
@@ -3324,7 +3371,7 @@ class AppState extends ChangeNotifier {
     unawaited(importHistoryCounts());
     // Surface an expired saved session in the UI right away
     // instead of waiting for the first playback heartbeat.
-    unawaited(_refreshLoginValidity());
+    unawaited(_playback.refreshLoginValidity());
   }
 
   Future<void> _saveAuth() async {
@@ -3345,7 +3392,7 @@ class AppState extends ChangeNotifier {
       final avatar = await _api.accountAvatar();
       if (gen != _avatarGen) return;
       _accountAvatar = avatar;
-      notifyListeners();
+      _safeNotify();
     } catch (_) {}
   }
 
@@ -3354,12 +3401,12 @@ class AppState extends ChangeNotifier {
     final problem = validateCookie(cookie);
     if (problem != null) {
       _loginDetail = problem;
-      notifyListeners();
+      _safeNotify();
       return false;
     }
     _loginBusy = true;
     _loginDetail = null;
-    notifyListeners();
+    _safeNotify();
     try {
       final session = AuthSession.fromCookie(cookie);
       if (session == null) {
@@ -3376,8 +3423,8 @@ class AppState extends ChangeNotifier {
       }
       // Fresh cookie verified: mark the session valid so the UI
       // reflects it immediately and skips a redundant re-check.
-      _loginValid = true;
-      _loginCheckedAt = DateTime.now().millisecondsSinceEpoch;
+      _playback.loginValid = true;
+      _playback.loginCheckedAt = DateTime.now().millisecondsSinceEpoch;
       _account = await _tube.accountName() ?? 'YouTube Music account';
       try {
         final token = await _tube.fetchSessionToken();
@@ -3401,7 +3448,7 @@ class AppState extends ChangeNotifier {
       return true;
     } finally {
       _loginBusy = false;
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -3425,12 +3472,12 @@ class AppState extends ChangeNotifier {
       _loginDetail =
           'No Chromium-family browser profile found on '
           'this device.';
-      notifyListeners();
+      _safeNotify();
       return false;
     }
     _loginBusy = true;
     _loginDetail = null;
-    notifyListeners();
+    _safeNotify();
     try {
       final header = await BrowserCookies.importYouTubeCookie(source);
       if (header == null || header.isEmpty) {
@@ -3442,7 +3489,7 @@ class AppState extends ChangeNotifier {
       return await login(header);
     } finally {
       _loginBusy = false;
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -3465,7 +3512,7 @@ class AppState extends ChangeNotifier {
     if (current != null) {
       _player.updateTrackRating(current.videoId, RatingStatus.unknown);
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Clears library rows and rating state. Shared by the sign-out
@@ -3482,8 +3529,8 @@ class AppState extends ChangeNotifier {
     _openPlaylist = null;
     // No session left: reset the validity verdict so the UI
     // doesn't keep showing "expired" for a signed-out state.
-    _loginValid = true;
-    _loginCheckedAt = 0;
+    _playback.loginValid = true;
+    _playback.loginCheckedAt = 0;
   }
 
   /// Signs out of the InnerTube browser-cookie session: it is the one
@@ -3506,10 +3553,10 @@ class AppState extends ChangeNotifier {
     } else {
       // Cookie gone: reset the validity verdict so the card shows
       // "Not connected" instead of a stale "Expired".
-      _loginValid = true;
-      _loginCheckedAt = 0;
+      _playback.loginValid = true;
+      _playback.loginCheckedAt = 0;
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Re-emits state after external config edits (e.g. settings toggles).
@@ -3534,6 +3581,10 @@ class AppState extends ChangeNotifier {
   /// End of the current transition hold, if any.
   DateTime? _paletteHoldUntil;
 
+  /// The release timer for [openNow]/[closeNow]; cancelled in
+  /// [dispose] so no fired timer can notify after the state is gone.
+  Timer? _paletteHoldTimer;
+
   /// Palette computed mid-transition, applied when the hold releases.
   List<Color>? _pendingPalette;
 
@@ -3548,7 +3599,7 @@ class AppState extends ChangeNotifier {
     _nowOpen = true;
     _nowReady = false;
     _holdPaletteForTransition();
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Closes the overlay, also exiting full-screen lyrics so the next
@@ -3558,7 +3609,7 @@ class AppState extends ChangeNotifier {
     _nowReady = false;
     _lyricsFull = false;
     _holdPaletteForTransition();
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Full-screen lyrics mode inside Now Playing: big auto-scrolling
@@ -3567,27 +3618,41 @@ class AppState extends ChangeNotifier {
   bool _lyricsFull = false;
   bool get lyricsFull => _lyricsFull;
 
+  /// Remembered tab index (Up next / Lyrics / Info) for the Now
+  /// Playing overlay, so reopening lands on the last tab used.
+  int _nowPlayingTabIndex = 0;
+  int get nowPlayingTabIndex => _nowPlayingTabIndex;
+  set nowPlayingTabIndex(int v) {
+    if (v == _nowPlayingTabIndex) return;
+    _nowPlayingTabIndex = v;
+    _safeNotify();
+  }
+
   /// Enters full-screen lyrics (no-op when already there).
   void expandLyrics() {
     if (_lyricsFull) return;
     _lyricsFull = true;
-    notifyListeners();
+    _safeNotify();
   }
 
   /// Leaves full-screen lyrics (no-op when not in it).
   void collapseLyrics() {
     if (!_lyricsFull) return;
     _lyricsFull = false;
-    notifyListeners();
+    _safeNotify();
   }
 
   void _holdPaletteForTransition() {
     final transition = nowPlayingTransitionDuration;
     final until = DateTime.now().add(transition);
     _paletteHoldUntil = until;
-    Timer(transition + const Duration(milliseconds: 50), () {
-      if (_paletteHoldUntil == until) _releasePaletteHold();
-    });
+    _paletteHoldTimer?.cancel();
+    _paletteHoldTimer = Timer(
+      transition + const Duration(milliseconds: 50),
+      () {
+        if (_paletteHoldUntil == until) _releasePaletteHold();
+      },
+    );
   }
 
   void _releasePaletteHold() {
@@ -3596,6 +3661,7 @@ class AppState extends ChangeNotifier {
     if (_pendingPalette != null) {
       _coverPalette = _pendingPalette!;
       _pendingPalette = null;
+      paletteTick.value++;
       changed = true;
     }
     if (!_nowReady) {
@@ -3603,224 +3669,6 @@ class AppState extends ChangeNotifier {
       changed = true;
     }
     if (changed) notifyListeners();
-  }
-
-  // ---------- History reporting ----------
-
-  String? _lastReportedVideoId;
-  bool _previousPlaying = false;
-  bool _previousStopped = false;
-  int _lastProgressMs = 0;
-  int _lastReportedPositionMs = 0;
-  String? _lastWatchCpn;
-  double _lastWatchSegmentStartSec = 0.0;
-  double _lastWatchDurationSec = 0.0;
-  String? _lastWatchPlaylistId;
-
-  int _loginCheckedAt = 0;
-  bool _loginValid = true;
-
-  /// Client playback nonce for watchtime beacons: 16 URL-safe chars,
-  /// stable for one track playback (YouTube ties a watch to its cpn).
-  String _newWatchCpn() {
-    const chars =
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-    final r = Random();
-    return String.fromCharCodes(
-      List.generate(16, (_) => chars.codeUnitAt(r.nextInt(chars.length))),
-    );
-  }
-
-  /// Re-checks the saved cookie session's validity when the cached
-  /// verdict is stale (at most every [_loginCheckIntervalMs]).
-  /// stats/* beacons return 204 (blind ack) regardless of auth, so
-  /// without this check an expired LOGIN_INFO would go unnoticed:
-  /// beacons "succeed" while YouTube records nothing. Logs a warning
-  /// and notifies listeners when the verdict flips. No-op when no
-  /// cookie session is saved.
-  Future<void> _refreshLoginValidity() async {
-    if ((_tube.auth.cookie ?? '').isEmpty) return;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (now - _loginCheckedAt <= _loginCheckIntervalMs) return;
-    _loginCheckedAt = now;
-    final ok = await _tube.verifyLogin();
-    if (!ok) {
-      try {
-        File(_watchtimeLogPath).writeAsStringSync(
-          '${DateTime.now().toUtc().toIso8601String()} WARNING LOGIN_INFO expired (logged_in=0): '
-          'stats/* beacons will not record history. Re-authenticate in Settings → Integrations.\n',
-          mode: FileMode.append,
-        );
-      } catch (_) {}
-    }
-    if (ok != _loginValid) {
-      _loginValid = ok;
-      notifyListeners();
-    }
-  }
-
-  /// Sends one watchtime beacon for [videoId], logging failures to the
-  /// watchtime log file (successes stay silent).
-  Future<void> sendWatchtime(
-    String videoId,
-    String cpn,
-    double startSec,
-    double currentSec,
-    String state,
-    double durationSec, [
-    String? playlistId,
-  ]) async {
-    // Re-check the cookie session's validity (cached for 5
-    // min) so an expired LOGIN_INFO surfaces in the UI.
-    await _refreshLoginValidity();
-
-    bool ok = false;
-    try {
-      ok = await _tube.reportWatchtime(
-        videoId,
-        cpn,
-        startSec,
-        currentSec,
-        state,
-        durationSec,
-        playlistId,
-      );
-    } catch (e) {
-      try {
-        File(_watchtimeLogPath).writeAsStringSync(
-          '${DateTime.now().toUtc().toIso8601String()} EXCEPTION $state $videoId ${e.runtimeType}\n',
-          mode: FileMode.append,
-        );
-      } catch (_) {}
-      return;
-    }
-    if (!ok) {
-      try {
-        final session = _tube.auth;
-        final cookiePresent = (session.cookie ?? '').isNotEmpty;
-        final tokenPresent = (session.sessionToken ?? '').isNotEmpty;
-        final tag = cookiePresent ? 'COOKIE' : 'ANONYMOUS';
-        final tokenTag = tokenPresent ? 'TOKEN_YES' : 'TOKEN_NO';
-        File(_watchtimeLogPath).writeAsStringSync(
-          '${DateTime.now().toUtc().toIso8601String()} FAILED $state $videoId '
-          'cmt=$currentSec auth=$tag $tokenTag\n',
-          mode: FileMode.append,
-        );
-      } catch (_) {}
-    }
-  }
-
-  /// Mirrors the player-state reporting block: track switches emit
-  /// paused (previous) + playing (new) beacons, play/pause/stop
-  /// transitions emit their own, and steady playback heartbeats every
-  /// [_reportHeartbeatMs]. Never touches UI state.
-  Future<void> _reportPlaybackProgress(PlayerState s) async {
-    final prevVid = _lastReportedVideoId;
-    final prevPlay = _previousPlaying;
-    final prevStop = _previousStopped;
-    final progMs = _lastProgressMs;
-    final prevPosMs = _lastReportedPositionMs;
-    final prevCpn = _lastWatchCpn;
-    final prevSegStartSec = _lastWatchSegmentStartSec;
-    final prevDurSec = _lastWatchDurationSec;
-    final prevPlaylistId = _lastWatchPlaylistId;
-    try {
-      final vid = s.current?.videoId;
-      final posSec = s.positionMs / 1000.0;
-      final durSec = s.durationMs / 1000.0;
-      final playlistId = s.current?.playlistId;
-      if (vid != null && vid != prevVid) {
-        if (prevVid != null && prevCpn != null && !s.stopped) {
-          // Report where the previous track actually stopped, not the
-          // new track's ~0 position.
-          await sendWatchtime(
-            prevVid,
-            prevCpn,
-            prevSegStartSec,
-            prevPosMs / 1000.0,
-            'paused',
-            prevDurSec,
-            prevPlaylistId,
-          );
-        }
-        final cpn = _newWatchCpn();
-        _lastReportedVideoId = vid;
-        _lastWatchCpn = cpn;
-        _lastWatchSegmentStartSec = 0.0;
-        _lastWatchDurationSec = durSec;
-        _lastWatchPlaylistId = playlistId;
-        _lastReportedPositionMs = s.positionMs;
-        await sendWatchtime(
-          vid,
-          cpn,
-          0.0,
-          posSec,
-          'playing',
-          durSec,
-          playlistId,
-        );
-      } else if (vid != null && vid == prevVid && prevCpn != null) {
-        if (s.playing && !prevPlay) {
-          _lastWatchSegmentStartSec = prevPosMs / 1000.0;
-          _lastReportedPositionMs = s.positionMs;
-          await sendWatchtime(
-            vid,
-            prevCpn,
-            prevSegStartSec,
-            posSec,
-            'playing',
-            durSec,
-            playlistId,
-          );
-        } else if (!s.playing && prevPlay && !s.stopped) {
-          _lastReportedPositionMs = s.positionMs;
-          await sendWatchtime(
-            vid,
-            prevCpn,
-            prevSegStartSec,
-            posSec,
-            'paused',
-            durSec,
-            playlistId,
-          );
-          _lastWatchSegmentStartSec = posSec;
-        } else if (s.stopped && !prevStop) {
-          _lastReportedPositionMs = s.positionMs;
-          await sendWatchtime(
-            vid,
-            prevCpn,
-            prevSegStartSec,
-            posSec,
-            'paused',
-            durSec,
-            playlistId,
-          );
-          _lastWatchSegmentStartSec = posSec;
-        } else if (s.playing) {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          if (now - progMs >= _reportHeartbeatMs) {
-            _lastProgressMs = now;
-            _lastReportedPositionMs = s.positionMs;
-            await sendWatchtime(
-              vid,
-              prevCpn,
-              prevSegStartSec,
-              posSec,
-              'playing',
-              durSec,
-              playlistId,
-            );
-            _lastWatchSegmentStartSec = posSec;
-          } else {
-            _lastReportedPositionMs = s.positionMs;
-          }
-        } else {
-          _lastReportedPositionMs = s.positionMs;
-        }
-      }
-      _previousPlaying = s.playing;
-      _previousStopped = s.stopped;
-    } catch (_) {}
   }
 
   // ---------- Subscriptions ----------
@@ -3847,7 +3695,7 @@ class AppState extends ChangeNotifier {
       }
     } finally {
       _subscribeBusy.remove(channelId);
-      notifyListeners();
+      _safeNotify();
     }
   }
 
@@ -3927,11 +3775,55 @@ class AppState extends ChangeNotifier {
       } else {
         _subscribed.remove(channelId);
       }
-      notifyListeners();
+      _safeNotify();
     } catch (_) {}
   }
 }
 
 extension _TakeIfNotEmpty on List<Track> {
   List<Track>? takeIfNotEmpty() => isEmpty ? null : this;
+}
+
+/// Maps an arbitrary failure into a short sentence suitable for the
+/// home/detail/search error boxes: raw exception text ("Connection
+/// reset by peer (errno 104)") is never shown verbatim to the user.
+String friendlyError(Object error) {
+  if (error is TimeoutException) {
+    return 'Timed out — check your connection.';
+  }
+  if (error is DioException) {
+    switch (error.type) {
+      case DioExceptionType.connectionError:
+      case DioExceptionType.connectionTimeout:
+        return 'Could not reach the network.';
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.sendTimeout:
+        return 'The server took too long to respond.';
+      case DioExceptionType.badResponse:
+        final code = error.response?.statusCode;
+        if (code == 401 || code == 403) {
+          return 'Sign in again to continue.';
+        }
+        if (code != null && code >= 500) {
+          return 'YouTube Music is having trouble right now.';
+        }
+        return 'The request was rejected.';
+      case DioExceptionType.cancel:
+        return 'The request was cancelled.';
+      case DioExceptionType.badCertificate:
+        return 'The connection could not be secured.';
+      case DioExceptionType.unknown:
+        break;
+      default:
+        break;
+    }
+  }
+  final text = '$error'.toLowerCase();
+  if (text.contains('socketexception') || text.contains('connection refused')) {
+    return 'Could not reach the network.';
+  }
+  if (text.contains('handshakeexception')) {
+    return 'The connection could not be secured.';
+  }
+  return 'Something went wrong. Try again.';
 }

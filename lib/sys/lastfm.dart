@@ -13,7 +13,7 @@ import 'package:flutter/foundation.dart' show ChangeNotifier;
 
 import '../core/models/models.dart' show Track;
 import '../core/player/player_state.dart' show PlayerState;
-import 'http_client.dart';
+import 'http_client.dart' show newResilientClient;
 import 'sys_config.dart' show SysConfig;
 
 /// Last.fm API endpoint for all signed calls.
@@ -86,7 +86,7 @@ String cleanScrobbleTitle(String title) =>
 class LastFmService extends ChangeNotifier {
   LastFmService({required SysConfig config, Dio? dio}) {
     _config = config;
-    _dio = dio ?? newHttpClient();
+    _dio = dio ?? newResilientClient();
     refreshStatus();
   }
 
@@ -234,14 +234,14 @@ class LastFmService extends ChangeNotifier {
   }
 
   /// Scrobbles one play; failures only surface via [status].
-  Future<void> scrobble({
+  Future<bool> scrobble({
     required String artist,
     required String track,
     required int timestampSec,
     String? album,
     int durationSec = 0,
   }) async {
-    if (!ready() || artist.trim().isEmpty || track.trim().isEmpty) return;
+    if (!ready() || artist.trim().isEmpty || track.trim().isEmpty) return false;
     try {
       final el = await _signedCall(
         _trackParams(
@@ -256,11 +256,14 @@ class LastFmService extends ChangeNotifier {
       );
       if (el['error'] != null) {
         _setStatus('error: ${_lastfmError(el)}');
+        return false;
       } else {
         _setStatus('signed in as ${_config.lastfmUsername}');
+        return true;
       }
     } catch (e) {
       _setStatus('error: ${_snippet('$e', 'request failed')}');
+      return false;
     }
   }
 
@@ -389,8 +392,7 @@ class LastFmService extends ChangeNotifier {
         ? half
         : scrobbleCapSec * 1000;
     if (s.playing && s.positionMs >= thresholdMs) {
-      progress.scrobbled = true;
-      await scrobble(
+      progress.scrobbled = await scrobble(
         artist: lastfmArtistName(track),
         track: cleanScrobbleTitle(track.title),
         timestampSec: progress.startEpochSec,

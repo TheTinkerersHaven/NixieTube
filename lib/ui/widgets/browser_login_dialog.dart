@@ -91,7 +91,7 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
   @override
   void initState() {
     super.initState();
-    _open();
+    unawaited(_open());
   }
 
   Future<void> _open() async {
@@ -131,10 +131,12 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
       webview.launch('https://music.youtube.com');
       // User closing the window counts as cancel. Mark closed so
       // dispose() never issues a second native close.
-      webview.onClose.then((_) {
-        _closed = true;
-        if (!_done) _finish(null);
-      }, onError: (_) {});
+      unawaited(
+        webview.onClose.then((_) {
+          _closed = true;
+          if (!_done) unawaited(_finish(null));
+        }, onError: (_) {}),
+      );
       _timeoutTimer = Timer(widget.timeout, () => _finish(null));
     } catch (_) {
       if (!mounted) return;

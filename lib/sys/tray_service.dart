@@ -10,7 +10,9 @@
 // items stay live instead of churning enabled states.
 
 import 'dart:async';
-import 'dart:io' show Directory, File, Platform;
+import 'dart:io' show File, Platform;
+
+import 'paths.dart' show cacheDir;
 
 import 'package:flutter/foundation.dart' show ValueListenable, debugPrint;
 import 'package:material_ui/material_ui.dart' show Color, ColorScheme;
@@ -120,7 +122,7 @@ class TrayService with WindowListener {
         playing: playing,
         size: 256,
       );
-      final file = File('${Directory.systemTemp.path}/nixietube/tray-icon.png');
+      final file = File('${cacheDir().path}/tray-icon.png');
       await file.parent.create(recursive: true);
       await file.writeAsBytes(bytes, flush: true);
       final art = Image.fromFile(file.path);
@@ -177,7 +179,7 @@ class TrayService with WindowListener {
       _iconListenerId = icon.addListener((event) {
         switch (event) {
           case TrayIconClickedEvent():
-            toggleWindow();
+            unawaited(toggleWindow());
           case TrayIconRightClickedEvent():
             icon.openContextMenu();
           case TrayIconDoubleClickedEvent():
@@ -200,7 +202,7 @@ class TrayService with WindowListener {
   }
 
   void dispose() {
-    _sub?.cancel();
+    unawaited(_sub?.cancel());
     _sub = null;
     try {
       _scheme.removeListener(_onScheme);

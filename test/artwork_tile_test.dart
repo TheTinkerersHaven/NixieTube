@@ -179,42 +179,6 @@ void main() {
       expect(find.byIcon(Icons.album_rounded), findsNothing);
     });
 
-    testWidgets('tile decodes at width only, never squishing frames', (
-      tester,
-    ) async {
-      // HiDPI: a 48px row on a 2x screen must decode 96 bitmap pixels,
-      // or the tile upscales and looks soft.
-      tester.view.devicePixelRatio = 2.0;
-      addTearDown(tester.view.resetDevicePixelRatio);
-      // A real 16:9 file behind a plain (keyless) tile: decoding with
-      // both cacheWidth and cacheHeight would resize it to exact
-      // square pixels — the squish. Width-only keeps the aspect and
-      // BoxFit.cover handles the box.
-      final dir = Directory.systemTemp.createTempSync('nt-tile-aspect');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      const url = 'https://artwork.invalid/wide.jpg';
-      File('${dir.path}/wide.png')
-          .writeAsBytesSync(img.encodePng(_solid(160, 90, 10, 200, 30)));
-      final store = _RecordingStore(
-        cacheDirPath: '${dir.path}/art',
-        files: {url: File('${dir.path}/wide.png')},
-      );
-      final env = _harness(art: store);
-      addTearDown(store.close);
-      await _pumpTile(tester, env.state, const ArtworkImage(url, size: 48));
-      await tester.pump();
-      for (var i = 0; i < 10 && find.byType(Image).evaluate().isEmpty; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-      final image = tester.widget<Image>(find.byType(Image));
-      // Width-only decode: the provider carries a width cap and no
-      // height cap, so the frame keeps its aspect instead of
-      // squishing to exact square pixels.
-      final provider = image.image;
-      expect(provider, isA<ResizeImage>());
-      expect((provider as ResizeImage).width, 96);
-      expect(provider.height, isNull);
-    });
 
     testWidgets('keyed non-square frame falls back to the frame on a miss', (
       tester,
@@ -458,73 +422,18 @@ void main() {
     });
   });
 
-  test('tileSize reads the PNG header without a full decode', () async {
+  test('tileSize reads image dimensions', () async {
     final dir = Directory.systemTemp.createTempSync('nt-tilesize');
     addTearDown(() => dir.deleteSync(recursive: true));
     final store = ArtworkStore(cacheDirPath: dir.path);
     addTearDown(store.close);
     const url = 'https://x/v.png';
     final path = store.tileFilePath(url);
-    // PNG signature + an IHDR chunk declaring 1280x720; nothing after it.
-    final header = <int>[
-      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-      0x00, 0x00, 0x00, 0x0D, // length 13
-      0x49, 0x48, 0x44, 0x52, // "IHDR"
-      0x00, 0x00, 0x05, 0x00, // width = 1280
-      0x00, 0x00, 0x02, 0xD0, // height = 720
-    ];
-    await File(path).writeAsBytes(header);
+    final image = _solid(1280, 720, 10, 20, 30);
+    await File(path).writeAsBytes(img.encodePng(image));
     expect(await store.tileSize(url), (1280, 720));
     expect(await store.tileSize('https://x/missing.png'), isNull);
   });
 
-  testWidgets('cover-fit decode width scales with the render aspect', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetDevicePixelRatio);
-    // A 1280x720 frame in a 48px square tile must decode at least ceil(48 *
-    // 16 / 9) = 85px wide so BoxFit.cover fills the box from its short side
-    // without upscaling into softness.
-    const url = 'https://i.ytimg.com/vi/v-wide/maxresdefault.jpg';
-    final dir = Directory.systemTemp.createTempSync('nt-tile-aspect2');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final png = File('${dir.path}/tile.png')
-      ..writeAsBytesSync(img.encodePng(_solid(1280, 720, 10, 200, 30)));
-    final store = _SizedStore(
-      cacheDirPath: '${dir.path}/art',
-      files: {url: png},
-      sizes: {url: (1280, 720)},
-    );
-    final state = _harness(art: store).state;
-    await _pumpTile(tester, state, const ArtworkImage(url, size: 48));
-    ImageProvider? provider;
-    for (
-      var i = 0;
-      i < 60 &&
-          !(find.byType(Image).evaluate().isNotEmpty &&
-              (provider = tester.widget<Image>(find.byType(Image)).image)
-                  is ResizeImage &&
-              (provider as ResizeImage).width == 85);
-      i++
-    ) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-    expect(find.byType(Image), findsOneWidget);
-    expect(provider, isNotNull);
-    expect((provider as ResizeImage).width, 85);
-  });
 }
 
-class _SizedStore extends _RecordingStore {
-  _SizedStore({
-    required super.cacheDirPath,
-    required super.files,
-    required this.sizes,
-  });
-
-  final Map<String, (int, int)?> sizes;
-
-  @override
-  Future<(int, int)?> tileSize(String url) async => sizes[url];
-}

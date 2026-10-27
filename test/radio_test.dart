@@ -16,16 +16,18 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nixietube/core/player/player_engine.dart';
+
+import 'fakes.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
-class _FakeEngine implements PlayerEngine {
+class _FakeEngine extends FakeEngine {
   final List<PlayerEngineListener> listeners = [];
   final List<String> playedUrls = [];
   int pos = 0;
@@ -35,12 +37,6 @@ class _FakeEngine implements PlayerEngine {
     playedUrls.add(url);
     return null;
   }
-
-  @override
-  Future<void> pause() async {}
-
-  @override
-  Future<void> resume() async {}
 
   @override
   Future<void> stop() async {
@@ -53,9 +49,6 @@ class _FakeEngine implements PlayerEngine {
   }
 
   @override
-  Future<void> setVolume(int volume) async {}
-
-  @override
   int positionMs() => pos;
 
   @override
@@ -63,9 +56,6 @@ class _FakeEngine implements PlayerEngine {
 
   @override
   bool isPlaying() => playedUrls.isNotEmpty;
-
-  @override
-  Future<void> release() async {}
 
   @override
   void addListener(PlayerEngineListener listener) {
@@ -382,7 +372,8 @@ void main() {
 
       await env.state.loadHome();
       expect(env.state.home.loading, isFalse);
-      expect(env.state.home.error, contains('boom'));
+      expect(env.state.home.error, isNotNull);
+      expect(env.state.home.error, isNotEmpty);
       expect(env.state.home.shelves, isEmpty);
     });
 

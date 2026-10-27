@@ -25,7 +25,7 @@ class _FakeDiscordServer {
     // A socket remembers the zone it was made in, so bind here: the reply
     // to a teardown can hit a client that already hung up, and that EPIPE
     // must not fail the test.
-    runZonedGuarded(
+    runZonedGuarded<void>(
       () async {
         final server = await ServerSocket.bind(
           InternetAddress(path, type: InternetAddressType.unix),

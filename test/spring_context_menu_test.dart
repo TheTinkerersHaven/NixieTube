@@ -1,6 +1,8 @@
 // Tests for the spring context menu: items unfold near the cursor,
 // tapping one returns its value and closes, disabled rows stay put.
 
+import 'dart:async' show unawaited;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -116,27 +118,31 @@ void main() {
               onPressed: () {
                 // Two rapid right-clicks: the first menu must not
                 // linger underneath the second.
-                showSpringMenu<String>(
-                  context: context,
-                  position: const Offset(10, 10),
-                  items: const [
-                    SpringMenuItem(
-                      icon: Icon(Icons.playlist_play_rounded),
-                      label: 'First menu item',
-                      value: 'first',
-                    ),
-                  ],
+                unawaited(
+                  showSpringMenu<String>(
+                    context: context,
+                    position: const Offset(10, 10),
+                    items: const [
+                      SpringMenuItem(
+                        icon: Icon(Icons.playlist_play_rounded),
+                        label: 'First menu item',
+                        value: 'first',
+                      ),
+                    ],
+                  ),
                 );
-                showSpringMenu<String>(
-                  context: context,
-                  position: const Offset(10, 10),
-                  items: const [
-                    SpringMenuItem(
-                      icon: Icon(Icons.delete_outline_rounded),
-                      label: 'Second menu item',
-                      value: 'second',
-                    ),
-                  ],
+                unawaited(
+                  showSpringMenu<String>(
+                    context: context,
+                    position: const Offset(10, 10),
+                    items: const [
+                      SpringMenuItem(
+                        icon: Icon(Icons.delete_outline_rounded),
+                        label: 'Second menu item',
+                        value: 'second',
+                      ),
+                    ],
+                  ),
                 );
               },
               child: const Text('open'),

@@ -412,7 +412,7 @@ class HomeScreen extends StatelessWidget {
               item: entry.item,
               onTap: () {
                 if (mix != null) {
-                  if (!loading) state.playMix(mix);
+                  if (!loading) unawaited(state.playMix(mix));
                   return;
                 }
                 state.go(Screen.detail, detail: entry.item);
@@ -728,7 +728,7 @@ class _QuickPicksGrid extends StatelessWidget {
           final b = item as BrowseItem;
           final art = b.thumbnails.isEmpty
               ? null
-              : b.thumbnails.reduce((a, c) => a.width >= c.width ? a : c).url;
+              : b.bestArtwork;
           return QuickPickCard(
             title: b.title,
             subtitle: b.subtitle,
@@ -766,9 +766,12 @@ class _QuickPicksGrid extends StatelessWidget {
               ],
             );
           }
-          return GestureDetector(
-            onLongPress: () => state.togglePin(item),
-            child: t,
+          return Semantics(
+            onLongPressHint: 'Pin or unpin to quick picks',
+            child: GestureDetector(
+              onLongPress: () => state.togglePin(item),
+              child: t,
+            ),
           );
         }
 
@@ -985,7 +988,7 @@ void _playShelfSong(AppState state, List<Track> songs, int index) {
   if (index < 0 || index >= songs.length) return;
   final tapped = songs[index];
   if (AppState.isMixSeed(tapped)) {
-    state.playMixSeed(tapped);
+    unawaited(state.playMixSeed(tapped));
     return;
   }
   state.playSongs(songs, index);
@@ -1102,7 +1105,7 @@ class _ShelfSection extends StatelessWidget {
               ),
               onTap: () {
                 if (AppState.isMixSeed(t)) {
-                  state.playMixSeed(t);
+                  unawaited(state.playMixSeed(t));
                   return;
                 }
                 var idx = songs.indexWhere((s) => s.videoId == t.videoId);

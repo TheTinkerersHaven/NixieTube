@@ -8,6 +8,8 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fakes.dart';
 import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -15,12 +17,11 @@ import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
-import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/seek_slider.dart';
 
-class _FakeEngine implements PlayerEngine {
+class _FakeEngine extends FakeEngine {
   int position = 0;
   bool playing = false;
 
@@ -51,9 +52,6 @@ class _FakeEngine implements PlayerEngine {
   }
 
   @override
-  Future<void> setVolume(int volume) async {}
-
-  @override
   int positionMs() => position;
 
   @override
@@ -62,11 +60,6 @@ class _FakeEngine implements PlayerEngine {
   @override
   bool isPlaying() => playing;
 
-  @override
-  Future<void> release() async {}
-
-  @override
-  void addListener(PlayerEngineListener listener) {}
 }
 
 /// InnerTube stub: the real client schedules network

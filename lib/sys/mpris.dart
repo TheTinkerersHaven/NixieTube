@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/artwork/artwork_store.dart';
 import '../core/models/models.dart';
+import 'paths.dart' show cacheDir;
 import '../core/player/player_controller.dart';
 import '../core/player/player_state.dart';
 
@@ -81,6 +82,13 @@ class _MprisObject extends DBusObject {
 
   late final PlayerController _controller;
   late final ArtworkStore _art;
+
+  /// Per-URL cache of [_artUrl] results, keyed by the remote artwork
+  /// URL with a short re-check TTL: the artwork file only appears once
+  /// its download lands, and never disappears.
+  final Map<String, ({String? url, DateTime checked})> _artUrlCache = {};
+
+  static const _artUrlTtl = Duration(seconds: 1);
   late final void Function() _onQuit;
 
   PlayerState get _s => _controller.state;
@@ -88,16 +96,31 @@ class _MprisObject extends DBusObject {
   /// Local file:// art when already rendered, else the remote URL.
   /// Fallback sync version for compatibility - checks file existence synchronously.
   String? _artUrl(Track track) {
-    final remote = track.displayArtwork;
+    final remote = track.bestArtwork;
     if (remote == null || remote.isEmpty) return null;
+    // Tile existence is re-checked at most once a second per URL: the
+    // sync stat/length calls used to run on every 500 ms state
+    // emission, which is pure overhead for an artwork file that only
+    // appears once its download finishes (and never disappears).
+    final cached = _artUrlCache[remote];
+    final now = DateTime.now();
+    if (cached != null && now.difference(cached.checked) < _artUrlTtl) {
+      return cached.url;
+    }
+    String? url;
     try {
       final path = _art.tileFilePath(remote);
       final file = File(path);
       if (file.existsSync() && file.lengthSync() > 0) {
-        return 'file://$path';
+        url = 'file://$path';
+      } else {
+        url = remote;
       }
-    } catch (_) {}
-    return remote;
+    } catch (_) {
+      url = remote;
+    }
+    _artUrlCache[remote] = (url: url, checked: now);
+    return url;
   }
 
   Map<String, DBusValue> _rootProps() => {
@@ -349,8 +372,12 @@ class _MprisObject extends DBusObject {
 }
 
 void _mprisLog(String line) {
+  if (!kDebugMode) return;
   try {
-    final file = File('/tmp/nixietube-mpris.log');
+    final file = File('${cacheDir().path}/mpris.log');
+    if (file.existsSync() && file.lengthSync() > 1024 * 1024) {
+      file.writeAsStringSync('');
+    }
     file.writeAsStringSync(
       '${DateTime.now().toIso8601String()} $line\n',
       mode: FileMode.append,
@@ -590,7 +617,7 @@ class MprisService extends ChangeNotifier {
   @override
   void dispose() {
     unawaited(stop());
-    _sub.cancel();
+    unawaited(_sub.cancel());
     super.dispose();
   }
 

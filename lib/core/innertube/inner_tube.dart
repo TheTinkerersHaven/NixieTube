@@ -226,6 +226,19 @@ class InnerTube {
     await _writeSquareCovers();
   }
 
+  /// Drops every remembered square cover (memory + disk) so they
+  /// re-resolve on the next display. Used by "Clear artwork cache".
+  void clearSquareCovers() {
+    _squareCoverSaveTimer?.cancel();
+    _squareCoverSaveTimer = null;
+    _squareCovers.clear();
+    _squareCoversLoaded = true;
+    try {
+      final f = _squareCoversFile;
+      if (f != null && f.existsSync()) f.deleteSync();
+    } catch (_) {}
+  }
+
   /// Remembers a resolved square cover for [videoId] (memory + disk).
   void noteSquareCover(String videoId, String url) {
     if (videoId.isEmpty || url.isEmpty) return;
@@ -271,7 +284,7 @@ class InnerTube {
       // missing, and the next tile to ask tries again.
       return null;
     } finally {
-      _squareCoverInflight.remove(videoId);
+      unawaited(_squareCoverInflight.remove(videoId));
     }
   }
 
@@ -514,8 +527,8 @@ class InnerTube {
     // Drop the entry when it settles. `.ignore()` marks the derived
     // future's error as handled, so a failed request never surfaces as an
     // unhandled async error (the real callers await [requestFuture]).
-    requestFuture.whenComplete(() {
-      _requestCache.remove(cacheKey);
+    requestFuture.whenComplete(() async {
+      await _requestCache.remove(cacheKey);
     }).ignore();
 
     return requestFuture;
@@ -1142,10 +1155,10 @@ class InnerTube {
     final actions = nav(res, const ['onResponseReceivedActions']);
     if (actions is List) {
       for (final action in actions) {
-        final items = nav(
-          action,
-          const ['appendContinuationItemsAction', 'continuationItems'],
-        );
+        final items = nav(action, const [
+          'appendContinuationItemsAction',
+          'continuationItems',
+        ]);
         if (items is List && items.isNotEmpty) return items;
       }
     }
@@ -1229,10 +1242,7 @@ class InnerTube {
         final byTime = b.likedAt.compareTo(a.likedAt);
         return byTime != 0 ? byTime : a.order.compareTo(b.order);
       });
-      final out = <Track>[
-        ...dated.map((e) => e.track),
-        ...undated,
-      ];
+      final out = <Track>[...dated.map((e) => e.track), ...undated];
       return out.length <= max ? out : out.sublist(0, max);
     } catch (_) {
       return const [];
@@ -1250,7 +1260,9 @@ class InnerTube {
 
   /// Pages the liked-music playlist, pairing every row with the like
   /// timestamp it carries (null when the row exposes none).
-  Future<List<({Track track, int? likedAt})>> _likedRows({int limit = 2000}) async {
+  Future<List<({Track track, int? likedAt})>> _likedRows({
+    int limit = 2000,
+  }) async {
     final out = <({Track track, int? likedAt})>[];
     final page = await post('browse', _bodyWith({'browseId': 'VLLM'}));
     if (_isErrorResponse(page)) return out;
@@ -1381,7 +1393,8 @@ class InnerTube {
       final inner = row['musicResponsiveListItemRenderer'];
       final t = parseListItem(inner ?? row);
       if (t == null || t.videoId.isEmpty) continue;
-      final likedAt = nav(row, const ['playlistItemData', 'voteSortValue']) ??
+      final likedAt =
+          nav(row, const ['playlistItemData', 'voteSortValue']) ??
           nav(inner, const ['playlistItemData', 'voteSortValue']);
       final duration = parseRowDuration(inner ?? row);
       out.add((
@@ -1405,10 +1418,10 @@ class InnerTube {
     final actions = nav(res, const ['onResponseReceivedActions']);
     if (actions is List) {
       for (final action in actions) {
-        final items = nav(
-          action,
-          const ['appendContinuationItemsAction', 'continuationItems'],
-        );
+        final items = nav(action, const [
+          'appendContinuationItemsAction',
+          'continuationItems',
+        ]);
         if (items is List && items.isNotEmpty) {
           return (rows: items, token: _tokenInRows(items));
         }
@@ -1429,7 +1442,8 @@ class InnerTube {
             final lower = key.toLowerCase();
             // Carousels ("Listen again", "Forgotten favorites") hold
             // rows that are not liked songs.
-            final isShelf = lower.endsWith('shelfrenderer') ||
+            final isShelf =
+                lower.endsWith('shelfrenderer') ||
                 lower.endsWith('shelfcontinuation');
             if (isShelf && !lower.contains('carousel')) {
               final contents = nav(entry.value, const ['contents']);
@@ -1532,10 +1546,10 @@ class InnerTube {
     final actions = nav(res, const ['onResponseReceivedActions']);
     if (actions is List) {
       for (final action in actions) {
-        final items = nav(
-          action,
-          const ['appendContinuationItemsAction', 'continuationItems'],
-        );
+        final items = nav(action, const [
+          'appendContinuationItemsAction',
+          'continuationItems',
+        ]);
         if (items is List) {
           final token = _tokenInRows(items);
           if (token != null) return token;
@@ -1550,7 +1564,8 @@ class InnerTube {
         for (final entry in node.entries) {
           final key = entry.key;
           if (key is String &&
-              (key.endsWith('ShelfRenderer') || key.endsWith('ShelfContinuation'))) {
+              (key.endsWith('ShelfRenderer') ||
+                  key.endsWith('ShelfContinuation'))) {
             final shelf = entry.value;
             final contents = nav(shelf, const ['contents']);
             if (contents is List) {
@@ -1565,7 +1580,10 @@ class InnerTube {
             final continuations = nav(shelf, const ['continuations']);
             if (continuations is List) {
               for (final c in continuations) {
-                final next = nav(c, const ['nextContinuationData', 'continuation']);
+                final next = nav(c, const [
+                  'nextContinuationData',
+                  'continuation',
+                ]);
                 if (next is String && next.isNotEmpty) {
                   found = next;
                   return;
@@ -1626,7 +1644,13 @@ class InnerTube {
         final title = runsText(nav(node, const ['title', 'runs']));
         if (title.isEmpty || title == 'New playlist') continue;
         final browseId =
-            str(nav(node, const ['navigationEndpoint', 'browseEndpoint', 'browseId'])) ??
+            str(
+              nav(node, const [
+                'navigationEndpoint',
+                'browseEndpoint',
+                'browseId',
+              ]),
+            ) ??
             '';
         // Only the account's own playlists (`VL` + `PL…`) are
         // editable; the rest are YouTube's own rows.
@@ -1637,10 +1661,12 @@ class InnerTube {
         final m = RegExp(r'(\d+)\s+(?:track|song)s?').firstMatch(subtitle);
         if (m != null) count = int.tryParse(m.group(1)!) ?? 0;
         String? art;
-        final thumbs = nav(
-          node,
-          const ['thumbnailRenderer', 'musicThumbnailRenderer', 'thumbnail', 'thumbnails'],
-        );
+        final thumbs = nav(node, const [
+          'thumbnailRenderer',
+          'musicThumbnailRenderer',
+          'thumbnail',
+          'thumbnails',
+        ]);
         if (thumbs is List && thumbs.isNotEmpty) {
           art = str((thumbs.last as Map?)?['url']);
         }
@@ -1654,7 +1680,11 @@ class InnerTube {
           owner = str(nav(first, const ['text'])) ?? '';
           ownerId =
               str(
-                nav(first, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
+                nav(first, const [
+                  'navigationEndpoint',
+                  'browseEndpoint',
+                  'browseId',
+                ]),
               ) ??
               '';
         }
@@ -1705,14 +1735,14 @@ class InnerTube {
   /// are parsed like any other list. Only the first page is read:
   /// a playlist of thousands is not worth a multi-page crawl for the
   /// library view.
-  Future<List<Track>> playlistTracks(String playlistId, {int max = 5000}) async {
+  Future<List<Track>> playlistTracks(
+    String playlistId, {
+    int max = 5000,
+  }) async {
     if (playlistId.trim().isEmpty) return const [];
     try {
       final out = <Track>[];
-      var res = await post(
-        'browse',
-        _bodyWith({'browseId': 'VL$playlistId'}),
-      );
+      var res = await post('browse', _bodyWith({'browseId': 'VL$playlistId'}));
       if (_isErrorResponse(res)) return const [];
       for (var page = 0; page < _maxBrowsePages; page++) {
         for (final li in findAll(res, 'musicResponsiveListItemRenderer')) {
@@ -1740,10 +1770,7 @@ class InnerTube {
   Future<String?> playlistItemId(String playlistId, String videoId) async {
     if (playlistId.trim().isEmpty || videoId.trim().isEmpty) return null;
     try {
-      var res = await post(
-        'browse',
-        _bodyWith({'browseId': 'VL$playlistId'}),
-      );
+      var res = await post('browse', _bodyWith({'browseId': 'VL$playlistId'}));
       if (_isErrorResponse(res)) return null;
       for (var page = 0; page < _maxBrowsePages; page++) {
         for (final node in findAll(res, 'playlistEditEndpoint')) {
@@ -1752,7 +1779,9 @@ class InnerTube {
           final actions = nav(node, const ['actions']);
           if (actions is! List) continue;
           for (final a in actions) {
-            if (str(nav(a, const ['action'])) != 'ACTION_REMOVE_VIDEO') continue;
+            if (str(nav(a, const ['action'])) != 'ACTION_REMOVE_VIDEO') {
+              continue;
+            }
             if (str(nav(a, const ['removedVideoId'])) != videoId) continue;
             return str(nav(a, const ['setVideoId']));
           }
@@ -1863,7 +1892,9 @@ class InnerTube {
     try {
       final res = await post(
         'subscription/subscribe',
-        _bodyWith({'channelIds': [channelId]}),
+        _bodyWith({
+          'channelIds': [channelId],
+        }),
       );
       return !_isErrorResponse(res);
     } catch (_) {
@@ -1877,7 +1908,9 @@ class InnerTube {
     try {
       final res = await post(
         'subscription/unsubscribe',
-        _bodyWith({'channelIds': [channelId]}),
+        _bodyWith({
+          'channelIds': [channelId],
+        }),
       );
       return !_isErrorResponse(res);
     } catch (_) {
@@ -1890,10 +1923,7 @@ class InnerTube {
   Future<bool> isSubscribed(String channelId) async {
     if (channelId.trim().isEmpty) return false;
     try {
-      final res = await post(
-        'browse',
-        _bodyWith({'browseId': channelId}),
-      );
+      final res = await post('browse', _bodyWith({'browseId': channelId}));
       if (_isErrorResponse(res)) return false;
       for (final node in findAll(res, 'subscribeButtonRenderer')) {
         final subscribed = nav(node, const ['subscribed']);
@@ -1963,7 +1993,12 @@ class InnerTube {
       if (_isErrorResponse(res)) return null;
       for (final node in findAll(res, 'decoratedAvatarViewModel')) {
         final sources =
-            nav(node, const ['avatar', 'avatarViewModel', 'image', 'sources']) ??
+            nav(node, const [
+              'avatar',
+              'avatarViewModel',
+              'image',
+              'sources',
+            ]) ??
             nav(node, const ['avatarViewModel', 'image', 'sources']);
         if (sources is! List || sources.isEmpty) continue;
         var best = '';
@@ -2017,7 +2052,8 @@ class InnerTube {
         'DISLIKE' => 'likeCountIfDislikedNumber',
         _ => 'likeCountIfIndifferentNumber',
       };
-      final raw = str(nav(entity, [key])) ??
+      final raw =
+          str(nav(entity, [key])) ??
           str(nav(entity, const ['likeCountIfIndifferentNumber']));
       return int.tryParse(raw ?? '');
     } catch (_) {

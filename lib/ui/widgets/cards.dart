@@ -20,7 +20,7 @@ class BrowseCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final art = item.thumbnails.isEmpty
         ? null
-        : item.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url;
+        : item.bestArtwork;
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -249,7 +249,7 @@ class SimilarArtistCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final art = item.thumbnails.isEmpty
         ? null
-        : item.thumbnails.reduce((a, b) => a.width >= b.width ? a : b).url;
+        : item.bestArtwork;
     return InkWell(
       onTap: onTap,
       child: Container(

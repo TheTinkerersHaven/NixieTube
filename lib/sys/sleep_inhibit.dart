@@ -56,6 +56,14 @@ class SleepInhibitService {
 
   StreamSubscription<PlayerState>? _sub;
   SleepInhibitHandle? _lock;
+  // Serialize the state handler: emissions land on a sync broadcast
+  // stream, so two `playing` ticks can overlap across the `_runner()`
+  // await and both pass the `_lock != null` check, spawning two
+  // `systemd-inhibit` children (the first is then never killed and
+  // keeps sleep blocked). The chain also re-checks the latest state
+  // after each await, so a pause that lands while a lock is being
+  // taken releases it right away.
+  Future<void> _chain = Future<void>.value();
   bool _started = false;
 
   Future<void> start() async {
@@ -66,11 +74,30 @@ class SleepInhibitService {
     await _onState(_controller.state);
   }
 
+  PlayerState _lastState = const PlayerState();
+
   Future<void> _onState(PlayerState s) async {
+    _lastState = s;
+    final prev = _chain;
+    final task = prev.then((_) => _applyState(_lastState));
+    _chain = task;
+    task.ignore();
+    await task;
+  }
+
+  Future<void> _applyState(PlayerState s) async {
     if (s.playing) {
       if (_lock != null) return;
       try {
         _lock = await _runner();
+        // A pause landed while the lock was being taken: release now.
+        if (!_lastState.playing) {
+          final lock = _lock;
+          _lock = null;
+          try {
+            await lock?.release();
+          } catch (_) {}
+        }
       } catch (_) {
         _lock = null;
       }
@@ -88,6 +115,13 @@ class SleepInhibitService {
   Future<void> dispose() async {
     await _sub?.cancel();
     _sub = null;
+    // Any acquisition already queued must not hand out a lock after
+    // we let go: the drained handler now sees a paused player and
+    // releases instead.
+    _lastState = const PlayerState();
+    try {
+      await _chain.timeout(const Duration(seconds: 5));
+    } catch (_) {}
     final lock = _lock;
     _lock = null;
     if (lock != null) {
