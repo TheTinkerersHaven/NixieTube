@@ -449,6 +449,22 @@ class PlayerController implements PlayerEngineListener {
     _startCurrent();
   }
 
+  /// Replaces the queue with [tracks] and points at [startIndex] WITHOUT
+  /// restarting playback: the current track keeps playing from its live
+  /// position. Used when a larger queue (fetched in the background after
+  /// an optimistic play) becomes available for the song already playing.
+  void replaceQueue(List<Track> tracks, [int startIndex = 0]) {
+    if (tracks.isEmpty) return;
+    final s = _state;
+    final currentId = s.current?.videoId;
+    var idx = startIndex.clamp(0, tracks.length - 1);
+    if (currentId != null) {
+      final pos = tracks.indexWhere((t) => t.videoId == currentId);
+      if (pos >= 0) idx = pos;
+    }
+    _update(s.copyWith(queue: List.of(tracks), index: idx));
+    refreshPrefetch();
+  }
   /// Inserts [track] immediately after the current index.
   void enqueueNext(Track track) {
     final q = List<Track>.of(_state.queue);

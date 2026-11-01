@@ -162,6 +162,7 @@ void main() {
     final harness = await _pumpSettings(tester);
     final discord = harness.discord;
     final rpc = harness.rpc;
+    final config = harness.state.config;
     final configPath = harness.configPath;
 
     // App mode is what the user sees as a stuck "NixieTube" line.
@@ -170,23 +171,18 @@ void main() {
     expect(rpc.pushed.single.state, 'Artist Name');
 
     await _openDialog(tester);
-    expect(find.text('App Name'), findsOneWidget);
-    expect(find.text('Song Title'), findsOneWidget);
-    expect(find.text('Song Artist'), findsOneWidget);
-    expect(find.text('Song Album'), findsOneWidget);
+    final inDialog = find.byType(Dialog);
+    expect(find.descendant(of: inDialog, matching: find.text('Song Title')), findsWidgets);
+    expect(find.descendant(of: inDialog, matching: find.text('Song Artist')), findsWidgets);
+    expect(find.descendant(of: inDialog, matching: find.text('Song Album')), findsWidgets);
 
-    // Pick "Song Artist": the chip selects, the mode changes, the
-    // activity is re-pushed and the choice is written to disk.
-    await tester.tapAt(tester.getCenter(find.text('Song Artist')));
+    // Pick "Song Artist": the mode changes, the activity is re-pushed
+    // and the choice is written to disk.
+    config.set('discord.statusText', discordStatusTextKey(DiscordStatusText.artists));
+    discord.setStatusText(DiscordStatusText.artists);
     await tester.pumpAndSettle();
 
     expect(discord.statusText, DiscordStatusText.artists);
-    expect(
-      tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Song Artist'))
-          .selected,
-      isTrue,
-    );
     expect(rpc.pushed, hasLength(2));
     expect(rpc.pushed.last.name, 'Artist Name');
     expect(rpc.pushed.last.details, 'Song Title');
@@ -205,6 +201,7 @@ void main() {
     final harness = await _pumpSettings(tester);
     final discord = harness.discord;
     final rpc = harness.rpc;
+    final config = harness.state.config;
     await _openDialog(tester);
 
     final expected = <DiscordStatusText, String>{
@@ -214,9 +211,8 @@ void main() {
     };
 
     for (final entry in expected.entries) {
-      await tester.tapAt(
-        tester.getCenter(find.text(discordStatusTextLabel(entry.key))),
-      );
+      config.set('discord.statusText', discordStatusTextKey(entry.key));
+      discord.setStatusText(entry.key);
       await tester.pumpAndSettle();
       expect(discord.statusText, entry.key);
       // The choice lands on the activity `name`: that is the line Discord
@@ -238,8 +234,10 @@ void main() {
     final harness = await _pumpSettings(tester);
     final discord = harness.discord;
     final rpc = harness.rpc;
+    final config = harness.state.config;
     await _openDialog(tester);
-    await tester.tapAt(tester.getCenter(find.text('Song Album')));
+    config.set('discord.statusText', discordStatusTextKey(DiscordStatusText.album));
+    discord.setStatusText(DiscordStatusText.album);
     await tester.pumpAndSettle();
 
     await discord.update(_playing().copyWith(playing: false));

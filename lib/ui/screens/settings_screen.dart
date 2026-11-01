@@ -657,31 +657,53 @@ class _DiscordAppIdDialogState extends State<_DiscordAppIdDialog> {
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
     final discord = context.read<DiscordPresence>();
-    return _SettingsModal(
-      title: 'Discord Rich Presence',
-      children: [
-        Text('Status line', style: Theme.of(context).textTheme.titleSmall),
-        Text(
-          'The line Discord shows for the activity.',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        _DiscordStatusLinePicker(config: state.config),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _appId,
-          decoration: const InputDecoration(
-            labelText: 'Discord application ID',
-            helperText: 'Optional, leave empty for the built-in ID',
-            border: OutlineInputBorder(),
+    return Dialog(
+      child: SizedBox(
+        width: 560,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Discord Rich Presence',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'The line Discord shows for the activity.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _DiscordStatusLinePicker(config: state.config),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _appId,
+                decoration: const InputDecoration(
+                  labelText: 'Discord application ID',
+                  helperText: 'Optional, leave empty for the built-in ID',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (v) {
+                  state.config.set('discord.appId', v);
+                  discord.setAppId(v);
+                },
+              ),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: M3ETextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Close'),
+                ),
+              ),
+            ],
           ),
-          onChanged: (v) {
-            state.config.set('discord.appId', v);
-            discord.setAppId(v);
-          },
         ),
-      ],
+      ),
     );
   }
 }
@@ -699,21 +721,24 @@ class _DiscordStatusLinePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final discord = context.watch<DiscordPresence>();
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final mode in DiscordStatusText.values)
-          ChoiceChip(
-            label: Text(discordStatusTextLabel(mode)),
-            selected: discord.statusText == mode,
-            onSelected: (v) {
-              if (!v) return;
-              config.set('discord.statusText', discordStatusTextKey(mode));
-              discord.setStatusText(mode);
-            },
-          ),
+    final scheme = Theme.of(context).colorScheme;
+    final modes = DiscordStatusText.values;
+    return M3EToggleButtonGroup(
+      type: M3EButtonGroupType.connected,
+      size: M3EButtonSize.sm,
+      semanticLabel: 'Discord status line',
+      selectedIndex: modes.indexOf(discord.statusText),
+      onSelectedIndexChanged: (i) {
+        if (i == null) return;
+        final mode = modes[i];
+        config.set('discord.statusText', discordStatusTextKey(mode));
+        discord.setStatusText(mode);
+      },
+      actions: [
+        for (final mode in modes)
+          M3EToggleButtonGroupAction(label: Text(discordStatusTextLabel(mode))),
       ],
+      decoration: toggleButtonGroupDecoration(scheme),
     );
   }
 }

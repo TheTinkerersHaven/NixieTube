@@ -18,12 +18,14 @@ class RailHeader extends StatelessWidget {
     required this.controller,
     this.step = 4 * 214.0,
     this.trailing,
+    this.showArrows = true,
   });
 
   final String title;
   final ScrollController controller;
   final double step;
   final Widget? trailing;
+  final bool showArrows;
 
   void _scroll(BuildContext context, int direction) {
     if (!controller.hasClients) return;
@@ -52,16 +54,18 @@ class RailHeader extends StatelessWidget {
             child: Text(title, style: Theme.of(context).textTheme.titleLarge),
           ),
         ),
-        IconButton(
-          icon: const Icon(Icons.chevron_left_rounded),
-          tooltip: 'Scroll left',
-          onPressed: () => _scroll(context, -1),
-        ),
-        IconButton(
-          icon: const Icon(Icons.chevron_right_rounded),
-          tooltip: 'Scroll right',
-          onPressed: () => _scroll(context, 1),
-        ),
+        if (showArrows) ...[
+          IconButton(
+            icon: const Icon(Icons.chevron_left_rounded),
+            tooltip: 'Scroll left',
+            onPressed: () => _scroll(context, -1),
+          ),
+          IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Scroll right',
+            onPressed: () => _scroll(context, 1),
+          ),
+        ],
         if (trailing case final Widget t) t,
       ],
     );
@@ -116,6 +120,7 @@ class BrowseRail extends StatefulWidget {
     this.circular = false,
     this.controller,
     this.trailing,
+    this.fillWidth = false,
   });
 
   final String title;
@@ -124,6 +129,10 @@ class BrowseRail extends StatefulWidget {
   final bool circular;
   final ScrollController? controller;
   final Widget? trailing;
+
+  /// When true, card widths scale so a whole number of cards fits
+  /// edge to edge, and the scroll arrows hide when everything fits.
+  final bool fillWidth;
 
   @override
   State<BrowseRail> createState() => _BrowseRailState();
@@ -144,34 +153,83 @@ class _BrowseRailState extends State<BrowseRail> {
   @override
   Widget build(BuildContext context) {
     if (widget.items.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        RailHeader(
-          title: widget.title,
-          controller: _ctrl,
-          trailing: widget.trailing,
-        ),
-        SizedBox(
-          height: widget.circular ? 210 : 300,
-          child: ListView.builder(
+    if (!widget.fillWidth) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          RailHeader(
+            title: widget.title,
             controller: _ctrl,
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: widget.items.length,
-            itemBuilder: (context, i) {
-              final item = widget.items[i];
-              return widget.circular
-                  ? SimilarArtistCard(
-                      item: item,
-                      onTap: () => widget.onOpen(item),
-                    )
-                  : BrowseCard(item: item, onTap: () => widget.onOpen(item));
-            },
+            trailing: widget.trailing,
           ),
-        ),
-        const SizedBox(height: 16),
-      ],
+          SizedBox(
+            height: widget.circular ? 210 : 300,
+            child: ListView.builder(
+              controller: _ctrl,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: widget.items.length,
+              itemBuilder: (context, i) {
+                final item = widget.items[i];
+                return widget.circular
+                    ? SimilarArtistCard(
+                        item: item,
+                        onTap: () => widget.onOpen(item),
+                      )
+                    : BrowseCard(item: item, onTap: () => widget.onOpen(item));
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      );
+    }
+    // Fill-width mode: scale cards so a whole number fits edge to edge,
+    // and drop the scroll arrows when everything already fits.
+    return LayoutBuilder(
+      builder: (context, c) {
+        const gap = 16.0;
+        final count = (c.maxWidth / 220).round().clamp(3, 10);
+        final cardW = (c.maxWidth - gap * (count - 1)) / count;
+        final needsScroll = widget.items.length > count;
+        final height = widget.circular ? 210.0 : 300.0;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            RailHeader(
+              title: widget.title,
+              controller: _ctrl,
+              trailing: widget.trailing,
+              showArrows: needsScroll,
+            ),
+            SizedBox(
+              height: height,
+              child: ListView.separated(
+                controller: _ctrl,
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.zero,
+                itemCount: widget.items.length,
+                separatorBuilder: (_, _) => const SizedBox(width: gap),
+                itemBuilder: (context, i) {
+                  final item = widget.items[i];
+                  final card = widget.circular
+                      ? SimilarArtistCard(
+                          item: item,
+                          onTap: () => widget.onOpen(item),
+                        )
+                      : BrowseCard(
+                          item: item,
+                          onTap: () => widget.onOpen(item),
+                          width: cardW,
+                        );
+                  return SizedBox(width: cardW, child: card);
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        );
+      },
     );
   }
 }

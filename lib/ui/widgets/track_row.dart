@@ -13,15 +13,16 @@ import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
+import 'song_info.dart';
 import 'spring_context_menu.dart';
 
 /// Actions in a track row's overflow menu.
-enum TrackRowAction { playNext, addToPlaylist, copyLink, removeFromPlaylist }
+enum TrackRowAction { playNext, addToPlaylist, copyLink, removeFromPlaylist, songInfo }
 
 /// One track row. Rating buttons appear when [rateable] and signed in;
 /// [showPlaylists] adds the dialog entry to the overflow menu, and
 /// [removable] (with [onRemove]) adds the remove entry there.
-class TrackRow extends StatelessWidget {
+class TrackRow extends StatefulWidget {
   const TrackRow({
     super.key,
     required this.track,
@@ -35,6 +36,9 @@ class TrackRow extends StatelessWidget {
     this.showViews = false,
     this.contextMenu = true,
   });
+
+  @override
+  State<TrackRow> createState() => _TrackRowState();
 
   final Track track;
   final int? index;
@@ -54,18 +58,28 @@ class TrackRow extends StatelessWidget {
   /// Whether right-click opens the overflow menu. Hosts with their
   /// own row menu (Up Next) disable this to avoid double menus.
   final bool contextMenu;
+}
 
-  /// Trimmed play count, or null when hidden or absent.
+class _TrackRowState extends State<TrackRow> {
+  bool _hovering = false;
+
   String? get _viewsLabel {
-    if (!showViews) return null;
-    final v = track.views.trim();
+    if (!widget.showViews) return null;
+    final v = widget.track.views.trim();
     return v.isEmpty ? null : v;
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final track = widget.track;
+    final index = widget.index;
+    final playing = widget.playing;
+    final onPlay = widget.onPlay;
+    final rateable = widget.rateable;
+    final contextMenu = widget.contextMenu;
     final signedIn = context.select<AppState, bool>((s) => s.account != null);
+    final liked = context.select<AppState, bool>((s) => s.isLiked(track.videoId));
     final subtitle = [
       track.artistNames(),
       track.album?.name ?? '',
@@ -138,24 +152,29 @@ class TrackRow extends StatelessWidget {
               builder: (context) {
                 // Locals promote; the getter does not.
                 final viewsLabel = _viewsLabel;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (track.durationSec > 0)
-                        Text(
-                          _fmtDur(track.durationSec),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      if (viewsLabel != null)
-                        Text(
-                          viewsLabel,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: scheme.onSurfaceVariant),
-                        ),
-                    ],
+                return SizedBox(
+                  width: 72,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (track.durationSec > 0)
+                          Text(
+                            _fmtDur(track.durationSec),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        if (viewsLabel != null)
+                          Text(
+                            viewsLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -163,22 +182,14 @@ class TrackRow extends StatelessWidget {
           if (rateable && signedIn) ...[
             IconButton(
               icon: Icon(
-                track.rating == RatingStatus.like
-                    ? Icons.thumb_up_rounded
-                    : Icons.thumb_up_outlined,
+                liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
               ),
-              tooltip: track.rating == RatingStatus.like
-                  ? 'Remove like'
-                  : 'Like',
-              color: track.rating == RatingStatus.like
-                  ? scheme.primary
-                  : scheme.onSurface,
+              tooltip: liked ? 'Remove like' : 'Like',
+              color: liked ? scheme.primary : scheme.onSurface,
               onPressed: () => context.read<AppState>().rateTrackFeedback(
                 context,
                 track.videoId,
-                track.rating == RatingStatus.like
-                    ? RatingStatus.indifferent
-                    : RatingStatus.like,
+                liked ? RatingStatus.indifferent : RatingStatus.like,
               ),
             ),
             IconButton(
@@ -211,21 +222,32 @@ class TrackRow extends StatelessWidget {
                 color: scheme.primary,
               ),
           ],
-          IconButton(
-            icon: const Icon(Icons.more_vert_rounded),
-            tooltip: 'More actions',
-            onPressed: () => _showMenuAtRowEnd(context),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutBack,
+            child: _hovering
+                ? IconButton(
+                    icon: const Icon(Icons.more_vert_rounded),
+                    tooltip: 'More actions',
+                    onPressed: () => _showMenuAtRowEnd(context),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
     );
     // Hosts with their own row menu (Up Next) opt out so right-click
     // never stacks two menus (the single-menu guard would eat theirs).
-    if (!contextMenu) return tile;
+    final hovered = MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: tile,
+    );
+    if (!contextMenu) return hovered;
     return GestureDetector(
       onSecondaryTapDown: (details) =>
           _showMenu(context, context.read<AppState>(), details.globalPosition),
-      child: tile,
+      child: hovered,
     );
   }
 
@@ -244,7 +266,7 @@ class TrackRow extends StatelessWidget {
           label: 'Play next',
           value: TrackRowAction.playNext,
         ),
-        if (showPlaylists)
+        if (widget.showPlaylists)
           const SpringMenuItem(
             icon: Icon(Icons.playlist_add_rounded),
             label: 'Add to playlist',
@@ -255,7 +277,12 @@ class TrackRow extends StatelessWidget {
           label: 'Copy link',
           value: TrackRowAction.copyLink,
         ),
-        if (removable && onRemove != null)
+        const SpringMenuItem(
+          icon: Icon(Icons.info_outline_rounded),
+          label: 'Song info',
+          value: TrackRowAction.songInfo,
+        ),
+        if (widget.removable && widget.onRemove != null)
           const SpringMenuItem(
             icon: Icon(Icons.remove_circle_outline_rounded),
             label: 'Remove from playlist',
@@ -269,24 +296,46 @@ class TrackRow extends StatelessWidget {
         // Nothing loaded: just play it instead of queueing into
         // the void (enqueueNext alone would stay silent).
         if (state.player.state.current == null) {
-          state.player.playTracks([track]);
+          state.player.playTracks([widget.track]);
         } else {
-          state.player.enqueueNext(track);
+          state.player.enqueueNext(widget.track);
           ScaffoldMessenger.of(context)
               .showSnackBar(const SnackBar(content: Text('Queued next')));
         }
       case TrackRowAction.addToPlaylist:
-        unawaited(state.openPlaylistDialog(track));
+        unawaited(state.openPlaylistDialog(widget.track));
       case TrackRowAction.copyLink:
         await Clipboard.setData(
-          ClipboardData(text: 'https://youtu.be/${track.videoId}'),
+          ClipboardData(text: 'https://youtu.be/${widget.track.videoId}'),
         );
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Link copied to clipboard.')),
         );
+      case TrackRowAction.songInfo:
+        if (!context.mounted) return;
+        final theme = Theme.of(context);
+        unawaited(
+          showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: Text(widget.track.title),
+              content: SizedBox(
+                width: 420,
+                height: 520,
+                child: SongInfoView(track: widget.track, theme: theme),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            ),
+          ),
+        );
       case TrackRowAction.removeFromPlaylist:
-        onRemove?.call();
+        widget.onRemove?.call();
       case null:
         break;
     }
@@ -307,3 +356,5 @@ String _fmtDur(int sec) {
   if (sec <= 0) return '0:00';
   return '${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}';
 }
+
+

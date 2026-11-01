@@ -1078,6 +1078,17 @@ void parseSearchShelf(
     if (items.isNotEmpty) {
       out.putIfAbsent(title, () => []).addAll(items);
     }
+    // Surface any artist channel (browseId UC*) as an Artists entry too,
+    // so an artist match shows in the main results instead of only
+    // behind the Artists chip.
+    for (final it in items) {
+      if (it is BrowseItem && it.browseId.startsWith('UC')) {
+        final artists = out.putIfAbsent('Artists', () => []);
+        if (!artists.any((a) => a is BrowseItem && a.browseId == it.browseId)) {
+          artists.add(it);
+        }
+      }
+    }
   }
   final card = obj['musicCardShelfRenderer'];
   if (card is Map) {
@@ -1116,13 +1127,40 @@ void parseSearchShelf(
           }).toList()
         : rawItems;
     if (items.isNotEmpty) {
-      out.putIfAbsent(title, () => []).addAll(items);
+      // The top-result card is the closest match: surface it under a
+      // dedicated "Exact Match" section so it stands apart from the
+      // category shelves below.
+      out.putIfAbsent('Exact Match', () => []).addAll(items);
+    }
+    for (final it in items) {
+      if (it is BrowseItem && it.browseId.startsWith('UC')) {
+        final artists = out.putIfAbsent('Artists', () => []);
+        if (!artists.any((a) => a is BrowseItem && a.browseId == it.browseId)) {
+          artists.add(it);
+        }
+      }
     }
     // Exact-match cards sometimes carry no rows at all, just the entity
     // header. Surface a linked album the same way so exact album searches
     // never come back empty.
     if (!generic) {
       addAlbumSearchResult(out, card, title, titleRuns);
+      // If the card itself links to an artist channel, surface it too.
+      final browseId = _artistBrowseId(titleRuns);
+      if (browseId != null) {
+        final artists = out.putIfAbsent('Artists', () => []);
+        if (!artists.any((a) => a is BrowseItem && a.browseId == browseId)) {
+          artists.add(
+            ShelfItem.browse(
+              title: title,
+              subtitle: 'Artist',
+              browseId: browseId,
+              thumbnails: parseThumbnails(nav(card, const ['thumbnail'])),
+              browseParams: _browseParamsFromRuns(titleRuns),
+            ),
+          );
+        }
+      }
     }
   }
 }
@@ -1325,26 +1363,48 @@ ArtistDetail? buildArtist(dynamic res) {
       ]),
     );
   }
+  // Prefer the shelf titled "top songs" (in any locale the word
+  // "songs"/"tracks" appears), but fall back to the first shelf whose
+  // contents actually parse as tracks — the title match alone misses
+  // localized pages ("Canciones principales", "Top-Titel", ...).
   Map? topShelf;
   for (final s in findAll(res, 'musicShelfRenderer')) {
-    if (s is Map &&
-        runsText(nav(s, const ['title', 'runs'])).toLowerCase() ==
-            'top songs') {
+    if (s is! Map) continue;
+    final title = runsText(nav(s, const ['title', 'runs'])).toLowerCase();
+    if (title.contains('song') ||
+        title.contains('track') ||
+        title.contains('titel') ||
+        title.contains('cancion') ||
+        title.contains('titre')) {
       topShelf = s;
       break;
     }
   }
-  topShelf ??= findFirst(res, 'musicShelfRenderer');
   final topSongs = <Track>[];
-  final topContents = nav(topShelf, const ['contents']);
-  if (topContents is List) {
-    for (final it in topContents) {
+  // If the titled shelf yielded nothing parseable, try every shelf and
+  // keep the first one that produces tracks.
+  List<Map> shelvesToTry = [];
+  if (topShelf is Map) shelvesToTry.add(topShelf);
+  for (final s in findAll(res, 'musicShelfRenderer')) {
+    if (s is Map && s != topShelf) shelvesToTry.add(s);
+  }
+  for (final shelf in shelvesToTry) {
+    final contents = nav(shelf, const ['contents']);
+    if (contents is! List) continue;
+    final parsed = <Track>[];
+    for (final it in contents) {
       final li = nav(it, const ['musicResponsiveListItemRenderer']);
       if (li == null) continue;
       final t = parseListItem(li);
-      if (t != null) topSongs.add(t);
+      if (t != null) parsed.add(t);
+    }
+    if (parsed.isNotEmpty) {
+      topSongs.addAll(parsed);
+      topShelf = shelf;
+      break;
     }
   }
+  // Resolve the songs playlist id from whichever shelf we used.
   final songsEndpoint = nav(topShelf, const [
     'bottomEndpoint',
     'browseEndpoint',
@@ -1356,7 +1416,6 @@ ArtistDetail? buildArtist(dynamic res) {
   final songsPlaylistParams =
       str(nav(songsEndpoint, const ['params'])) ??
       _browseParamsFromRuns(titleEndpoint);
-
   final albums = <BrowseItem>[];
   final singlesAndEps = <BrowseItem>[];
   final relatedPlaylists = <BrowseItem>[];

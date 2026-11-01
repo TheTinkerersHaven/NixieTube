@@ -462,6 +462,163 @@ void main() {
       );
     });
   });
+
+  group('stored files report their format', () {
+    Future<HttpServer> serve(List<int> bytes) async {
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      server.listen((request) {
+        request.response
+          ..headers.contentType = ContentType.binary
+          ..add(bytes);
+        unawaited(request.response.close());
+      });
+      addTearDown(() => server.close(force: true));
+      return server;
+    }
+
+    test('a downloaded JPEG is stored as .jpg', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-naming');
+      addTearDown(() => dir.delete(recursive: true));
+      final bytes = img.encodeJpg(_solid(120, 80, 200, 30, 30));
+      final server = await serve(bytes);
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final url = 'http://127.0.0.1:${server.port}/a.jpg';
+      final hex = _shaForTest(url);
+      expect(await store.image(url), isNotNull);
+      expect(File('${dir.path}/$hex.jpg').existsSync(), isTrue);
+      expect(File('${dir.path}/$hex.img4').existsSync(), isFalse);
+      // The stable tile path resolves the format suffix now, too
+      // (what MPRIS hands other desktop clients as file:// artwork).
+      expect(store.tileFilePath(url), '${dir.path}/$hex.jpg');
+    });
+
+    test('a downloaded PNG is stored as .png', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-naming');
+      addTearDown(() => dir.delete(recursive: true));
+      final bytes = img.encodePng(_solid(64, 64, 10, 200, 30));
+      final server = await serve(bytes);
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final url = 'http://127.0.0.1:${server.port}/a.png';
+      final hex = _shaForTest(url);
+      expect(await store.image(url), isNotNull);
+      expect(File('${dir.path}/$hex.png').existsSync(), isTrue);
+      expect(File('${dir.path}/$hex.img4').existsSync(), isFalse);
+      // Re-reading works through the new name.
+      expect((await store.image(url))!.width, 64);
+    });
+
+    test('a stored source file reports its format too', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-naming');
+      addTearDown(() => dir.delete(recursive: true));
+      final bytes = img.encodeJpg(_solid(120, 80, 200, 30, 30));
+      final server = await serve(bytes);
+      final store = ArtworkStore(cacheDirPath: dir.path);
+      addTearDown(store.close);
+      final url = 'http://127.0.0.1:${server.port}/s.jpg';
+      final hex = _shaForTest(url);
+      expect(await store.source(url), isNotNull);
+      expect(File('${dir.path}/$hex.source.jpg').existsSync(), isTrue);
+      expect(File('${dir.path}/$hex.source4.img').existsSync(), isFalse);
+    });
+
+    test(
+      'an incomplete legacy file is replaced by a correctly named one',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('nt-art-legacy');
+        addTearDown(() => dir.delete(recursive: true));
+        final jpeg = img.encodeJpg(_solid(60, 60, 10, 20, 200));
+        final server = await serve(jpeg);
+        final store = ArtworkStore(cacheDirPath: dir.path);
+        addTearDown(store.close);
+        final url = 'http://127.0.0.1:${server.port}/a.jpg';
+        final hex = _shaForTest(url);
+        // Seed an integrity failure: a JPEG signature without its EOI
+        // marker, as a previous-generation cache hit that never finished.
+        await File('${dir.path}/$hex.img4').writeAsBytes([0xFF, 0xD8, 0xFF]);
+        expect(await store.image(url), isNotNull);
+        // The fresh bytes land under the format's own name, and the
+        // unreadable legacy file is gone: one URL, one file.
+        expect(File('${dir.path}/$hex.jpg').existsSync(), isTrue);
+        expect(File('${dir.path}/$hex.img4').existsSync(), isFalse);
+        expect(store.tileFilePath(url), '${dir.path}/$hex.jpg');
+      },
+    );
+  });
+
+  group('prune', () {
+    test('files older than maxAge are deleted, others kept', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-prune');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = ArtworkStore(
+        cacheDirPath: dir.path,
+        maxAge: const Duration(days: 30),
+        maxBytes: 1 << 30,
+      );
+      addTearDown(store.close);
+      final old = File('${dir.path}/old.jpg')
+        ..writeAsBytesSync(img.encodeJpg(_solid(8, 8, 1, 2, 3)))
+        ..setLastModifiedSync(
+          DateTime.now().subtract(const Duration(days: 45)),
+        );
+      final fresh = File('${dir.path}/fresh.jpg')
+        ..writeAsBytesSync(img.encodeJpg(_solid(8, 8, 3, 2, 1)))
+        ..setLastModifiedSync(DateTime.now());
+      await store.prune();
+      expect(old.existsSync(), isFalse);
+      expect(fresh.existsSync(), isTrue);
+    });
+
+    test('a cache over maxBytes is trimmed oldest-first', () async {
+      final dir = await Directory.systemTemp.createTemp('nt-art-prune');
+      addTearDown(() => dir.delete(recursive: true));
+      final old = File('${dir.path}/old.jpg')
+        ..writeAsBytesSync(img.encodeJpg(_solid(8, 8, 1, 2, 3)))
+        ..setLastModifiedSync(DateTime.now().subtract(const Duration(days: 9)));
+      final fresh = File('${dir.path}/fresh.jpg')
+        ..writeAsBytesSync(img.encodeJpg(_solid(8, 8, 3, 2, 1)))
+        ..setLastModifiedSync(DateTime.now().subtract(const Duration(days: 1)));
+      // Ceiling sits tighter than both files together, but roomy enough
+      // for the newer one: pruning the oldest first keeps exactly that.
+      final store = ArtworkStore(
+        cacheDirPath: dir.path,
+        maxAge: const Duration(days: 30),
+        maxBytes: await old.length() + await fresh.length() - 1,
+      );
+      addTearDown(store.close);
+      await store.prune();
+      expect(old.existsSync(), isFalse);
+      expect(fresh.existsSync(), isTrue);
+    });
+
+    test(
+      'a cache under maxBytes is untouched, tmp files age out too',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('nt-art-prune');
+        addTearDown(() => dir.delete(recursive: true));
+        final store = ArtworkStore(
+          cacheDirPath: dir.path,
+          maxAge: const Duration(days: 1),
+          maxBytes: 1 << 30,
+        );
+        addTearDown(store.close);
+        final keep = File('${dir.path}/k.jpg')
+          ..writeAsBytesSync(img.encodeJpg(_solid(8, 8, 1, 2, 3)))
+          ..setLastModifiedSync(DateTime.now());
+        final tmp = File('${dir.path}/k.jpg.tmp.12.34')
+          ..writeAsBytesSync(img.encodeJpg(_solid(8, 8, 1, 2, 3)))
+          ..setLastModifiedSync(
+            DateTime.now().subtract(const Duration(hours: 30)),
+          );
+        await store.prune();
+        expect(keep.existsSync(), isTrue);
+        // The abandoned temp file (30 h old) is older than maxAge, so
+        // the same age cutoff takes it out without special-casing.
+        expect(tmp.existsSync(), isFalse);
+      },
+    );
+  });
 }
 
 String _shaForTest(String url) => sha1.convert(utf8.encode(url)).toString();

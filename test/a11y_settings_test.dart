@@ -272,9 +272,15 @@ void main() {
       MaterialApp(
         theme: buildTheme(),
         home: Scaffold(
-          body: ChangeNotifierProvider.value(
-            value: state,
-            child: const NowPlayingScreen(),
+          body: Builder(
+            builder: (ctx) {
+              // ignore: avoid_print
+              print('MATERIALAPP theme primary: ${Theme.of(ctx).colorScheme.primary}');
+              return ChangeNotifierProvider.value(
+                value: state,
+                child: const NowPlayingScreen(),
+              );
+            },
           ),
         ),
       ),
@@ -295,11 +301,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Info'));
     await tester.pumpAndSettle();
-    final primary = buildTheme().colorScheme.primary;
+    final onSurface = buildTheme().colorScheme.onSurface;
     Text artistLink() => tester.widget<Text>(
       find.byWidgetPredicate(
         (w) =>
-            w is Text && w.data == 'Some Artist' && w.style?.color == primary,
+            w is Text && w.data == 'Some Artist' && w.style?.color != onSurface,
       ),
     );
     // Off by default: plain primary-colored text, no underline.

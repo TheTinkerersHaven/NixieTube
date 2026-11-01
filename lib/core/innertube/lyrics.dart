@@ -234,7 +234,7 @@ List<LyricLine> parseLrc(String lrc) {
 /// Fetches lyrics from LRCLIB, preferring a direct match and falling back
 /// to the best search hit. Returns the lines with the provider's album name
 /// (null when nothing matches or on failure).
-Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
+Future<({List<LyricLine> lines, String? album, bool ok})> fetchLyricsAndAlbum(
   String artist,
   String title,
   String album,
@@ -270,7 +270,7 @@ Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
       fallbackAlbum = direct.album;
       if (direct.lines.isNotEmpty) {
         if (_hasSyncedLines(direct.lines)) {
-          return (lines: direct.lines, album: direct.album);
+          return (lines: direct.lines, album: direct.album, ok: true);
         }
         fallback = direct;
       }
@@ -340,11 +340,11 @@ Future<({List<LyricLine> lines, String? album})> fetchLyricsAndAlbum(
       }
     }
     if (best != null) {
-      return (lines: best.lines, album: best.album ?? fallbackAlbum);
+      return (lines: best.lines, album: best.album ?? fallbackAlbum, ok: true);
     }
-    return (lines: fallback?.lines ?? <LyricLine>[], album: fallbackAlbum);
+    return (lines: fallback?.lines ?? <LyricLine>[], album: fallbackAlbum, ok: true);
   } catch (_) {
-    return (lines: <LyricLine>[], album: null);
+    rethrow;
   } finally {
     // Injected clients belong to the caller; the shared
     // one lives for the app's lifetime (like Kotlin's).
@@ -507,7 +507,7 @@ Future<List<LyricLine>> fetchYtmLyrics(String videoId, {Dio? dio}) async {
       await decodeJsonResponse(await post('browse', {'browseId': browseId})),
     );
   } catch (_) {
-    return [];
+    rethrow;
   } finally {
     // Injected clients belong to the caller; the shared
     // one lives for the app's lifetime (like Kotlin's).

@@ -47,8 +47,14 @@ void main() {
   Map<String, String> form(RequestOptions r) =>
       Map<String, String>.from(r.data as Map);
 
-  List<RequestOptions> callsFor(String method) =>
-      calls.where((r) => form(r)['method'] == method).toList();
+  List<RequestOptions> callsFor(String method) => calls
+      .where(
+        (r) =>
+            // GETs carry the method in the query string; POSTs in the body.
+            r.uri.queryParameters['method'] == method ||
+            (r.data is Map && form(r)['method'] == method),
+      )
+      .toList();
 
   setUp(() {
     dir = Directory.systemTemp.createTempSync('nt-lastfm-');
@@ -421,5 +427,231 @@ void main() {
     final scrobbled = form(callsFor('track.scrobble').first);
     expect(scrobbled['track'], 'Anthem');
     expect(scrobbled['artist'], 'Headline');
+  });
+
+  group('cleanInfoTitle', () {
+    test('strips trailing playback-noise tags', () {
+      expect(cleanInfoTitle('Engravings (Official Video)'), 'Engravings');
+      expect(cleanInfoTitle('Engravings (Official Music Video)'), 'Engravings');
+      expect(cleanInfoTitle('Song [Lyrics]'), 'Song');
+      expect(cleanInfoTitle('Song (HD)'), 'Song');
+      expect(cleanInfoTitle('Song (M/V)'), 'Song');
+      expect(cleanInfoTitle('Song 4K'), 'Song 4K');
+    });
+
+    test('keeps musical versions and ordinary parentheses', () {
+      expect(cleanInfoTitle('Song (Remastered 2011)'), 'Song (Remastered 2011)');
+      expect(cleanInfoTitle('Song (Live)'), 'Song (Live)');
+      expect(cleanInfoTitle('Song (feat. X)'), 'Song (feat. X)');
+      expect(cleanInfoTitle('Song'), 'Song');
+      expect(cleanInfoTitle('(Official) Song'), '(Official) Song');
+    });
+  });
+
+  group('trackInfo', () {
+    // The handler route is by method, so the query string headers in
+    // queryParameters carry the request's identifying parameter set.
+    test('direct lookup uses the cleaned title and autocorrect', () async {
+      startService(
+        handler: (r) async {
+          expect(r.uri.queryParameters['method'], 'track.getInfo');
+          expect(r.uri.queryParameters['track'], 'Engravings');
+          expect(r.uri.queryParameters['autocorrect'], '1');
+          return (
+            200,
+            jsonEncode({
+              'track': {'name': 'Engravings', 'playcount': '100'},
+            })
+          );
+        },
+      );
+      final res = await service.trackInfo(
+        'Ethan Bortnick',
+        'Engravings (Official Video)',
+      );
+      expect(res, isNotNull);
+      expect(res!['name'], 'Engravings');
+    });
+
+    test('falls back to a scored search and resolves by MBID', () async {
+      startService(
+        handler: (r) async {
+          switch (r.uri.queryParameters['method']) {
+            case 'track.search':
+              return (
+                200,
+                jsonEncode({
+                  'results': {
+                    'trackmatches': {
+                      'track': [
+                        // Right song but no MBID, duration off enough that
+                        // the scored candidate below wins.
+                        {
+                          'name': 'Engravings',
+                          'artist': 'Ethan Bortnick',
+                          'mbid': '',
+                          'duration': '300',
+                        },
+                        {
+                          'name': 'Engravings',
+                          'artist': 'Ethan Bortnick',
+                          'mbid': 'mb-1',
+                          'duration': '250',
+                        },
+                        {
+                          'name': 'Other Song',
+                          'artist': 'Someone Else',
+                          'mbid': 'mb-2',
+                          'duration': '250',
+                        },
+                      ],
+                    },
+                  },
+                })
+              );
+            case 'track.getInfo':
+              if (r.uri.queryParameters['mbid'] == 'mb-1') {
+                return (
+                  200,
+                  jsonEncode({
+                    'track': {'name': 'Engravings', 'listeners': '5'},
+                  })
+                );
+              }
+              return (
+                200,
+                jsonEncode({'error': '6', 'message': 'The track you requested could not be found'}),
+              );
+            default:
+              fail('unexpected call ${r.uri}');
+          }
+        },
+      );
+      final res = await service.trackInfo(
+        'Ethan Bortnick',
+        'Engravings',
+        durationSec: 250,
+      );
+      expect(res, isNotNull);
+      expect(res!['listeners'], '5');
+      expect(callsFor('track.getInfo'), hasLength(2));
+    });
+
+    test('skips unrelated search candidates entirely', () async {
+      startService(
+        handler: (r) async {
+          switch (r.uri.queryParameters['method']) {
+            case 'track.search':
+              return (
+                200,
+                jsonEncode({
+                  'results': {
+                    'trackmatches': {
+                      'track': [
+                        {
+                          'name': 'Totally Different',
+                          'artist': 'Someone Else',
+                          'mbid': 'mb-9',
+                          'duration': '90',
+                        },
+                      ],
+                    },
+                  },
+                })
+              );
+            case 'track.getInfo':
+              return (
+                200,
+                jsonEncode({'error': '6', 'message': 'The track you requested could not be found'}),
+              );
+            default:
+              fail('unexpected call ${r.uri}');
+          }
+        },
+      );
+      expect(
+        await service.trackInfo('Mia Wray', 'What I Want', durationSec: 200),
+        isNull,
+      );
+    });
+
+    test('rejects a title-only match without verifiable signals', () async {
+      // Same song title, another artist, no duration — exactly the case
+      // where Last.fm search returns the wrong track first.
+      startService(
+        handler: (r) async {
+          switch (r.uri.queryParameters['method']) {
+            case 'track.search':
+              return (
+                200,
+                jsonEncode({
+                  'results': {
+                    'trackmatches': {
+                      'track': [
+                        {
+                          'name': 'Engravings',
+                          'artist': 'Some Other Composer',
+                          'mbid': 'mb-9',
+                        },
+                      ],
+                    },
+                  },
+                })
+              );
+            case 'track.getInfo':
+              return (
+                200,
+                jsonEncode({'error': '6', 'message': 'not found'}),
+              );
+            default:
+              fail('unexpected call ${r.uri}');
+          }
+        },
+      );
+      expect(
+        await service.trackInfo('Ethan Bortnick', 'Engravings', durationSec: 148),
+        isNull,
+      );
+    });
+  });
+
+  group('artistTags', () {
+    test('returns the artist tag names', () async {
+      startService(
+        handler: (r) async {
+          expect(r.uri.queryParameters['method'], 'artist.getTopTags');
+          return (
+            200,
+            jsonEncode({
+              'toptags': {
+                'tag': [
+                  {'name': 'pop'},
+                  {'name': 'indie pop'},
+                  'not a map',
+                ],
+              },
+            })
+          );
+        },
+      );
+      expect(await service.artistTags('Some Artist'), ['pop', 'indie pop']);
+    });
+
+    test('returns empty when the artist is unknown or the call fails',
+        () async {
+      startService(
+        handler: (r) async => (
+          200,
+          jsonEncode({'error': '6', 'message': 'not found'}),
+        ),
+      );
+      expect(await service.artistTags('Unknown Artist'), isEmpty);
+    });
+
+    test('returns empty for a blank artist', () async {
+      startService();
+      expect(await service.artistTags(''), isEmpty);
+      expect(calls, isEmpty);
+    });
   });
 }

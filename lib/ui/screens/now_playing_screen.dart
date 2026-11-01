@@ -25,6 +25,7 @@ import '../widgets/player_bar.dart';
 import '../widgets/seek_slider.dart';
 import '../widgets/spring_context_menu.dart';
 import '../widgets/track_row.dart';
+import '../widgets/song_info.dart';
 import '../widgets/volume_slider.dart';
 
 /// Full Now Playing view with cover, transport and tabs.
@@ -630,7 +631,8 @@ class _TabsContent extends StatefulWidget {
   State<_TabsContent> createState() => _TabsContentState();
 }
 
-class _TabsContentState extends State<_TabsContent> with TickerProviderStateMixin {
+class _TabsContentState extends State<_TabsContent>
+    with TickerProviderStateMixin {
   /// The lyrics list's scroll state.
   final _LyricsScroll _lyrics = _LyricsScroll();
 
@@ -680,7 +682,7 @@ class _TabsContentState extends State<_TabsContent> with TickerProviderStateMixi
             children: [
               _UpNextTab(),
               _LyricsTab(lyrics: _lyrics, tabController: _tabController),
-              _InfoTab(),
+              _InfoTab(theme: Theme.of(context)),
             ],
           ),
         ),
@@ -1102,7 +1104,7 @@ class _LyricsTabState extends State<_LyricsTab> {
             restoreOffset: () => widget.lyrics.offset,
             large: false,
             tabIndex: _LyricsBody.lyricsTabIndex,
-          tabController: widget.tabController,
+            tabController: widget.tabController,
           ),
         ),
       ],
@@ -1146,6 +1148,7 @@ class _LyricsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final lyrics = context.select<AppState, List<LyricLine>>((s) => s.lyrics);
     final loading = context.select<AppState, bool>((s) => s.lyricsLoading);
+    final error = context.select<AppState, bool>((s) => s.lyricsError);
     final state = context.read<AppState>();
     if (lyrics.isEmpty && loading) {
       return Skeletonizer(
@@ -1163,6 +1166,26 @@ class _LyricsBody extends StatelessWidget {
       );
     }
     if (lyrics.isEmpty) {
+      if (error) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                "Couldn't load lyrics",
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: state.retryLyrics,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        );
+      }
       return Center(
         child: Text(
           'No lyrics found',
@@ -1231,16 +1254,13 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
         children: [
           RepaintBoundary(child: PaletteBackdrop(palette: widget.palette)),
           Padding(
-            padding: const EdgeInsets.fromLTRB(
-              0,
-              screenPadding,
-              0,
-              0,
-            ),
+            padding: const EdgeInsets.fromLTRB(0, screenPadding, 0, 0),
             child: Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: screenPadding),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: screenPadding,
+                  ),
                   child: Row(
                     children: [
                       IconButton(
@@ -1292,157 +1312,18 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
 }
 
 class _InfoTab extends StatelessWidget {
+  const _InfoTab({this.theme});
+
+  final ThemeData? theme;
+
   @override
   Widget build(BuildContext context) {
-    final state = context.read<AppState>();
     final track = context.select<AppState, Track?>(
       (s) => s.playerState.current,
     );
-    // Duration latches 0 → actual once the engine reports; the select
-    // keeps ticks out of this tab.
-    final durationMs = context.select<AppState, int>(
-      (s) => s.playerState.durationMs,
-    );
     if (track == null) return const SizedBox.shrink();
-    final shownMs = durationMs > 0
-        ? durationMs
-        : (track.durationSec > 0 ? track.durationSec * 1000 : 0);
-    // Opt-in link underlines (accessibility): off by default, links
-    // stay plain primary-colored text.
-    final underlineLinks = context.select<AppState, bool>(
-      (s) => s.config.underlineLinks,
-    );
-    final linkDecoration = underlineLinks
-        ? TextDecoration.underline
-        : TextDecoration.none;
-    Widget row(String label, String value, {VoidCallback? onTap}) {
-      final scheme = Theme.of(context).colorScheme;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                  Text(
-                    value.isEmpty ? 'Unknown' : value,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: onTap != null ? scheme.primary : scheme.onSurface,
-                      decoration: onTap != null
-                          ? linkDecoration
-                          : TextDecoration.none,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Divider(color: scheme.surfaceContainerHigh, height: 1),
-        ],
-      );
-    }
-
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      children: [
-        row('Title', track.title),
-        if (track.artists.isEmpty)
-          row('Artists', '')
-        else
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Artists',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (var i = 0; i < track.artists.length; i++) ...[
-                            InkWell(
-                              onTap: () {
-                                state.closeNow();
-                                unawaited(
-                                  state.openArtist(track.artists[i], track),
-                                );
-                              },
-                              child: Text(
-                                track.artists[i].name,
-                                style: Theme.of(context).textTheme.bodyLarge
-                                    ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary,
-                                      decoration: linkDecoration,
-                                    ),
-                              ),
-                            ),
-                            if (i != track.artists.length - 1)
-                              Text(
-                                ', ',
-                                style: Theme.of(context).textTheme.bodyLarge,
-                              ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Divider(
-                color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                height: 1,
-              ),
-            ],
-          ),
-        if (track.album != null)
-          row(
-            'Album${track.album!.kind != null ? ' (${track.album!.kind!.label})' : ''}',
-            track.album!.name,
-            onTap: track.album!.browseId == null
-                ? null
-                : () {
-                    state.closeNow();
-                    unawaited(state.openAlbum(track, track.album!));
-                  },
-          )
-        else
-          row('Album', ''),
-        row('Year', track.album?.year ?? ''),
-        row('Duration', shownMs > 0 ? formatClock(shownMs) : ''),
-        if (track.views.trim().isNotEmpty) row('Views', track.views),
-        row('Likes', _fmtCount(track.likeCount)),
-      ],
-    );
+    return SongInfoView(track: track, theme: theme);
   }
-}
-
-String _fmtCount(int n) {
-  if (n < 0) return '';
-  if (n < 1000) return '$n';
-  if (n < 1000000) {
-    final v = n / 1000;
-    return v >= 100 ? '${v.round()}K' : '${v.toStringAsFixed(1)}K';
-  }
-  final m = n / 1000000;
-  return m >= 100 ? '${m.round()}M' : '${m.toStringAsFixed(1)}M';
 }
 
 /// Sleep timer option picked from the sheet.

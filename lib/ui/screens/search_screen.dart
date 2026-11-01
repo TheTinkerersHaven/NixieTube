@@ -26,6 +26,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focus = FocusNode();
   String _filter = 'All';
+  String _lastQuery = '';
 
   @override
   void initState() {
@@ -48,7 +49,25 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final search = context.select<AppState, SearchUiState>((s) => s.search);
+    // Rebuild when the history changes (add/remove/clear) so the
+    // recent-searches list and its per-row delete buttons stay live.
+    context.select<AppState, int>((s) => s.searchHistory.length);
     final state = context.read<AppState>();
+    // The controller is local to this screen, but the query lives in
+    // AppState: navigating away and back recreates the screen with an
+    // empty controller while the results are still there. Keep them in
+    // sync only when the AppState query actually changes, so typing in
+    // the field is never clobbered by a rebuild.
+    if (search.query != _lastQuery) {
+      _lastQuery = search.query;
+      _filter = 'All';
+      if (_controller.text != search.query) {
+        _controller.value = TextEditingValue(
+          text: search.query,
+          selection: TextSelection.collapsed(offset: search.query.length),
+        );
+      }
+    }
     return Column(
       children: [
         Padding(
@@ -132,6 +151,33 @@ class _SearchScreenState extends State<SearchScreen> {
     final keys = sections.keys
         .where((k) => _filter == 'All' || _filter == k)
         .toList();
+    if (_filter == 'All') {
+      final q = search.query.toLowerCase();
+      keys.sort((a, b) {
+        bool exact(String k) {
+          final lower = k.toLowerCase();
+          if (lower == 'exact match' ||
+              lower == 'top result' ||
+              lower == 'results' ||
+              lower == 'best match') {
+            return true;
+          }
+          // An artist section whose name matches the query is an exact hit.
+          if (k == 'Artists') {
+            return sections[k]!.any((it) {
+              if (it is BrowseItem) return it.title.toLowerCase() == q;
+              return false;
+            });
+          }
+          return false;
+        }
+
+        final ae = exact(a);
+        final be = exact(b);
+        if (ae != be) return ae ? -1 : 1;
+        return 0;
+      });
+    }
     if (keys.isEmpty && !search.loading) {
       return _noResults(context, state);
     }
@@ -175,17 +221,20 @@ class _SearchScreenState extends State<SearchScreen> {
     List<ShelfItem> items,
   ) {
     final songs = items.whereType<SongItem>().map((e) => e.track).toList();
-    return Row(
-      children: [
-        Expanded(
-          child: Text(key, style: Theme.of(context).textTheme.titleLarge),
-        ),
-        if (songs.isNotEmpty)
-          M3ETextButton(
-            onPressed: () => state.playSongs(songs, 0),
-            child: const Text('Play all'),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(key, style: Theme.of(context).textTheme.titleLarge),
           ),
-      ],
+          if (songs.isNotEmpty)
+            M3ETextButton(
+              onPressed: () => state.playSongs(songs, 0),
+              child: const Text('Play all'),
+            ),
+        ],
+      ),
     );
   }
 

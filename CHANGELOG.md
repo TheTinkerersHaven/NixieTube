@@ -4,6 +4,70 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1] — 2026-10-27
+
+### Added
+
+- **Search results prefer the popular recording.** When several songs share a title (e.g. "Godzilla"), the one with the most views ranks first instead of an arbitrary order.
+- **The Now Playing view remembers its tab.** Reopening it lands on the last tab used (Up next, Lyrics or Info) instead of always Up next.
+- **Discord shows video cover art.** Tracks whose only artwork is a 16:9 video still now send that still to Discord instead of no cover at all.
+- **A "Song info" action on every track.** The ⋮/right-click menu now opens a modal with the track's title, artists, album, year, duration, play count and likes — the same details as the Now Playing Info tab.
+- **Song info fills in from Last.fm.** The Info tab and the song-info modal show genre tags for the song and the artist on separate lines (a long dash marks a missing line), play counts for both YouTube Music and Last.fm, Last.fm listeners, the Last.fm album when YouTube has none, and a short song summary. Lookups are cached per track so tab switches no longer refetch, and YTM counts are fetched once per session for the queue rows that carry no view count; matches are scored against artist, title and duration so renamed or featured uploads resolve to the right release.
+- **Search leads with an Exact Match.** The closest result to the query is surfaced in its own section at the top of the All view, followed by the natural category order.
+- **Artist pages gained a "Play all" button.** The top songs now play from the first track via a main Play all button; Shuffle moved to the second button.
+- **Track rows keep their actions tidy.** The dislike button stays on every row, and the overflow menu appears on hover instead of sitting on every row; the play count sits in a fixed, right-aligned column.
+- **Artist pages use a full-bleed hero.** The banner spans the content area with a gradient into the background, with the name, subscriber count and actions inside it; top songs fill as many columns as fit (preloaded from the artist's songs playlist instead of the five-song preview), the About panel stretches beside them to the songs' height and opens its full bio in a modal, and rails scale to fill the row edge to edge.
+
+### Fixed
+
+- **Discord Rich Presence no longer spams updates.** Presence was re-sent on every 500 ms playback tick (roughly twice a second); it now re-sends only on track, play/pause or seek changes, with a periodic drift correction.
+- **A paused track disappears from Discord after 15 minutes.** Presence used to keep showing a paused track forever; it is withdrawn once the pause lasts 15 minutes.
+- **Sleep inhibition could leak a lock.** A pause/play race could spawn two `systemd-inhibit` children and leave the first one holding sleep blocked after the app quit; the lock is now serialized and released on exit.
+- **The window title is properly spelled.** The GTK window was titled "nixietube"; it is now "NixieTube".
+- **Playlist tiles no longer show black borders.** Quick-pick tiles now resolve YouTube's own square cover instead of cover-fitting a 16:9 frame.
+- **Artwork no longer shimmers forever.** The artwork workers only offered themselves back to the pool once per load, so later tiles waited forever; they re-offer after every job now.
+- **Artwork stays sharp on large tiles.** Tiles were decoding at a fixed 200 px and upscaling into blur; they now decode at the tile's actual size.
+- **The library backdrop no longer repaints on every progress tick.** The palette wash now arrives through its own notifier instead of an app-wide notification.
+- **The "Load more" spinner now appears.** The in-flight flag change was not notifying the UI.
+- **Typing in the search field no longer repaints the whole page.** The results list now only rebuilds what actually changed.
+- **Last.fm no longer stalls forever.** A stalled connection blocked every later scrobble; requests now time out and retry, and a failed scrobble is retried on the next tick.
+- **Discord IPC no longer hangs on a dead socket.** Send failures now reach the caller, and concurrent connect attempts share one attempt instead of orphaning a handshake.
+- **MPRIS no longer hammers the disk.** Artwork file checks are memoized and the debug log is bounded and debug-only.
+- **The credential fallback file is now 0600.** When no keyring is available, the secret fallback is written with owner-only permissions.
+- **Search history writes no longer block the UI.** They are now asynchronous.
+- **The search field's × now clears the results too.** It used to only empty the text, leaving the stale list on screen until the next search.
+- **Browser cookie import only asks for YouTube cookies.** The one-click import used to pull every cookie from the browser's profile; it now scopes the request to youtube.com and music.youtube.com.
+- **The detail screen "Shuffle" button now shuffles.** It used a play icon and the non-shuffled path.
+- **Failed playlist-membership checks are surfaced.** They no longer silently show "not a member", which could otherwise add a duplicate.
+- **Raw exception text is no longer shown in error boxes.** Failures map to short, plain sentences.
+- **Menus and the pin gesture are labelled for accessibility.** The "More actions" menus and the pin/unpin long-press on Quick picks gained tooltips and screen-reader hints.
+- **Switching tabs no longer leaves the search bar empty while results remain.** The search field now re-syncs with the stored query when returning to the Search screen, so the clear button is available again.
+- **Tapping a top song on an artist page starts playback immediately.** The full playlist loads in the background instead of blocking the first note.
+- **The song-info modal and Info tab are readable.** They now use the app theme instead of the default one.
+- **Unsynced lyrics are readable.** They render in full white instead of dimmed gray.
+- **Artist top songs now load on localized pages.** The "Top songs" shelf was matched by its English title only, so artists on non-English YouTube pages showed no top songs; the shelf is now chosen by its contents when the title doesn't match.
+
+### Changed
+
+- **Scrolling no longer evicts every cover.** The in-memory image cache was capped at 64 MB desktop, far too little once covers decoded at full resolution, so every home scroll dropped the older covers and scrolling back re-decoded the whole batch from disk; at 256 MB with tile-sized decodes, several hundred covers stay resident.
+- **Tiles decode only what they show.** Every tile decoded its cover at full resolution (a 1080px cover is ~4.6 MB of bitmap for a box a few hundred pixels wide), paying the cost again at every first paint; decodes are now sized to the space the tile actually paints (its own size, or the grid cell an expanding tile fills) in device pixels — proportionally, never upscaling past the file's own pixels — so scrolling paints a fraction of the bitmap data and holds far more covers in the same memory.
+- **One artwork file per image, named for its format.** The cache kept a raw download (`.img4`) plus a rendered PNG per image; it now stores a single compressed (JPEG, quality 85) copy named after the format it actually holds (`.jpg`, `.png`), so integrations like MPRIS hand other desktop clients a normal image file. "Clear artwork cache" also drops the square-cover map.
+- **The artwork cache prunes itself.** At startup, files older than 30 days are deleted (and re-download on demand if needed) and the cache is trimmed back under 512 MB, oldest first, so it can no longer grow without bound.
+- **Search results build lazily.** Off-screen rows and their artwork now only load when scrolled into view instead of all at once.
+- **Decoded artwork yields memory under pressure.** On OS memory pressure the in-memory image cache is emptied; the disk cache remains the real store.
+- **The fullscreen lyrics player bar spans the full width.** It used to sit inside the screen padding like the lyrics above it.
+- **Lyrics are fetched from both providers at once.** LRCLIB and YouTube Music are queried in parallel and both are cached, so switching the provider toggle is instant.
+- **Lyrics load before the tab opens.** Every track start prefetches both providers into the session cache, whether or not the Lyrics tab is open, so the list is already there on the first open or after skipping back to a track played earlier.
+- **Lyrics fail honestly.** When a provider comes back with nothing, the other provider's lyrics are shown instead of an empty screen; a network failure now reads "Couldn't load lyrics" with a Retry button rather than the same "No lyrics found" shown for tracks that simply have none.
+- **Song titles use the rounded Google Sans Flex.** Track, shelf and now-playing titles now use the local variable font with its ROND axis at maximum; body and labels keep the standard cut for readability.
+- **Info tab text is selectable.** Text in the Now Playing Info tab and the song-info modal can be selected and copied.
+- **Artist matches show in the main search results.** An artist whose name matches the query now appears in the All view instead of only behind the Artists chip.
+- **Artist pages use a collapsing banner.** The name sits over the banner with a gradient scrim and shrinks into the pinned app bar as you scroll; the back button comes from the bar with proper safe-area handling.
+- **Artist actions have a clear hierarchy.** A prominent Play all button, with Shuffle and Mix as tonal icon buttons and Subscribe beside the subscriber count.
+- **Artist pages cap their width on large screens.** Content is constrained instead of stretching edge to edge.
+- **Artist bios expand in place.** The silent 600-character cut-off is replaced by a four-line preview with a Show more toggle.
+- **Section headers are consistent.** "Top songs" and "About" share one header style with the See all action.
+
 ## [0.3.0] — 2026-10-22
 
 ### Added

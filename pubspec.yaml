@@ -1,7 +1,7 @@
 name: nixietube
 description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
-version: 0.3.1+17
+version: 0.3.1+87
 
 environment:
   sdk: ^3.13.5
@@ -30,7 +30,7 @@ dependencies:
   # 1.8.0 exports a RoundedPolygon that clashes with m3e_core's own
   # (both names are visible to m3e_core's loading indicator), so the app
   # stays on 1.7.x until m3e_core catches up.
-  material_ui: ^1.7.0
+  material_ui: '>=1.7.0 <1.8.0'
   # Loading skeletons for the home feed (replaces the spinner while shelves
   # resolve, so the layout is stable and content reveals in place).
   skeletonizer: ^3.0.0
@@ -51,6 +51,7 @@ dependencies:
   # NULL-deref crash fixes that upstream 0.3.0 lacks.
   desktop_webview_window:
     path: packages/desktop_webview_window
+  silky_scroll: ^2.6.4
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -61,3 +62,9 @@ flutter:
   assets:
     # The app logo, shown in the first-run setup.
     - assets/icon/nixietube.png
+    # Local Google Sans Flex variable font (ROND axis available).
+    - assets/fonts/GoogleSansFlex-VariableFont_ROND,opsz,slnt,wdth,wght.ttf
+  fonts:
+    - family: GoogleSansFlex
+      fonts:
+        - asset: "assets/fonts/GoogleSansFlex-VariableFont_ROND,opsz,slnt,wdth,wght.ttf"

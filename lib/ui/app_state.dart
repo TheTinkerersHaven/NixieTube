@@ -1043,23 +1043,21 @@ class AppState extends ChangeNotifier {
     final preview = artist.topSongs;
     if (index < 0 || index >= preview.length) return;
     final tapped = preview[index];
-    List<Track>? full;
+    // Start playback from the preview immediately so the tap is responsive;
+    // the full playlist (when available) lands in the background and swaps
+    // the queue in without restarting the song.
+    playSongs(preview, index);
     try {
       final pid = artist.songsPlaylistId;
-      if (pid != null) {
-        full = (await _tube.playlist(
-          pid,
-          params: artist.songsPlaylistParams,
-        ))?.tracks.takeIfNotEmpty();
-      }
+      if (pid == null) return;
+      final full = (await _tube.playlist(
+        pid,
+        params: artist.songsPlaylistParams,
+      ))?.tracks.takeIfNotEmpty();
+      if (full == null) return;
+      if (_player.state.current?.videoId != tapped.videoId) return;
+      _player.replaceQueue(full, 0);
     } catch (_) {}
-    if (full != null) {
-      var pos = full.indexWhere((t) => t.videoId == tapped.videoId);
-      if (pos < 0) pos = 0;
-      playSongs(full, pos);
-    } else {
-      playSongs(preview, index);
-    }
   }
 
   /// Plays an artist's full top-songs playlist, optionally shuffled.
@@ -1140,6 +1138,23 @@ class AppState extends ChangeNotifier {
     return startRadio(artist.topSongs.first);
   }
 
+  /// Starts an artist "Mix" station from the first top song, reporting
+  /// whether the mix loaded and whether the user moved on (seed changed)
+  /// mid-fetch so the caller can skip the failure snackbar silently.
+  Future<({bool loaded, bool movedOn})> startArtistMix(
+    ArtistDetail artist,
+  ) async {
+    if (artist.topSongs.isEmpty) return (loaded: false, movedOn: false);
+    final seed = artist.topSongs.first;
+    final res = await startArtistRadio(artist);
+    final movedOn = _player.state.current?.videoId != seed.videoId;
+    return (loaded: res.loaded, movedOn: movedOn);
+  }
+
+  /// How many top songs to show in the multi-column grid: up to 5 per
+  /// column, across up to 3 columns.
+  static const artistTopSongsCap = 15;
+
   void _loadDetail(BrowseItem item) {
     final gen = ++_detailGen;
     detail = DetailUiState(loading: true);
@@ -1149,7 +1164,54 @@ class AppState extends ChangeNotifier {
         if (item.browseId.startsWith('UC')) {
           final artist = await _tube.artist(item.browseId);
           if (gen != _detailGen) return;
-          detail = DetailUiState(loading: false, artist: artist);
+          // Enrich the preview's top songs with durations (and a few
+          // more tracks) from the songs playlist BEFORE publishing, so
+          // the first paint already shows durations instead of filling
+          // them in later. Falls back to the preview alone on failure.
+          ArtistDetail? published = artist;
+          if (artist != null && artist.songsPlaylistId != null) {
+            try {
+              final full = await _tube.playlist(
+                artist.songsPlaylistId!,
+                params: artist.songsPlaylistParams,
+              );
+              if (full != null && gen == _detailGen) {
+                final merged = List<Track>.of(artist.topSongs);
+                var changed = false;
+                for (var i = 0; i < full.tracks.length; i++) {
+                  final t = full.tracks[i];
+                  final idx = i < merged.length
+                      ? i
+                      : merged.indexWhere((e) => e.videoId == t.videoId);
+                  if (idx >= 0 && idx < merged.length) {
+                    final existing = merged[idx];
+                    if (existing.videoId == t.videoId ||
+                        existing.title == t.title) {
+                      final enriched = existing.copyWith(
+                        durationSec: existing.durationSec > 0
+                            ? existing.durationSec
+                            : t.durationSec,
+                        views: existing.views.trim().isNotEmpty
+                            ? existing.views
+                            : t.views,
+                      );
+                      if (enriched != existing) {
+                        merged[idx] = enriched;
+                        changed = true;
+                      }
+                    }
+                  } else if (merged.length < artistTopSongsCap) {
+                    merged.add(t);
+                    changed = true;
+                  }
+                  if (merged.length >= artistTopSongsCap) break;
+                }
+                if (changed) published = artist.copyWith(topSongs: merged);
+              }
+            } catch (_) {}
+          }
+          if (gen != _detailGen) return;
+          detail = DetailUiState(loading: false, artist: published);
         } else if (item.browseId.startsWith('MPRE')) {
           final album = await _tube.album(item.browseId);
           if (gen != _detailGen) return;
@@ -2007,7 +2069,7 @@ class AppState extends ChangeNotifier {
       }
       final liked = results[3];
       if (liked is List<Track>) {
-        _liked = _stampTrackMeta(liked);
+        _liked = _stampKnownRatings(_stampTrackMeta(liked));
         // The playlist's own count, which can exceed the rows the
         // shelf renders.
         _likedCount = api.likedCount;
@@ -2028,7 +2090,7 @@ class AppState extends ChangeNotifier {
       try {
         final full = await api.likedVideos();
         if (full.length > _liked.length) {
-          _liked = _stampTrackMeta(full);
+          _liked = _stampKnownRatings(_stampTrackMeta(full));
           _likedCount = api.likedCount;
           _updateLikedPlaylistEntry();
           _safeNotify();
@@ -2787,6 +2849,10 @@ class AppState extends ChangeNotifier {
     onComplete(cached);
   }
 
+  /// Public like-state check used by row buttons so they reflect
+  /// locally known likes even when the track object's rating is stale.
+  bool isLiked(String videoId) => _likedRating(videoId) == RatingStatus.like;
+
   RatingStatus? _likedRating(String videoId) =>
       (_likedIds.contains(videoId) || _liked.any((t) => t.videoId == videoId))
       ? RatingStatus.like
@@ -2885,6 +2951,44 @@ class AppState extends ChangeNotifier {
 
   // ---------- Lyrics / enrichment ----------
 
+  // YTM play counts: queue and playlist rows carry no views string, so
+  // they are fetched lazily from the player endpoint and cached per
+  // session (keyed by videoId). Failures stay uncached and refetch.
+  final Map<String, int> _ytmPlays = <String, int>{};
+  final Map<String, Future<int>> _ytmPlayJobs = <String, Future<int>>{};
+
+  /// Cached YTM play count for [videoId], or null when not fetched yet.
+  int? ytmPlayCount(String videoId) => _ytmPlays[videoId];
+
+  /// Fetches (and caches) YTM's canonical play count for a track.
+  Future<int> fetchYtmPlayCount(String videoId) {
+    if (videoId.trim().isEmpty) return Future.value(0);
+    final cached = _ytmPlays[videoId];
+    if (cached != null) return Future.value(cached);
+    final inflight = _ytmPlayJobs[videoId];
+    if (inflight != null) return inflight;
+    final job = _fetchYtmPlayCount(videoId);
+    _ytmPlayJobs[videoId] = job;
+    return job;
+  }
+
+  Future<int> _fetchYtmPlayCount(String videoId) async {
+    try {
+      final n = await _tube.viewCount(videoId);
+      if (n > 0) {
+        _ytmPlays[videoId] = n;
+        _safeNotify();
+      }
+      return n;
+    } catch (_) {
+      return 0;
+    } finally {
+      // Fire-and-forget removal; the dropped future is marked handled so
+      // it can't settle with an unwatched error.
+      _ytmPlayJobs.remove(videoId)?.ignore();
+    }
+  }
+
   List<LyricLine> _lyrics = [];
   List<LyricLine> get lyrics => _lyrics;
 
@@ -2894,6 +2998,11 @@ class AppState extends ChangeNotifier {
   /// skeleton). Drives the shimmering placeholder lines.
   bool _lyricsLoading = false;
   bool get lyricsLoading => _lyricsLoading;
+
+  /// True when the last lyrics fetch failed (network/parse error)
+  /// rather than legitimately finding none. Drives the retry affordance.
+  bool _lyricsError = false;
+  bool get lyricsError => _lyricsError;
 
   /// Fences concurrent lyric fetches (track skips, source
   /// switches): only the latest fetch may publish or clear
@@ -2910,6 +3019,18 @@ class AppState extends ChangeNotifier {
     _config.lyricsSource = source.name;
     final track = _player.state.current;
     final key = track?.videoId;
+    if (track != null && key != null && key.isNotEmpty) {
+      final cached = _lyricsCache['$key:${source.name}'];
+      if (cached != null) {
+        final otherKey = '$key:${source == LyricsSource.lrclib ? 'ytmusic' : 'lrclib'}';
+        final other = _lyricsCache[otherKey];
+        _lyrics = cached.isNotEmpty ? cached : (other ?? cached);
+        _safeNotify();
+        // Ensure the other provider is cached too, in the background.
+        unawaited(_fetchLyricsFor(key));
+        return;
+      }
+    }
     _lyrics = [];
     _safeNotify();
     if (track != null && key != null && key.isNotEmpty) {
@@ -2918,56 +3039,121 @@ class AppState extends ChangeNotifier {
   }
 
   /// Lyrics lines per track and source (`$videoId:${source.name}`),
-  /// so switching providers back and forth never refetches.
+  /// so switching providers back and forth never refetches. Evicts the
+  /// oldest entries past [lyricsCacheCap] so a long queue can't grow
+  /// the map without bound.
   final Map<String, List<LyricLine>> _lyricsCache = {};
+
+  /// Upper bound on the per-provider lyric cache.
+  static const lyricsCacheCap = 96;
+
+  /// Stores a provider's result under [cacheKey], evicting the oldest
+  /// entry when the cap is reached. Reinserting on read keeps hot
+  /// tracks (the ones being revisited) fresh.
+  void _cacheLyrics(String cacheKey, List<LyricLine> lines) {
+    if (_lyricsCache.length >= lyricsCacheCap &&
+        !_lyricsCache.containsKey(cacheKey)) {
+      _lyricsCache.remove(_lyricsCache.keys.first);
+    }
+    _lyricsCache[cacheKey] = lines;
+  }
 
   /// Loads lyrics for [key] from the selected provider (LRCLIB with
   /// album fill, or plain YTM text), serving the cache first.
   Future<void> _fetchLyricsFor(String key) async {
     final current = _player.state.current;
     if (current == null || current.videoId != key) return;
-    final source = lyricsSource;
-    final cacheKey = '$key:${source.name}';
-    final cached = _lyricsCache[cacheKey];
-    if (cached != null) {
+    final selected = lyricsSource;
+    final lrclibKey = '$key:lrclib';
+    final ytmKey = '$key:ytmusic';
+    final cachedLrclib = _lyricsCache[lrclibKey];
+    final cachedYtm = _lyricsCache[ytmKey];
+
+    // Both providers already cached: switching the toggle is instant.
+    if (cachedLrclib != null && cachedYtm != null) {
       if (_player.state.current?.videoId == key) {
-        _lyrics = cached;
+        _lyrics = selected == LyricsSource.lrclib
+            ? (cachedLrclib.isNotEmpty ? cachedLrclib : cachedYtm)
+            : (cachedYtm.isNotEmpty ? cachedYtm : cachedLrclib);
+        _lyricsError = false;
+        _lyricsLoading = false;
         _safeNotify();
       }
       return;
     }
+
     final gen = ++_lyricsGen;
     _lyricsLoading = true;
+    _lyricsError = false;
     _safeNotify();
     try {
-      if (source == LyricsSource.ytmusic) {
-        final lines = await fetchYtmLyrics(key);
-        if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
-        _lyricsCache[cacheKey] = lines;
-        _lyrics = lines;
-        _safeNotify();
-        return;
-      }
-      try {
-        final res = await fetchLyricsAndAlbum(
+      // Fetch the missing provider(s). When one is already cached we
+      // still kick the other in parallel so both end up cached and a
+      // later toggle never waits on the network.
+      Future<List<LyricLine>> lrclibFuture;
+      Future<String?> albumFuture;
+      if (cachedLrclib != null) {
+        lrclibFuture = Future.value(cachedLrclib);
+        albumFuture = Future.value(null);
+      } else {
+        final pending = fetchLyricsAndAlbum(
           current.artistNames(),
           current.title,
           current.album?.name ?? '',
           current.durationSec,
         );
-        if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
-        _lyricsCache[cacheKey] = res.lines;
-        _lyrics = res.lines;
-        if (res.album != null && res.album!.isNotEmpty) {
-          _player.updateTrackAlbum(key, res.album!);
-        }
-        if (!_disposed) notifyListeners();
-      } catch (_) {}
+        lrclibFuture = pending.then((r) => r.lines).catchError(
+          (_) => <LyricLine>[],
+        );
+        albumFuture = pending.then((r) => r.album).catchError((_) => null);
+      }
+      final ytmFuture = cachedYtm != null
+          ? Future.value(cachedYtm)
+          : fetchYtmLyrics(key).catchError((_) => <LyricLine>[]);
+
+      final results = await Future.wait<Object?>([
+        lrclibFuture.then<Object?>((r) => r),
+        albumFuture.then<Object?>((r) => r),
+        ytmFuture.then<Object?>((r) => r),
+      ]);
+      if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
+
+      final lrclibLines = (results[0] is List<LyricLine>)
+          ? results[0] as List<LyricLine>
+          : <LyricLine>[];
+      final album = results[1] as String?;
+      final ytmLines = (results[2] is List<LyricLine>)
+          ? results[2] as List<LyricLine>
+          : <LyricLine>[];
+
+      if (cachedLrclib == null) _cacheLyrics(lrclibKey, lrclibLines);
+      if (cachedYtm == null) _cacheLyrics(ytmKey, ytmLines);
+      if (album != null && album.isNotEmpty) {
+        _player.updateTrackAlbum(key, album);
+      }
+      final selectedLines =
+          selected == LyricsSource.lrclib ? lrclibLines : ytmLines;
+      final fallbackLines =
+          selected == LyricsSource.lrclib ? ytmLines : lrclibLines;
+      _lyrics = selectedLines.isNotEmpty ? selectedLines : fallbackLines;
+    } catch (_) {
+      _lyricsError = true;
+      if (!_disposed) notifyListeners();
     } finally {
-      if (gen == _lyricsGen && _player.state.current?.videoId == key) {
+      // Only the latest fetch generation owns the loading flag; an
+      // abandoned earlier fetch (skip, provider switch) never clears it.
+      if (gen == _lyricsGen) {
         _lyricsLoading = false;
         if (!_disposed) notifyListeners();
       }
+    }
+  }
+
+  /// Retries the current track's lyrics fetch after a failure.
+  void retryLyrics() {
+    final key = _player.state.current?.videoId;
+    if (key != null && key.isNotEmpty) {
+      unawaited(_fetchLyricsFor(key));
     }
   }
 
@@ -3247,6 +3433,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> _resolveCurrentMetadata(Track track) async {
     final key = track.videoId;
+    // Prefetch lyrics in parallel with the (slow) metadata enrichment so
+    // the Lyrics tab is never waiting behind enrichTrack, and the result
+    // is cached for instant re-serving on a later revisit.
+    unawaited(_fetchLyricsFor(key));
     // Paint locally known like-state first: queue copies from search,
     // radio or shelves often carry unknown ratings for liked songs, and
     // the network read below may fail while the answer is known locally.
@@ -3272,7 +3462,7 @@ class AppState extends ChangeNotifier {
     );
     final current = _player.state.current;
     if (current == null || current.videoId != key) return;
-    await _fetchLyricsFor(key);
+    _safeNotify();
     if (_lastRatingVideoId != key) {
       _lastRatingVideoId = key;
       if (ratingsAvailable) {

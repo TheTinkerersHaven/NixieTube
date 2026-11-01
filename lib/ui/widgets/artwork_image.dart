@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
+import '../../core/artwork/artwork_store.dart';
 import '../app_state.dart';
 import '../theme.dart';
 
@@ -56,6 +57,12 @@ class ArtworkImage extends StatefulWidget {
 class _ArtworkImageState extends State<ArtworkImage> {
   String? _loadedUrl;
   File? _file;
+
+  /// Pixel size of the stored file ([ArtworkStore.tileSize]), read
+  /// before the [Image] mounts so its decode can be sized to the box.
+  /// Null until resolved (or when the header is not understood, in
+  /// which case the decode stays unbounded — never upscaled).
+  (int, int)? _tileSize;
   Timer? _retryTimer;
   bool _retried = false;
   bool _failed = false;
@@ -88,6 +95,7 @@ class _ArtworkImageState extends State<ArtworkImage> {
       _retryTimer?.cancel();
       _retryTimer = null;
       _file = null;
+      _tileSize = null;
       _loadedUrl = null;
       _failed = false;
       _waitingSquareKey = null;
@@ -112,7 +120,8 @@ class _ArtworkImageState extends State<ArtworkImage> {
       // forever with nothing left to load.
       if (_effectiveUrl() != _loadedUrl) {
         _file = null;
-          setState(_maybeLoad);
+        _tileSize = null;
+        setState(_maybeLoad);
       }
     }
   }
@@ -155,6 +164,54 @@ class _ArtworkImageState extends State<ArtworkImage> {
     final m = RegExp(r'=w(\d+)-h(\d+)').firstMatch(url);
     if (m != null) return m.group(1) != m.group(2);
     return url.contains('i.ytimg.com/vi/');
+  }
+
+  /// The artwork store behind every load.
+  ArtworkStore get _art => context.read<AppState>().art;
+
+  /// The cover image decoded for [box] logical pixels of painted width
+  /// (the tile's own size, or the expand tile's parent cell).
+  Widget _coverImage(File file, double box) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final needed = (box > 0 ? box : widget.size).clamp(1.0, 4096.0);
+    // Decode at the painted box in physical pixels: the smallest
+    // bitmap whose short side still covers the box under BoxFit.cover,
+    // so no upscaling happens on screen. No headroom factor: the
+    // filter quality (high) handles sub-pixel softness and the source's
+    // own resolution caps the result via allowUpscaling: false.
+    // Small headroom (1.5x) over the bare device-pixel box:
+    // rounding and the codec's internal resampling can leave the
+    // short side a hair under the box, and decoding a bit above the
+    // target lets FilterQuality.medium do the final reduction, which
+    // reads sharper than a single decode-to-target step. Capped at
+    // the source size via allowUpscaling: false, so small files lose
+    // nothing.
+    final devicePx = (needed * dpr * 3 / 2).ceil();
+    final ImageProvider provider;
+    if (_tileSize != null) {
+      final (tw, th) = _tileSize!;
+      final width = (tw >= th)
+          ? (devicePx * tw / th).round().clamp(1, tw)
+          : devicePx.clamp(1, tw);
+      provider = ResizeImage(
+        FileImage(file),
+        width: width,
+        allowUpscaling: false,
+      );
+    } else {
+      provider = FileImage(file);
+    }
+    // The frame's SizedBox.expand keeps the child bounding regardless
+    // of the decoded bitmap's aspect.
+    return SizedBox.expand(
+      child: Image(
+        image: provider,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+        gaplessPlayback: true,
+        errorBuilder: (_, _, _) => _placeholder(Theme.of(context).colorScheme),
+      ),
+    );
   }
 
   void _maybeLoad() {
@@ -221,10 +278,15 @@ class _ArtworkImageState extends State<ArtworkImage> {
     );
   }
 
-  /// Shows the resolved render for [u], then refines the decode width from
-  /// the render's pixel size (read from the PNG header alone) so a
-  /// cover-fit crop fills the box without upscaling.
+  /// Shows the resolved file for [u] with a decode sized to the box:
+  /// the pixel size is read first (a cheap header read) so the very
+  /// first decode is already bounded — a full-res decode would cache,
+  /// upload and rasterize 4.6 MB of bitmap for a tile a few hundred
+  /// pixels wide. When the header is not understood the tile falls
+  /// back to the unbounded decode rather than risk upscaling.
   Future<void> _onRender(String u, File? f) async {
+    if (!mounted || _loadedUrl != u) return;
+    final dims = f == null ? null : await _art.tileSize(u);
     if (!mounted || _loadedUrl != u) return;
     if (f == null) {
       _maybeRetry();
@@ -234,7 +296,10 @@ class _ArtworkImageState extends State<ArtworkImage> {
       setState(() => _failed = true);
       return;
     }
-    setState(() => _file = f);
+    setState(() {
+      _file = f;
+      _tileSize = dims;
+    });
   }
 
   /// One delayed retry when resolution yields nothing: a flaky boot-time
@@ -253,6 +318,29 @@ class _ArtworkImageState extends State<ArtworkImage> {
     });
   }
 
+  /// The static album-icon placeholder for a missing/failed tile.
+  Widget _placeholder(ColorScheme scheme) => widget.expand
+      ? SizedBox.expand(
+          child: Container(
+            color: scheme.surfaceContainerHigh,
+            child: Icon(
+              Icons.album_rounded,
+              size: widget.iconSize,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        )
+      : Container(
+          width: widget.size,
+          height: widget.size,
+          color: scheme.surfaceContainerHigh,
+          child: Icon(
+            Icons.album_rounded,
+            size: widget.iconSize,
+            color: scheme.onSurfaceVariant,
+          ),
+        );
+
   @override
   Widget build(BuildContext context) {
     // Every tile subscribes to the artwork-cache generation: when the
@@ -266,27 +354,6 @@ class _ArtworkImageState extends State<ArtworkImage> {
       context.select<AppState, int>((s) => s.squareCoverTick.value);
     }
     final scheme = Theme.of(context).colorScheme;
-    Widget placeholder() => widget.expand
-        ? SizedBox.expand(
-            child: Container(
-              color: scheme.surfaceContainerHigh,
-              child: Icon(
-                Icons.album_rounded,
-                size: widget.iconSize,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          )
-        : Container(
-            width: widget.size,
-            height: widget.size,
-            color: scheme.surfaceContainerHigh,
-            child: Icon(
-              Icons.album_rounded,
-              size: widget.iconSize,
-              color: scheme.onSurfaceVariant,
-            ),
-          );
     Widget frame(Widget child) => widget.circular
         ? ClipOval(
             child: widget.expand
@@ -323,22 +390,24 @@ class _ArtworkImageState extends State<ArtworkImage> {
         false;
     Widget child;
     if (file != null) {
-      // Decode at the source's native resolution so tiles stay crisp
-      // at any display size; Flutter downsamples for display. Capping
-      // the decode (cacheWidth) here previously upscaled small decodes
-      // into blur on larger tiles.
-      child = SizedBox.expand(
-        child: Image.file(
-          file,
-          fit: BoxFit.cover,
-          filterQuality: FilterQuality.medium,
-          gaplessPlayback: true,
-          errorBuilder: (context, _, _) => placeholder(),
-        ),
-      );
+      // Decode only what the box shows: the bitmap's short side at the
+      // box's device pixels, the long side scaled along to keep the
+      // aspect (a 16:9 still decodes at width×aspect so its height
+      // still reaches the box), never beyond the file's own pixels —
+      // `allowUpscaling: false` clamps a target above the source to a
+      // natural-size decode, so nothing is invented. The target reads
+      // the PAINTED box, not the size prop: expand tiles fill their
+      // parent's cell, which can be either side of `size` — a target
+      // below the painted box upscales on screen and reads soft.
+      child = widget.expand
+          ? LayoutBuilder(
+              builder: (context, constraints) =>
+                  _coverImage(file, constraints.maxWidth),
+            )
+          : _coverImage(file, widget.size);
     } else if (_failed || (!hasUrl && !ancestorLoading)) {
       // Settled without art (or a failed load): the static album icon.
-      child = placeholder();
+      child = _placeholder(scheme);
     } else {
       // Art on its way: one bone for the whole tile. Skeletonizer only
       // ever bones text and icons, so the Container+Icon placeholder

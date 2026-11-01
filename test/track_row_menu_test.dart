@@ -99,6 +99,11 @@ void main() {
   testWidgets('overflow button opens the spring menu', (tester) async {
     final state = await _boot();
     await _pumpRow(tester, state);
+    final hover = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(hover.removePointer);
+    await hover.moveTo(tester.getCenter(find.byType(TrackRow)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byTooltip('More actions'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
@@ -116,6 +121,11 @@ void main() {
     await _pumpRow(tester, state);
     // Open the menu while idle (springs settle on real time; the
     // live position ticker would hang pumpAndSettle once playing).
+    final hover = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(hover.removePointer);
+    await hover.moveTo(tester.getCenter(find.byType(TrackRow)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byTooltip('More actions'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
@@ -146,6 +156,11 @@ void main() {
   testWidgets('Play next with nothing loaded just plays', (tester) async {
     final state = await _boot();
     await _pumpRow(tester, state);
+    final hover = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(hover.removePointer);
+    await hover.moveTo(tester.getCenter(find.byType(TrackRow)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byTooltip('More actions'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));

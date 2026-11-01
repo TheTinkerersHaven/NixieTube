@@ -358,4 +358,67 @@ void main() {
       expect(batch['v1']!.durations['v2'], 240);
     });
   });
+
+  group('viewCount', () {
+    (int, Object) playerEnvelope(Map<String, dynamic> details) =>
+        _envelope({'videoDetails': details});
+
+    test('parses videoDetails.viewCount', () async {
+      var calls = 0;
+      final client = mockDio((options) async {
+        expect(options.uri.path, '/youtubei/v1/player');
+        calls++;
+        return playerEnvelope({
+          'videoId': 'vid1',
+          'viewCount': '123456',
+        });
+      });
+      final tube = InnerTube(dio: client);
+      expect(await tube.viewCount('vid1'), 123456);
+      expect(calls, 1);
+      tube.close();
+    });
+
+    test('coalesces identical in-flight calls', () async {
+      final client = mockDio((options) async {
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        return playerEnvelope({'viewCount': '1000'});
+      });
+      final tube = InnerTube(dio: client);
+      final a = tube.viewCount('v');
+      final b = tube.viewCount('v');
+      expect(await a, 1000);
+      expect(await b, 1000);
+      tube.close();
+    });
+
+    test('returns zero on error responses and transport failures',
+        () async {
+      final client = mockDio((options) async {
+        throw const HttpException('down');
+      });
+      final tube = InnerTube(dio: client);
+      expect(await tube.viewCount('v'), 0);
+      tube.close();
+    });
+
+    test('returns zero on a malformed viewCount', () async {
+      final client = mockDio((options) async {
+        return playerEnvelope({'viewCount': 'abc'});
+      });
+      final tube = InnerTube(dio: client);
+      expect(await tube.viewCount('v'), 0);
+      tube.close();
+    });
+
+    test('skips the call for a blank videoId', () async {
+      final client = mockDio((options) async {
+        fail('no call expected');
+      });
+      final tube = InnerTube(dio: client);
+      expect(await tube.viewCount(''), 0);
+      expect(await tube.viewCount('   '), 0);
+      tube.close();
+    });
+  });
 }

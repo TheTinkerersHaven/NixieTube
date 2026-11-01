@@ -10,6 +10,7 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -816,4 +817,7 @@ class _CountingStore extends ArtworkStore {
     calls++;
     return Future.value(result);
   }
+
+  @override
+  Future<(int, int)?> tileSize(String url) => Future.value(const (100, 100));
 }

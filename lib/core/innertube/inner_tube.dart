@@ -2429,6 +2429,27 @@ class InnerTube {
     }
   }
 
+  /// Play count for [videoId] from the player endpoint's `videoDetails`.
+  /// Queue and playlist rows carry no views string, and search "1.2M plays"
+  /// is a display string — the raw count lives only in `videoDetails`.
+  /// Returns 0 on failure or when the field is missing.
+  Future<int> viewCount(String videoId) async {
+    if (videoId.trim().isEmpty) return 0;
+    try {
+      final res = await post('player', {
+        'context': _contextBlock()['context'],
+        'videoId': videoId,
+        'racyCheckOk': true,
+        'contentCheckOk': true,
+      });
+      if (res is Map && res.containsKey('error')) return 0;
+      final vc = str(nav(res, const ['videoDetails', 'viewCount']));
+      return int.tryParse(vc ?? '') ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   /// Fetches fresh watchtime session tokens for [videoId] via the player
   /// endpoint. Needs `racyCheckOk`/`contentCheckOk` or the endpoint
   /// answers 400.

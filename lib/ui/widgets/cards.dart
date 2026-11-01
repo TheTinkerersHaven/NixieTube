@@ -10,10 +10,11 @@ import 'artwork_image.dart';
 /// Card for a browsable shelf item (album, playlist, artist): 208dp wide,
 /// 200dp art, two-line title plus subtitle.
 class BrowseCard extends StatelessWidget {
-  const BrowseCard({super.key, required this.item, required this.onTap});
+  const BrowseCard({super.key, required this.item, required this.onTap, this.width});
 
   final BrowseItem item;
   final VoidCallback onTap;
+  final double? width;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +25,7 @@ class BrowseCard extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        width: 208,
+        width: width ?? 208,
         padding: const EdgeInsets.all(4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

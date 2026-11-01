@@ -3,12 +3,36 @@
 // Only the dark scheme is applied (the Kotlin `App` hardcodes
 // `YtmDarkScheme`); the light scheme is defined but unused there too.
 
-import 'package:google_fonts/google_fonts.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// Shared outer padding applied by every top-level screen.
 const double screenPadding = 20.0;
+
+/// Horizontal gutter for the artist detail page: a fixed inset on
+/// both sides instead of a centering formula, so the hero text, rows
+/// and rails all share one left edge.
+const double gutter = 32.0;
+
+/// Title style for artist names on the detail page: a slightly wider,
+/// rounded cut of Google Sans Flex. Defined once so other title
+/// surfaces can reuse the same axis settings.
+TextStyle artistTitleStyle(BuildContext context) =>
+    Theme.of(context).textTheme.displayMedium!.copyWith(
+      fontVariations: const [
+        FontVariation('wght', 700),
+        FontVariation('opsz', 28),
+        FontVariation('ROND', 60),
+        FontVariation('wdth', 112.5),
+      ],
+    );
+
+/// Small spacing scale used inside detail/panel layouts.
+const double spaceXs = 4.0;
+const double spaceSm = 8.0;
+const double spaceMd = 16.0;
+const double spaceLg = 24.0;
+const double spaceXl = 32.0;
 
 /// Even vertical spacing between home sections.
 const double homeSectionSpacing = 20.0;
@@ -158,7 +182,7 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
         ? const Color(0xFF0B0B0C)
         : effective.surface,
     useMaterial3: true,
-    fontFamily: GoogleFonts.googleSansFlex().fontFamily,
+    fontFamily: 'GoogleSansFlex',
   );
   return base.copyWith(
     // De-bolded hierarchy: nothing above w500 anywhere. Emphasis
@@ -171,37 +195,45 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
       // Overrides for the app's specific hierarchy:
       // Now Playing track title — presence via size, not weight.
       headlineMedium: base.textTheme.headlineMedium?.copyWith(
+        fontFamily: 'GoogleSansFlex',
         fontWeight: FontWeight.w500,
         fontVariations: const [
           FontVariation('wght', 500),
           FontVariation('opsz', 28),
+          FontVariation('ROND', 100),
         ],
       ),
       // Shelf / section titles — light enough to not shout.
       titleLarge: base.textTheme.titleLarge?.copyWith(
+        fontFamily: 'GoogleSansFlex',
         fontWeight: FontWeight.w500,
         letterSpacing: 0.25,
         fontVariations: const [
           FontVariation('wght', 500),
           FontVariation('opsz', 22),
+          FontVariation('ROND', 100),
         ],
       ),
       // Track row titles — regular weight, clean.
       titleMedium: base.textTheme.titleMedium?.copyWith(
+        fontFamily: 'GoogleSansFlex',
         fontWeight: FontWeight.w400,
         letterSpacing: 0.15,
         fontVariations: const [
           FontVariation('wght', 400),
           FontVariation('opsz', 16),
+          FontVariation('ROND', 100),
         ],
       ),
       // Small titles — medium, aired out with spacing.
       titleSmall: base.textTheme.titleSmall?.copyWith(
+        fontFamily: 'GoogleSansFlex',
         fontWeight: FontWeight.w500,
         letterSpacing: 0.1,
         fontVariations: const [
           FontVariation('wght', 500),
           FontVariation('opsz', 14),
+          FontVariation('ROND', 100),
         ],
       ),
       // Body text — regular weight for readability.

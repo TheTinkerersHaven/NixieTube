@@ -29,17 +29,21 @@ import 'ui/theme.dart';
 /// `maximumSize` (entry count) is left at its default — setting it to a byte
 /// value would conflate count with bytes and disable the entry-count LRU.
 void _configureImageCache() {
-  // Default cache sizes based on platform
-  const defaultMobileCache = 32 * 1024 * 1024; // 32MB for mobile
-  const defaultDesktopCache = 64 * 1024 * 1024; // 64MB for desktop
+  // Tile decodes are bounded to the box they show (typically a few
+  // hundred KB of bitmap), so a moderate byte bound keeps an afternoon
+  // of browsing resident — hundreds of covers — and turns scroll-back
+  // reloads into cache hits. The OS memory-pressure observer and the
+  // debug clear action empty it regardless.
+  const desktopCache = 256 * 1024 * 1024;
+  const mobileCache = 64 * 1024 * 1024;
 
   final int cacheSizeBytes =
       Platform.isLinux || Platform.isWindows || Platform.isMacOS
-      ? defaultDesktopCache
-      : defaultMobileCache;
+      ? desktopCache
+      : mobileCache;
 
-  // Configure the image cache: 540px covers decode to ~1MB each and
-  // the on-disk renders are the real cache.
+  // `maximumSize` (entry count) is left at its default so the
+  // entry-count LRU still applies underneath the byte bound.
   PaintingBinding.instance.imageCache.maximumSizeBytes = cacheSizeBytes;
 }
 

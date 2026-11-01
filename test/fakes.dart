@@ -56,6 +56,19 @@ class FakeTube extends InnerTube {
   String? lastRatedVideoId;
   RatingStatus? lastRatedRating;
 
+  /// Play count handed to callers of [viewCount]; a null value makes
+  /// the call throw, simulating a network failure.
+  int? nextViewCount;
+  int viewCountCalls = 0;
+
+  @override
+  Future<int> viewCount(String videoId) async {
+    viewCountCalls++;
+    final n = nextViewCount;
+    if (n == null) throw Exception('viewCount failed');
+    return n;
+  }
+
   @override
   Future<bool> rate(String videoId, RatingStatus rating) async {
     lastRatedVideoId = videoId;

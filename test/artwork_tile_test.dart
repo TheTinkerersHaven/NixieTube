@@ -65,6 +65,9 @@ class _RecordingStore extends ArtworkStore {
     requested.add(url);
     return Future.value(files[url]);
   }
+
+  @override
+  Future<(int, int)?> tileSize(String url) => Future.value(const (100, 100));
 }
 
 /// ArtworkStore double recording every palette decode and serving
@@ -80,6 +83,26 @@ class _PaletteStore extends ArtworkStore {
     requested.add(url);
     return Future.value(images[url]);
   }
+}
+
+/// ArtworkStore double serving prebuilt files and pixel sizes with no
+/// disk IO: testWidgets bodies run under FakeAsync, where real IO
+/// futures never complete.
+class _SizedFileStore extends ArtworkStore {
+  _SizedFileStore({
+    required super.cacheDirPath,
+    required this.f,
+    required this.dims,
+  });
+
+  final File f;
+  final (int, int)? dims;
+
+  @override
+  Future<File?> file(String url) => Future.value(f);
+
+  @override
+  Future<(int, int)?> tileSize(String url) => Future.value(dims);
 }
 
 img.Image _solid(int w, int h, int r, int g, int b) {
@@ -179,7 +202,6 @@ void main() {
       expect(find.byIcon(Icons.album_rounded), findsNothing);
     });
 
-
     testWidgets('keyed non-square frame falls back to the frame on a miss', (
       tester,
     ) async {
@@ -233,7 +255,6 @@ void main() {
         files: {squareUrl: File('${dir.path}/crop4.png')},
       );
       final env = _harness(art: store);
-      addTearDown(store.close);
       env.tube.noteSquareCover('v-pick', squareUrl);
       await _pumpTile(
         tester,
@@ -435,5 +456,245 @@ void main() {
     expect(await store.tileSize('https://x/missing.png'), isNull);
   });
 
-}
+  test('tileSize reads JPEG dimensions too', () async {
+    final dir = Directory.systemTemp.createTempSync('nt-tilesize');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final store = ArtworkStore(cacheDirPath: dir.path);
+    addTearDown(store.close);
+    const url = 'https://x/v.jpg';
+    final path = store.tileFilePath(url);
+    await File(path).writeAsBytes(img.encodeJpg(_solid(420, 31, 1, 2, 3)));
+    expect(await store.tileSize(url), (420, 31));
+    // An unknown container yields no guess: the caller decodes it
+    // unbounded instead of risking a wrong aspect.
+    await File(store.tileFilePath('https://x/z.webp'))
+        .writeAsBytes([1, 2, 3, 4]);
+    expect(await store.tileSize('https://x/z.webp'), isNull);
+  });
 
+  group('bounded decodes', () {
+    ImageProvider? providerOf(WidgetTester tester) {
+      if (find.byType(Image).evaluate().isEmpty) return null;
+      return tester.widget<Image>(find.byType(Image)).image;
+    }
+
+    Future<void> settleDecode(WidgetTester tester) async {
+      for (var i = 0; i < 10 && find.byType(Image).evaluate().isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    testWidgets('a landscape frame decodes its width so the height reaches the '
+        'box', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final dir = Directory.systemTemp.createTempSync('nt-tile-bound');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final f = File('${dir.path}/wide.png')
+        ..writeAsBytesSync(img.encodePng(_solid(1280, 720, 10, 200, 30)));
+      final store = _SizedFileStore(
+        cacheDirPath: '${dir.path}/art',
+        f: f,
+        dims: (1280, 720),
+      );
+      addTearDown(store.close);
+      final env = _harness(art: store);
+      await _pumpTile(
+        tester,
+        env.state,
+        const ArtworkImage('https://bound.invalid/wide.jpg', size: 48),
+      );
+      await settleDecode(tester);
+      expect(find.byType(Image), findsOneWidget);
+      final provider = providerOf(tester);
+      expect(provider, isA<ResizeImage>());
+      // Box short side 48px: the 16:9 frame must decode 48*16/9 wide so
+      // its height covers the box without upscaling.
+      expect((provider as ResizeImage).width, 128);
+      expect(provider.allowUpscaling, isFalse);
+    });
+
+    testWidgets('a portrait frame decodes the box short side wide', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final dir = Directory.systemTemp.createTempSync('nt-tile-bound');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final f = File('${dir.path}/tall.png')
+        ..writeAsBytesSync(img.encodePng(_solid(720, 1280, 10, 200, 30)));
+      final store = _SizedFileStore(
+        cacheDirPath: '${dir.path}/art',
+        f: f,
+        dims: (720, 1280),
+      );
+      addTearDown(store.close);
+      final env = _harness(art: store);
+      await _pumpTile(
+        tester,
+        env.state,
+        const ArtworkImage('https://bound.invalid/tall.jpg', size: 48),
+      );
+      await settleDecode(tester);
+      expect(find.byType(Image), findsOneWidget);
+      // Portrait: the short side is the width, decoded at the box's
+      // device pixels exactly; the height follows by aspect.
+      final provider = providerOf(tester) as ResizeImage;
+      expect(provider.width, 72);
+      expect(provider.allowUpscaling, isFalse);
+    });
+
+    testWidgets('a HiDPI tile decodes at the device-pixel box', (tester) async {
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final dir = Directory.systemTemp.createTempSync('nt-tile-bound');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final f = File('${dir.path}/square.png')
+        ..writeAsBytesSync(img.encodePng(_solid(800, 800, 10, 200, 30)));
+      final store = _SizedFileStore(
+        cacheDirPath: '${dir.path}/art',
+        f: f,
+        dims: (800, 800),
+      );
+      addTearDown(store.close);
+      final env = _harness(art: store);
+      await _pumpTile(
+        tester,
+        env.state,
+        const ArtworkImage('https://bound.invalid/square.jpg', size: 48),
+      );
+      await settleDecode(tester);
+      expect(find.byType(Image), findsOneWidget);
+      // 48px on a 2x screen needs 96 device pixels on the short side.
+      expect((providerOf(tester) as ResizeImage).width, 144);
+    });
+
+    testWidgets('a tiny source never upscales to the box', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final dir = Directory.systemTemp.createTempSync('nt-tile-bound');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final f = File('${dir.path}/tiny.png')
+        ..writeAsBytesSync(img.encodePng(_solid(30, 30, 10, 200, 30)));
+      final store = _SizedFileStore(
+        cacheDirPath: '${dir.path}/art',
+        f: f,
+        dims: (30, 30),
+      );
+      addTearDown(store.close);
+      final env = _harness(art: store);
+      await _pumpTile(
+        tester,
+        env.state,
+        const ArtworkImage('https://bound.invalid/tiny.jpg', size: 48),
+      );
+      await settleDecode(tester);
+      expect(find.byType(Image), findsOneWidget);
+      // The 30px source is smaller than the 48px box: the target is
+      // clamped to the file's own width, so the decode upscales only
+      // during the fit, never invents pixels.
+      final provider = providerOf(tester) as ResizeImage;
+      expect(provider.width, 30);
+      expect(provider.allowUpscaling, isFalse);
+    });
+
+    testWidgets('an expand tile decodes its painted cell, not the size prop', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final dir = Directory.systemTemp.createTempSync('nt-tile-bound');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final f = File('${dir.path}/sq.png')
+        ..writeAsBytesSync(img.encodePng(_solid(800, 800, 10, 200, 30)));
+      final store = _SizedFileStore(
+        cacheDirPath: '${dir.path}/art',
+        f: f,
+        dims: (800, 800),
+      );
+      addTearDown(store.close);
+      final env = _harness(art: store);
+      // The grid puts expand tiles in cells of their own size; the
+      // decode must match the cell (300), not the fallback prop (48).
+      await _pumpTile(
+        tester,
+        env.state,
+        SizedBox(
+          width: 300,
+          height: 300,
+          child: ArtworkImage(
+            'https://bound.invalid/cell.jpg',
+            size: 48,
+            expand: true,
+          ),
+        ),
+      );
+      await settleDecode(tester);
+      expect(find.byType(Image), findsOneWidget);
+      expect((providerOf(tester) as ResizeImage).width, 450);
+    });
+
+    testWidgets('a small expand cell decodes small, not the prop size', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final dir = Directory.systemTemp.createTempSync('nt-tile-bound');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final f = File('${dir.path}/sq.png')
+        ..writeAsBytesSync(img.encodePng(_solid(800, 800, 10, 200, 30)));
+      final store = _SizedFileStore(
+        cacheDirPath: '${dir.path}/art',
+        f: f,
+        dims: (800, 800),
+      );
+      addTearDown(store.close);
+      final env = _harness(art: store);
+      await _pumpTile(
+        tester,
+        env.state,
+        SizedBox(
+          width: 150,
+          height: 150,
+          child: ArtworkImage(
+            'https://bound.invalid/cell.jpg',
+            size: 200,
+            expand: true,
+          ),
+        ),
+      );
+      await settleDecode(tester);
+      expect(find.byType(Image), findsOneWidget);
+      // The size prop overshoots the painted cell here: decoding 200
+      // device pixels for a 150px box would waste memory — and the old
+      // bug in reverse, decode below the box, reads soft.
+      expect((providerOf(tester) as ResizeImage).width, 225);
+    });
+
+    testWidgets('an unreadable header decodes unbounded, never guesses', (
+      tester,
+    ) async {
+      final dir = Directory.systemTemp.createTempSync('nt-tile-bound');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final f = File('${dir.path}/opaque.bin')
+        ..writeAsBytesSync([1, 2, 3, 4, 5]);
+      final store = _SizedFileStore(
+        cacheDirPath: '${dir.path}/art',
+        f: f,
+        dims: null,
+      );
+      addTearDown(store.close);
+      final env = _harness(art: store);
+      await _pumpTile(
+        tester,
+        env.state,
+        const ArtworkImage('https://bound.invalid/opaque.jpg', size: 48),
+      );
+      await settleDecode(tester);
+      expect(find.byType(Image), findsOneWidget);
+      // No known aspect: fall back to the plain file image rather than
+      // risk a wrong target that lands the short side below the box.
+      expect(providerOf(tester), isA<FileImage>());
+    });
+  });
+}

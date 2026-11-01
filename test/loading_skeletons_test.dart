@@ -194,7 +194,7 @@ void main() {
     // Songs/rails on their way: skeleton layout, no spinner.
     expect(find.byType(M3ELoadingIndicator), findsNothing);
     expect(find.text('Top songs'), findsOneWidget);
-    expect(find.byType(TrackRow), findsNWidgets(placeholderTracks.length));
+    expect(find.byType(TrackRow), findsNWidgets(5));
     expect(_enabledSkeletons(), findsOneWidget);
 
     // The fetch lands: the real artist replaces the placeholders.

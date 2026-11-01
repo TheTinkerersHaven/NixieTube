@@ -1,5 +1,10 @@
 # NixieTube — agent operating rules
 
+## File editing
+- Always modify files with the built-in `edit`, `write`, and `patch` tools.
+- Never use sed, awk, perl, python, echo/cat redirection or heredocs to change files.
+- Use bash only for running builds, tests, git, and read-only inspection.
+
 ## Git: the user owns commits, tags, and pushes
 
 The agent must **never** commit, push, tag, or force-push on the user's behalf. All changes stay **uncommitted on the working tree** until the user explicitly asks to commit.

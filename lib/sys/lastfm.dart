@@ -76,6 +76,27 @@ final _featureCreditRe = RegExp(
 String cleanScrobbleTitle(String title) =>
     title.replaceAll(_featureCreditRe, '').trim();
 
+/// Playback-noise check for bracketed title tags: an optional run of
+/// filler words ("Official Music") in front of a noise keyword.
+final _videoNoiseRe = RegExp(
+  r'(?:(?:official|music|player)\s+)*(?:video|audio|lyrics?|visualizer|mv|m/v|2k|4k|hd|hq)\b',
+  caseSensitive: false,
+);
+
+/// Removes trailing bracketed playback-noise tags from a track title so
+/// YouTube variants ("Engravings (Official Video)") resolve to the Last.fm
+/// release ("Engravings"). Musical versions (Remaster, Live…) stay — the
+/// search fallback handles those when the direct lookup misses.
+String cleanInfoTitle(String title) {
+  var t = title.trim();
+  while (true) {
+    final m = RegExp(r'[(\[]([^)\]]+)[)\]]$').firstMatch(t);
+    if (m == null || !_videoNoiseRe.hasMatch(m.group(1)!)) break;
+    t = t.substring(0, m.start).trim();
+  }
+  return t;
+}
+
 /// Last.fm client: web-auth handshake, now-playing updates, and scrobbles.
 ///
 /// API key/secret come from Settings, falling back to the bundled
@@ -121,6 +142,201 @@ class LastFmService extends ChangeNotifier {
   /// key is always effectively present via the built-in fallback.
   bool ready() =>
       _config.lastfmEnabled && _config.lastfmSessionKey.trim().isNotEmpty;
+
+  /// Fetches Last.fm metadata (tags, playcount, listeners, album, wiki)
+  /// for a track. The direct auto-corrected `track.getInfo` lookup runs
+  /// first; when it misses, a `track.search` fallback picks the closest
+  /// entry (scored by artist/title likeness and [durationSec]) and looks
+  /// it up by MBID. Returns null on failure or when nothing close enough
+  /// is found — wrong-track data is worse than no data.
+  Future<Map<String, dynamic>?> trackInfo(
+    String artist,
+    String title, {
+    int durationSec = 0,
+  }) async {
+    if (artist.trim().isEmpty || title.trim().isEmpty) return null;
+    // Feature credits first (anywhere in the title), then trailing
+    // playback-noise tags — mirrors the scrobble-title cleaning.
+    final clean = cleanInfoTitle(cleanScrobbleTitle(title));
+    try {
+      final direct = await _callPublic('track.getInfo', {
+        'artist': artist,
+        'track': clean,
+        'autocorrect': '1',
+      }, root: 'track');
+      if (direct != null) return direct;
+      final best = await _searchBestTrack(artist, clean,
+          durationSec: durationSec);
+      if (best == null) return null;
+      final mbid = best['mbid'];
+      if (mbid is String && mbid.isNotEmpty) {
+        return await _callPublic(
+            'track.getInfo', {'mbid': mbid, 'autocorrect': '1'},
+            root: 'track');
+      }
+      final candArtist = best['artist'];
+      final candTitle = best['name'];
+      if (candArtist is String && candArtist.trim().isNotEmpty &&
+          candTitle is String && candTitle.trim().isNotEmpty) {
+        return await _callPublic('track.getInfo', {
+          'artist': candArtist,
+          'track': candTitle,
+          'autocorrect': '1',
+        }, root: 'track');
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The artist's most-voted tags (artist.getTopTags). Used as the genre
+  /// fallback when a track itself carries none in `track.getInfo`. Empty
+  /// list on failure or when the artist is unknown.
+  Future<List<String>> artistTags(String artist, {int limit = 10}) async {
+    if (artist.trim().isEmpty) return [];
+    try {
+      final root = await _callPublic('artist.getTopTags', {
+        'artist': artist,
+        'autocorrect': '1',
+        'limit': '$limit',
+      }, root: 'toptags');
+      final tags = <String>[];
+      if (root != null) {
+        final tag = root['tag'];
+        if (tag is List) {
+          for (final t in tag) {
+            if (t is Map && t['name'] is String) {
+              tags.add(t['name'] as String);
+            }
+          }
+        }
+      }
+      return tags;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// GETs [method] and returns [root]'s object from the decoded JSON body,
+  /// or null when Last.fm says "not found" (`error` field or empty [root]).
+  Future<Map<String, dynamic>?> _callPublic(
+    String method,
+    Map<String, String> params, {
+    required String root,
+  }) async {
+    final res = await _dio.get(
+      lastfmApiUrl,
+      queryParameters: {
+        'method': method,
+        'api_key': _apiKey,
+        ...params,
+        'format': 'json',
+      },
+    );
+    final data = res.data is String ? jsonDecode(res.data as String) : res.data;
+    if (data is! Map) return null;
+    if (data['error'] != null) return null;
+    final obj = data[root];
+    return obj is Map ? Map<String, dynamic>.from(obj) : null;
+  }
+
+  /// Picks the closest `track.search` hit: artist and title likeness plus
+  /// a duration check give the score; anything below [minScore] is
+  /// discarded so an unrelated song is never shown as crosstalk.
+  Future<Map<String, dynamic>?> _searchBestTrack(
+    String artist,
+    String title, {
+    int durationSec = 0,
+  }) async {
+    final res = await _dio.get(
+      lastfmApiUrl,
+      queryParameters: {
+        'method': 'track.search',
+        'api_key': _apiKey,
+        'track': title,
+        'limit': '30',
+        'format': 'json',
+      },
+    );
+    final data = res.data is String ? jsonDecode(res.data as String) : res.data;
+    if (data is! Map) return null;
+    final matches = data['results'];
+    final trackMatches =
+        matches is Map ? matches['trackmatches'] : null;
+    var list = const [];
+    if (trackMatches is Map) {
+      final t = trackMatches['track'];
+      if (t is List) list = t;
+    }
+    Map<String, dynamic>? best;
+    var bestScore = 0.0;
+    var bestVerified = false;
+    for (final e in list) {
+      if (e is! Map) continue;
+      final score = _matchScore(e, artist, title, durationSec);
+      if (score > bestScore) {
+        bestScore = score;
+        best = Map<String, dynamic>.from(e);
+        bestVerified = _artistMatch(e, artist) || _durationAgrees(e, durationSec);
+      }
+    }
+    // A title-only match without an artist or duration signal is exactly
+    // how the wrong song sneaks in — require one verifiable signal.
+    const minScore = 1.0;
+    return bestScore >= minScore && bestVerified ? best : null;
+  }
+
+  /// True when a search candidate names the queried artist (either
+  /// direction of a substring counts: "The Weeknd" vs "Weeknd").
+  bool _artistMatch(Map e, String artist) {
+    final a = ('${e['artist']}').toLowerCase().trim();
+    final q = artist.toLowerCase().trim();
+    return a.isNotEmpty &&
+        q.isNotEmpty &&
+        (a == q || a.contains(q) || q.contains(a));
+  }
+
+  /// True when a search candidate's duration is within tolerance of the
+  /// player's (accepts seconds or milliseconds encodings).
+  bool _durationAgrees(Map e, int durationSec) {
+    if (durationSec <= 0) return false;
+    final ms = int.tryParse('${e['duration']}') ?? 0;
+    if (ms <= 0) return false;
+    final candSec = ms > 10000 ? ms ~/ 1000 : ms;
+    return (candSec - durationSec).abs() <= 20;
+  }
+
+  /// Likeness score for one `track.search` candidate row.
+  double _matchScore(Map e, String artist, String title, int durationSec) {
+    final candArtist = ('${e['artist']}').toLowerCase().trim();
+    final candTitle = ('${e['name']}').toLowerCase().trim();
+    final wantArtist = artist.toLowerCase().trim();
+    final wantTitle = title.toLowerCase().trim();
+    var score = 0.0;
+    if (candArtist == wantArtist) {
+      score += 1.5;
+    } else if (candArtist.contains(wantArtist) ||
+        wantArtist.contains(candArtist)) {
+      score += 0.75;
+    }
+    if (candTitle == wantTitle) {
+      score += 1.0;
+    } else if (candTitle.contains(wantTitle) || wantTitle.contains(candTitle)) {
+      score += 0.5;
+    }
+    final ms = int.tryParse('${e['duration']}') ?? 0;
+    if (durationSec > 0 && ms > 0) {
+      final candSec = ms > 10000 ? ms ~/ 1000 : ms;
+      final diff = (candSec - durationSec).abs();
+      if (diff <= 5) {
+        score += 1.5;
+      } else if (diff <= 20) {
+        score += 0.75;
+      }
+    }
+    return score;
+  }
 
   void _setStatus(String value) {
     if (_status != value) {

@@ -241,9 +241,11 @@ class _LyricsListState extends State<LyricsList> {
                               ?.copyWith(
                                 color: active
                                     ? scheme.primary
-                                    : scheme.onSurfaceVariant.withValues(
-                                        alpha: 0.55,
-                                      ),
+                                    : (timed
+                                          ? scheme.onSurfaceVariant.withValues(
+                                              alpha: 0.55,
+                                            )
+                                          : scheme.onSurface),
                               ) ??
                           DefaultTextStyle.of(context).style,
                       child: Text(line.text),

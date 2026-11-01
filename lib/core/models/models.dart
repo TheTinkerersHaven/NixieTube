@@ -577,6 +577,20 @@ class AlbumDetail {
     }
     return best ?? bestArtwork;
   }
+
+  /// Resolves the panel art: the album's own cover, otherwise the first
+  /// track's, falling back to the originating browse item's thumbnail.
+  String? artworkOr(BrowseItem? item) {
+    if (thumbnails.isNotEmpty) return bestArtwork;
+    final fromTrack = tracks
+        .map((t) => t.displayArtwork)
+        .whereType<String>()
+        .where((u) => u.isNotEmpty)
+        .firstOrNull;
+    if (fromTrack != null) return fromTrack;
+    if (item != null && item.thumbnails.isNotEmpty) return item.bestArtwork;
+    return null;
+  }
   final List<Track> tracks;
   final ReleaseKind? kind;
   final String year;
@@ -633,6 +647,22 @@ class ArtistDetail {
   final String? songsPlaylistId;
   final String? songsPlaylistParams;
   final String subscribers;
+
+  /// Copy with a different top-songs list (used to preload more of the
+  /// songs playlist than the preview the API embeds in the page).
+  ArtistDetail copyWith({List<Track>? topSongs}) => ArtistDetail(
+    name: name,
+    description: description,
+    thumbnails: thumbnails,
+    topSongs: topSongs ?? this.topSongs,
+    albums: albums,
+    singlesAndEps: singlesAndEps,
+    relatedPlaylists: relatedPlaylists,
+    similarArtists: similarArtists,
+    songsPlaylistId: songsPlaylistId,
+    songsPlaylistParams: songsPlaylistParams,
+    subscribers: subscribers,
+  );
 }
 
 /// Full playlist page.
@@ -670,6 +700,14 @@ class PlaylistDetail {
       }
     }
     return best ?? bestArtwork;
+  }
+
+  /// Resolves the panel art: the playlist's own cover, otherwise the
+  /// originating browse item's thumbnail.
+  String? artworkOr(BrowseItem? item) {
+    if (thumbnails.isNotEmpty) return bestArtwork;
+    if (item != null && item.thumbnails.isNotEmpty) return item.bestArtwork;
+    return null;
   }
   final List<Track> tracks;
   final ArtistRef? author;
