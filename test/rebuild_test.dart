@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
@@ -25,6 +26,7 @@ import 'package:nixietube/ui/screens/now_playing_screen.dart';
 import 'package:nixietube/ui/widgets/artwork_image.dart';
 import 'package:nixietube/ui/widgets/player_bar.dart';
 import 'package:nixietube/ui/widgets/seek_slider.dart';
+import 'package:nixietube/ui/widgets/track_row.dart';
 
 class _FakeEngine extends FakeEngine {
   bool playing = false;
@@ -604,6 +606,85 @@ void main() {
       // Past the 250ms slide + hold: tab content stages in.
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byType(TabBar), findsOneWidget);
+      player.dispose();
+      await tester.pump();
+    });
+
+    testWidgets('up next reveals the drag handle with the row menu on hover', (
+      tester,
+    ) async {
+      final dir = Directory.systemTemp.createTempSync('nt-queue-hover');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final tube = _QuietTube();
+      addTearDown(tube.close);
+      final player = PlayerController(
+        engine: _FakeEngine(),
+        tube: tube,
+        resolveStream: (id) async =>
+            ResolvedStream(url: 'https://x/$id', bitrate: 1),
+        configDirPath: dir.path,
+      );
+      addTearDown(player.dispose);
+      final state = AppState(
+        tube: tube,
+        player: player,
+        art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+        config: SysConfig(configPath: '${dir.path}/config.properties'),
+        openUrl: (_) async {},
+      );
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: state,
+          child: const MaterialApp(home: Scaffold(body: NowPlayingScreen())),
+        ),
+      );
+      player.playTracks([
+        const Track(
+          videoId: 'v1',
+          title: 'One',
+          artists: [ArtistRef('Uno')],
+          durationSec: 200,
+        ),
+        const Track(
+          videoId: 'v2',
+          title: 'Two',
+          artists: [ArtistRef('Dos')],
+          durationSec: 200,
+        ),
+      ]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      state.openNow();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+
+      final row = find.byType(TrackRow).first;
+      final handle = find.byIcon(Icons.drag_handle_rounded);
+      final rowMenu = find.descendant(
+        of: row,
+        matching: find.byTooltip('More actions'),
+      );
+      // Both controls stay hidden until the pointer enters the row.
+      expect(handle, findsNothing);
+      expect(rowMenu, findsNothing);
+
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(row));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // The handle and the ⋮ spring in as one.
+      expect(handle, findsOneWidget);
+      expect(rowMenu, findsOneWidget);
+
+      await mouse.moveTo(const Offset(1, 1));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(handle, findsNothing);
+      expect(rowMenu, findsNothing);
+
+      await mouse.removePointer();
       player.dispose();
       await tester.pump();
     });

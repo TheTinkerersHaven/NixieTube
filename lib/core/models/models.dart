@@ -474,6 +474,18 @@ class BrowseItem extends ShelfItem {
   final String browseId;
   final List<Thumbnail> thumbnails;
 
+  /// Whether this item opens a playlist page (including mixes and the
+  /// auto-generated radio lists) rather than an artist or album page.
+  bool get isPlaylist {
+    final id = browseId.trim();
+    // `VL…` is InnerTube's "video list" (playlist) browse prefix;
+    // album playlists and radios also appear in their raw forms.
+    return id.startsWith('VL') ||
+        id.startsWith('PL') ||
+        id.startsWith('RD') ||
+        id.startsWith('OLAK5uy_');
+  }
+
   /// Largest thumbnail by width, regardless of shape.
   String? get bestArtwork {
     if (thumbnails.isEmpty) return null;
@@ -673,11 +685,20 @@ class PlaylistDetail {
     required this.thumbnails,
     required this.tracks,
     this.author,
+    this.id = '',
+    this.editable = false,
   });
 
   final String title;
   final String subtitle;
   final List<Thumbnail> thumbnails;
+
+  /// The raw playlist id (`PL…`), when the caller knows it.
+  final String id;
+
+  /// Whether the signed-in account can edit this playlist (rename,
+  /// delete, remove tracks). False for public and read-only lists.
+  final bool editable;
 
   /// Largest thumbnail by width, regardless of shape.
   String? get bestArtwork {

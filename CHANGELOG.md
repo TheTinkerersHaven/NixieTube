@@ -4,7 +4,7 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.3.1] — 2026-10-27
+## [0.4.0] — 2026-11-03
 
 ### Added
 
@@ -67,6 +67,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Artist pages cap their width on large screens.** Content is constrained instead of stretching edge to edge.
 - **Artist bios expand in place.** The silent 600-character cut-off is replaced by a four-line preview with a Show more toggle.
 - **Section headers are consistent.** "Top songs" and "About" share one header style with the See all action.
+- **One playlist page for every way in.** The same playlist opened from a home shelf, a quick pick, a search result or an artist page used to show a different header, and sometimes a missing creator or count, than when opened from the library; every entry now opens the same page with the same title, creator, cover, subtitle and track actions, only playlists the account can edit offer rename, delete and track removal, and Back returns to the screen it was opened from.
+- **Menus use Material 3 Expressive popups.** The three-dot menus in the Now Playing and Library headers and on track rows now open as Material 3 Expressive popup menus instead of the custom spring pill stacks.
+- **Scrolling is smoother.** Lists, rails and the settings page now use the silky scroll behavior, so wheel and touch scrolling glide instead of stepping.
+- **The Up next reorder handle appears on hover.** It used to sit on every row; it now springs in together with the row's ⋮ menu and hides when the pointer leaves.
 
 ## [0.3.0] — 2026-10-22
 

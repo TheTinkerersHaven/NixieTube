@@ -3,6 +3,7 @@
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
+import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../a11y.dart';
@@ -92,8 +93,12 @@ class TrackRailGrid extends StatelessWidget {
     if (tracks.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: 300,
-      child: ListView.builder(
+      child: SilkyListView.builder(
         controller: controller,
+        scrollSpeed: 1.5,
+        silkyScrollDuration: const Duration(milliseconds: 700),
+        animationCurve: Curves.easeOutQuart,
+        mouseWheelVerticalDeltaBehavior: MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
         scrollDirection: Axis.horizontal,
         itemCount: tracks.length,
         itemBuilder: (context, i) {
@@ -164,8 +169,13 @@ class _BrowseRailState extends State<BrowseRail> {
           ),
           SizedBox(
             height: widget.circular ? 210 : 300,
-            child: ListView.builder(
+            child: SilkyListView.builder(
               controller: _ctrl,
+              scrollSpeed: 1.5,
+              silkyScrollDuration: const Duration(milliseconds: 700),
+              animationCurve: Curves.easeOutQuart,
+              mouseWheelVerticalDeltaBehavior:
+                  MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: widget.items.length,
@@ -204,9 +214,14 @@ class _BrowseRailState extends State<BrowseRail> {
             ),
             SizedBox(
               height: height,
-              child: ListView.separated(
+              child: SilkyListView.separated(
                 controller: _ctrl,
                 scrollDirection: Axis.horizontal,
+                scrollSpeed: 1.5,
+                silkyScrollDuration: const Duration(milliseconds: 700),
+                animationCurve: Curves.easeOutQuart,
+                mouseWheelVerticalDeltaBehavior:
+                    MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
                 padding: EdgeInsets.zero,
                 itemCount: widget.items.length,
                 separatorBuilder: (_, _) => const SizedBox(width: gap),
@@ -277,9 +292,14 @@ class _CardRailState extends State<CardRail> {
         ),
         SizedBox(
           height: widget.height,
-          child: ListView.builder(
+          child: SilkyListView.builder(
             controller: _ctrl,
             scrollDirection: Axis.horizontal,
+            scrollSpeed: 1.5,
+            silkyScrollDuration: const Duration(milliseconds: 700),
+            animationCurve: Curves.easeOutQuart,
+            mouseWheelVerticalDeltaBehavior:
+                MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
             itemCount: widget.itemCount,
             itemBuilder: widget.itemBuilder,
           ),
@@ -357,8 +377,13 @@ class _TrackColumnsState extends State<TrackColumns> {
             final colWidth =
                 (constraints.maxWidth - gap * (perScreen - 1)) / perScreen;
             final columns = (widget.count / widget.rowsPerColumn).ceil();
-            return SingleChildScrollView(
+            return SilkySingleChildScrollView(
               controller: _ctrl,
+              scrollSpeed: 1.5,
+              silkyScrollDuration: const Duration(milliseconds: 700),
+              animationCurve: Curves.easeOutQuart,
+              mouseWheelVerticalDeltaBehavior:
+                  MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
               scrollDirection: Axis.horizontal,
               child: IntrinsicHeight(
                 child: Row(

@@ -249,6 +249,7 @@ bool isBylineNoise(String value) {
     'lyric video',
   };
   if (plain.contains(v)) return true;
+  if (v == 'public' || v == 'unlisted' || v == 'public playlist' || v == 'unlisted playlist') return true;
   if (_typeLabels.any((t) => canonicalMetadata(t) == v)) return true;
   if (RegExp(r'(19|20)\d{2}').hasMatch(v) && v.length == 4) return true;
   if (RegExp(r'^\d{1,3}:\d{2}(:\d{2})?$').hasMatch(v)) return true;
@@ -286,7 +287,14 @@ ArtistRef? channelRefFromRuns(List<dynamic> runLists) {
       );
       if (id != null && id.startsWith('UC')) {
         final name = (str(nav(run, const ['text'])) ?? '').trim();
-        if (name.isNotEmpty) return ArtistRef(name, browseId: id);
+        final lower = name.toLowerCase();
+         if (name.isNotEmpty &&
+             lower != 'public' &&
+             lower != 'unlisted' &&
+             lower != 'public playlist' &&
+             lower != 'unlisted playlist') {
+           return ArtistRef(name, browseId: id);
+         }
       }
     }
   }
@@ -1600,6 +1608,7 @@ PlaylistDetail? buildPlaylist(dynamic res) {
     thumbnails: thumbnails,
     tracks: tracks,
     author: author,
+    editable: editable is Map,
   );
 }
 

@@ -6,6 +6,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/services.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -14,7 +15,6 @@ import '../app_state.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
 import 'song_info.dart';
-import 'spring_context_menu.dart';
 
 /// Actions in a track row's overflow menu.
 enum TrackRowAction { playNext, addToPlaylist, copyLink, removeFromPlaylist, songInfo }
@@ -35,6 +35,7 @@ class TrackRow extends StatefulWidget {
     this.onRemove,
     this.showViews = false,
     this.contextMenu = true,
+    this.hovering,
   });
 
   @override
@@ -58,10 +59,22 @@ class TrackRow extends StatefulWidget {
   /// Whether right-click opens the overflow menu. Hosts with their
   /// own row menu (Up Next) disable this to avoid double menus.
   final bool contextMenu;
+
+  /// When non-null, the row uses this hover state instead of tracking
+  /// its own. Hosts that wrap the row together with a sibling control
+  /// (the Up next drag handle) pass it so both reveal and hide as one.
+  final bool? hovering;
 }
 
 class _TrackRowState extends State<TrackRow> {
   bool _hovering = false;
+  final M3EMenuController _menuController = M3EMenuController();
+
+  @override
+  void dispose() {
+    _menuController.dispose();
+    super.dispose();
+  }
 
   String? get _viewsLabel {
     if (!widget.showViews) return null;
@@ -80,6 +93,9 @@ class _TrackRowState extends State<TrackRow> {
     final contextMenu = widget.contextMenu;
     final signedIn = context.select<AppState, bool>((s) => s.account != null);
     final liked = context.select<AppState, bool>((s) => s.isLiked(track.videoId));
+    // A host that wraps the row and a sibling control shares one hover
+    // state with it, so both reveal together.
+    final hovering = widget.hovering ?? _hovering;
     final subtitle = [
       track.artistNames(),
       track.album?.name ?? '',
@@ -225,11 +241,11 @@ class _TrackRowState extends State<TrackRow> {
           AnimatedSize(
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutBack,
-            child: _hovering
+            child: hovering
                 ? IconButton(
                     icon: const Icon(Icons.more_vert_rounded),
                     tooltip: 'More actions',
-                    onPressed: () => _showMenuAtRowEnd(context),
+                    onPressed: () => _menuController.open(),
                   )
                 : const SizedBox.shrink(),
           ),
@@ -238,82 +254,90 @@ class _TrackRowState extends State<TrackRow> {
     );
     // Hosts with their own row menu (Up Next) opt out so right-click
     // never stacks two menus (the single-menu guard would eat theirs).
-    final hovered = MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: tile,
-    );
-    if (!contextMenu) return hovered;
-    return GestureDetector(
-      onSecondaryTapDown: (details) =>
-          _showMenu(context, context.read<AppState>(), details.globalPosition),
+    // When the host supplies [hovering], it owns the hover region.
+    final hovered = widget.hovering != null
+        ? tile
+        : MouseRegion(
+            onEnter: (_) => setState(() => _hovering = true),
+            onExit: (_) => setState(() => _hovering = false),
+            child: tile,
+          );
+    // Wrap every row in an M3E menu anchor so the ⋮ button (and, when
+    // enabled, right-click) opens the M3E popup menu instead of the
+    // old spring pill stack.
+    final anchored = M3EMenuAnchor(
+      controller: _menuController,
+      menuChildren: _buildMenuItems(context, context.read<AppState>()),
+      builder: (ctx, controller, child) => child!,
       child: hovered,
+    );
+    if (!contextMenu) return anchored;
+    return GestureDetector(
+      onSecondaryTapDown: (details) => _menuController.open(
+        position: details.localPosition,
+      ),
+      child: anchored,
     );
   }
 
-  /// Overflow menu shared by the ⋮ button and right-click.
-  Future<void> _showMenu(
-    BuildContext context,
-    AppState state,
-    Offset position,
-  ) async {
-    final selected = await showSpringMenu<TrackRowAction>(
-      context: context,
-      position: position,
-      items: [
-        const SpringMenuItem(
-          icon: Icon(Icons.playlist_play_rounded),
-          label: 'Play next',
-          value: TrackRowAction.playNext,
+  List<Widget> _buildMenuItems(BuildContext context, AppState state) {
+    return [
+      M3EMenuItemButton(
+        onPressed: () => _runMenuAction(TrackRowAction.playNext, state),
+        leadingIcon: const Icon(Icons.playlist_play_rounded),
+        child: const Text('Play next'),
+      ),
+      if (widget.showPlaylists)
+        M3EMenuItemButton(
+          onPressed: () => _runMenuAction(TrackRowAction.addToPlaylist, state),
+          leadingIcon: const Icon(Icons.playlist_add_rounded),
+          child: const Text('Add to playlist'),
         ),
-        if (widget.showPlaylists)
-          const SpringMenuItem(
-            icon: Icon(Icons.playlist_add_rounded),
-            label: 'Add to playlist',
-            value: TrackRowAction.addToPlaylist,
-          ),
-        const SpringMenuItem(
-          icon: Icon(Icons.link_rounded),
-          label: 'Copy link',
-          value: TrackRowAction.copyLink,
+      M3EMenuItemButton(
+        onPressed: () => _runMenuAction(TrackRowAction.copyLink, state),
+        leadingIcon: const Icon(Icons.link_rounded),
+        child: const Text('Copy link'),
+      ),
+      M3EMenuItemButton(
+        onPressed: () => _runMenuAction(TrackRowAction.songInfo, state),
+        leadingIcon: const Icon(Icons.info_outline_rounded),
+        child: const Text('Song info'),
+      ),
+      if (widget.removable && widget.onRemove != null)
+        M3EMenuItemButton(
+          onPressed: () => _runMenuAction(TrackRowAction.removeFromPlaylist, state),
+          leadingIcon: const Icon(Icons.remove_circle_outline_rounded),
+          child: const Text('Remove from playlist'),
         ),
-        const SpringMenuItem(
-          icon: Icon(Icons.info_outline_rounded),
-          label: 'Song info',
-          value: TrackRowAction.songInfo,
-        ),
-        if (widget.removable && widget.onRemove != null)
-          const SpringMenuItem(
-            icon: Icon(Icons.remove_circle_outline_rounded),
-            label: 'Remove from playlist',
-            value: TrackRowAction.removeFromPlaylist,
-          ),
-      ],
-    );
-    if (!context.mounted) return;
-    switch (selected) {
+    ];
+  }
+
+  void _runMenuAction(TrackRowAction action, AppState state) {
+    switch (action) {
       case TrackRowAction.playNext:
-        // Nothing loaded: just play it instead of queueing into
-        // the void (enqueueNext alone would stay silent).
         if (state.player.state.current == null) {
           state.player.playTracks([widget.track]);
         } else {
           state.player.enqueueNext(widget.track);
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('Queued next')));
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Queued next')),
+            );
+          }
         }
       case TrackRowAction.addToPlaylist:
         unawaited(state.openPlaylistDialog(widget.track));
       case TrackRowAction.copyLink:
-        await Clipboard.setData(
+        unawaited(Clipboard.setData(
           ClipboardData(text: 'https://youtu.be/${widget.track.videoId}'),
-        );
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Link copied to clipboard.')),
-        );
+        ));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Link copied to clipboard.')),
+          );
+        }
       case TrackRowAction.songInfo:
-        if (!context.mounted) return;
+        if (!mounted) return;
         final theme = Theme.of(context);
         unawaited(
           showDialog<void>(
@@ -336,20 +360,9 @@ class _TrackRowState extends State<TrackRow> {
         );
       case TrackRowAction.removeFromPlaylist:
         widget.onRemove?.call();
-      case null:
-        break;
     }
   }
 
-  /// Menu anchor at the row's right edge (the ⋮ button has no tap
-  /// details to position with).
-  void _showMenuAtRowEnd(BuildContext context) {
-    final box = context.findRenderObject() as RenderBox?;
-    final position = box == null
-        ? Offset.zero
-        : box.localToGlobal(Offset(box.size.width, 0));
-    unawaited(_showMenu(context, context.read<AppState>(), position));
-  }
 }
 
 String _fmtDur(int sec) {

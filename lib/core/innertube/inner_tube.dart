@@ -1093,6 +1093,8 @@ class InnerTube {
           thumbnails: detail.thumbnails,
           tracks: tracks,
           author: detail.author,
+          id: browseId.startsWith('VL') ? browseId.substring(2) : browseId,
+          editable: detail.editable,
         );
       }
     }
@@ -1676,17 +1678,50 @@ class InnerTube {
         var ownerId = '';
         final runs = nav(node, const ['subtitle', 'runs']);
         if (runs is List && runs.isNotEmpty) {
-          final first = runs.first;
-          owner = str(nav(first, const ['text'])) ?? '';
-          ownerId =
-              str(
-                nav(first, const [
-                  'navigationEndpoint',
-                  'browseEndpoint',
-                  'browseId',
-                ]),
-              ) ??
-              '';
+          for (final r in runs) {
+            final text = (str(nav(r, const ['text'])) ?? '').trim();
+            final lower = text.toLowerCase();
+            if (lower == 'public' ||
+                lower == 'unlisted' ||
+                lower == 'public playlist' ||
+                lower == 'unlisted playlist' ||
+                (lower.contains('playlist') &&
+                    (lower.startsWith('public') ||
+                        lower.startsWith('unlisted')))) {
+              continue;
+            }
+            final id =
+                str(
+                  nav(r, const [
+                    'navigationEndpoint',
+                    'browseEndpoint',
+                    'browseId',
+                  ]),
+                ) ??
+                '';
+            if (id.startsWith('UC')) {
+              owner = text;
+              ownerId = id;
+              break;
+            }
+            if (owner.isEmpty) {
+              owner = text;
+              ownerId = id;
+            }
+          }
+          if (owner.isEmpty) {
+            final first = runs.first;
+            owner = str(nav(first, const ['text'])) ?? '';
+            ownerId =
+                str(
+                  nav(first, const [
+                    'navigationEndpoint',
+                    'browseEndpoint',
+                    'browseId',
+                  ]),
+                ) ??
+                '';
+          }
         }
         out.add(
           AccountPlaylist(

@@ -89,6 +89,13 @@ class DetailScreen extends StatelessWidget {
         owner: pl.author,
         tracks: pl.tracks,
         numbered: false,
+        removable: pl.editable,
+        onRemoveTrack: pl.editable && pl.id.isNotEmpty
+            ? (t) async {
+                final ok = await state.removeTrackFromPlaylist(pl.id, t);
+                if (ok) state.reloadDetail();
+              }
+            : null,
       );
     } else {
       body = Center(
@@ -186,16 +193,20 @@ class _ArtistDetailView extends StatelessWidget {
     );
     final seeAll = artist.songsPlaylistId == null
         ? null
-        : () => state.go(
-              Screen.detail,
-              detail: BrowseItem(
-                title: 'Top songs',
-                subtitle: artist.name,
-                browseId: artist.songsPlaylistId!,
-                browseParams: artist.songsPlaylistParams,
-                thumbnails: artist.thumbnails,
-              ),
+        : () {
+            final item = BrowseItem(
+              title: 'Top songs',
+              subtitle: artist.name,
+              browseId: artist.songsPlaylistId!,
+              browseParams: artist.songsPlaylistParams,
+              thumbnails: artist.thumbnails,
             );
+            state.openPlaylistById(
+              item.browseId,
+              params: item.browseParams,
+              item: item,
+            );
+          };
     final banner = artist.thumbnails.isEmpty ? null : artist.bestArtwork;
     final hasSongs = artist.topSongs.isNotEmpty;
     final hasBio = artist.description.trim().isNotEmpty;
@@ -247,7 +258,7 @@ class _ArtistDetailView extends StatelessWidget {
 
                       // Wide: songs define the row height; the About
                       // panel is pinned to the right and stretches to
-                      // that height.
+                      // that height, fitting as much text as possible.
                       if (c.maxWidth >= 900) {
                         return Stack(
                           children: [
@@ -265,7 +276,7 @@ class _ArtistDetailView extends StatelessWidget {
                                 width: 360,
                                 child: _AboutCard(
                                   text: artist.description,
-                                  fillHeight: false,
+                                  fillHeight: true,
                                 ),
                               ),
                           ],
@@ -300,7 +311,9 @@ class _ArtistDetailView extends StatelessWidget {
                 BrowseRail(
                   title: 'Related playlists',
                   items: artist.relatedPlaylists,
-                  onOpen: (item) => state.go(Screen.detail, detail: item),
+                  onOpen: (item) => item.isPlaylist
+                      ? state.openPlaylistById(item.browseId, item: item)
+                      : state.go(Screen.detail, detail: item),
                   fillWidth: true,
                 ),
                 BrowseRail(
@@ -596,6 +609,8 @@ class _AboutCard extends StatelessWidget {
   final String text;
   final bool fillHeight;
 
+  static const _maxLines = 8;
+
   void _showMore(BuildContext context) {
     showDialog(
       context: context,
@@ -644,22 +659,29 @@ class _AboutCard extends StatelessWidget {
         padding: const EdgeInsets.all(spaceMd),
         child: LayoutBuilder(
           builder: (context, c) {
-            final tp = TextPainter(
+            // Full text metrics.
+            final fullTp = TextPainter(
               text: TextSpan(text: text, style: style),
               textDirection: TextDirection.ltr,
-              maxLines: null,
             )..layout(maxWidth: c.maxWidth);
-            final fullLines = tp.computeLineMetrics().length;
-            tp.dispose();
+            final fullLines = fullTp.computeLineMetrics().length;
+            final lineHeight = fullLines > 0
+                ? fullTp.height / fullLines
+                : ((style?.fontSize ?? 14) * (style?.height ?? 1.4));
+            fullTp.dispose();
 
-            final lineHeight = (style?.fontSize ?? 14) * (style?.height ?? 1.4);
             final availH = c.maxHeight.isFinite ? c.maxHeight : 200.0;
-            final linesThatFit = (availH / lineHeight).floor().clamp(1, 1000);
+            final titleH = (theme.textTheme.titleLarge?.fontSize ?? 22) + spaceSm;
+            final linesThatFit =
+                ((availH - titleH - spaceSm) / lineHeight)
+                    .floor()
+                    .clamp(1, 1000);
             final overflows = fullLines > linesThatFit;
 
+            final maxLines = fillHeight ? linesThatFit : _maxLines;
             final textWidget = Text(
               text,
-              maxLines: fillHeight ? linesThatFit : null,
+              maxLines: maxLines,
               overflow: TextOverflow.ellipsis,
               style: style,
             );

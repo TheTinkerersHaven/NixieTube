@@ -17,13 +17,11 @@ import '../../core/player/player_state.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/artwork_image.dart';
-import '../widgets/fab_menu_down.dart';
 import '../widgets/lyrics_list.dart';
 import '../widgets/loading_placeholders.dart';
 import '../widgets/palette_backdrop.dart';
 import '../widgets/player_bar.dart';
 import '../widgets/seek_slider.dart';
-import '../widgets/spring_context_menu.dart';
 import '../widgets/track_row.dart';
 import '../widgets/song_info.dart';
 import '../widgets/volume_slider.dart';
@@ -88,72 +86,74 @@ class NowPlayingScreen extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
-                    // M3E action menu: the three-dot trigger
-                    // morphs and springs pill items open below
-                    // it (downwards, so the header menu never
-                    // flies off the top of the screen),
-                    // replacing the old popup menu.
-                    M3EFabMenuDown(
-                      icon: const Icon(Icons.more_vert_rounded),
-                      closeIcon: const Icon(Icons.close_rounded),
+                    M3EPopupMenuButton<_NowMenuAction>(
                       tooltip: 'More actions',
-                      size: M3EFabSize.small,
-                      color: M3EFabColor.surface,
-                      position: M3EFabMenuPosition.right,
-                      items: [
-                        M3EFabMenuItem(
-                          icon: const Icon(Icons.link_rounded),
-                          label: 'Share link',
-                          onPressed: () => _handleNowMenu(
-                            context,
-                            _NowMenuAction.shareLink,
-                            track,
+                      style: const M3EMenuStyle(maxWidth: 360),
+                      icon: const Icon(Icons.more_vert_rounded),
+                      onSelected: (action) =>
+                          unawaited(_handleNowMenu(context, action, track)),
+                      itemBuilder: (context) => [
+                        M3EPopupMenuItem<_NowMenuAction>(
+                          value: _NowMenuAction.shareLink,
+                          child: const Row(
+                            children: [
+                              Icon(Icons.link_rounded),
+                              SizedBox(width: 12),
+                              Text('Share link'),
+                            ],
                           ),
                         ),
-                        M3EFabMenuItem(
-                          icon: const Icon(Icons.open_in_new_rounded),
-                          label: 'Open in YouTube',
-                          onPressed: () => _handleNowMenu(
-                            context,
-                            _NowMenuAction.openYoutube,
-                            track,
+                        M3EPopupMenuItem<_NowMenuAction>(
+                          value: _NowMenuAction.openYoutube,
+                          child: const Row(
+                            children: [
+                              Icon(Icons.open_in_new_rounded),
+                              SizedBox(width: 12),
+                              Text('Open in YouTube'),
+                            ],
                           ),
                         ),
-                        // Playlist add rides the menu rather than
-                        // the transport row (matching the old
-                        // bottom-bar button).
                         if (signedIn && libraryAvailable)
-                          M3EFabMenuItem(
-                            icon: const Icon(Icons.playlist_add_rounded),
-                            label: 'Add to playlist',
-                            onPressed: () => context
+                          M3EPopupMenuItem<_NowMenuAction>(
+                            onTap: () => context
                                 .read<AppState>()
                                 .openPlaylistDialog(track),
-                          ),
-                        // Queue discard lives here in the title-bar
-                        // menu rather than the tab, so it is one
-                        // tap away without crowding Up next.
-                        if (hasQueue)
-                          M3EFabMenuItem(
-                            icon: const Icon(Icons.delete_sweep_outlined),
-                            label: 'Clear up next',
-                            onPressed: () => _handleNowMenu(
-                              context,
-                              _NowMenuAction.clearUpNext,
-                              track,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.playlist_add_rounded),
+                                SizedBox(width: 12),
+                                Text('Add to playlist'),
+                              ],
                             ),
                           ),
-                        M3EFabMenuItem(
-                          icon: Icon(
-                            sleepMode != SleepTimerMode.off
-                                ? Icons.bedtime_rounded
-                                : Icons.bedtime_outlined,
+                        if (hasQueue)
+                          M3EPopupMenuItem<_NowMenuAction>(
+                            value: _NowMenuAction.clearUpNext,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.delete_sweep_outlined),
+                                SizedBox(width: 12),
+                                Text('Clear up next'),
+                              ],
+                            ),
                           ),
-                          label: _sleepMenuLabel(sleepMode, sleepEndsAt),
-                          onPressed: () => _handleNowMenu(
-                            context,
-                            _NowMenuAction.sleepTimer,
-                            track,
+                        M3EPopupMenuItem<_NowMenuAction>(
+                          value: _NowMenuAction.sleepTimer,
+                          child: Row(
+                            children: [
+                              Icon(
+                                sleepMode != SleepTimerMode.off
+                                    ? Icons.bedtime_rounded
+                                    : Icons.bedtime_outlined,
+                              ),
+                              const SizedBox(width: 12),
+                              Flexible(
+                                child: Text(
+                                  _sleepMenuLabel(sleepMode, sleepEndsAt),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -877,44 +877,12 @@ class _UpNextTab extends StatelessWidget {
                       ),
                       onDismissed: (_) =>
                           _removeQueueTrack(context, state, i, t),
-                      child: GestureDetector(
-                        // Desktop right-click menu; swipe and the
-                        // drag handle keep working alongside it.
-                        onSecondaryTapDown: (details) => _showQueueRowMenu(
-                          context,
-                          state,
-                          details.globalPosition,
-                          i,
-                          t,
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TrackRow(
-                                track: t,
-                                playing: i == index,
-                                onPlay: () => state.player.playAt(i),
-                                rateable: true,
-                                // The row hosts its own right-click menu;
-                                // the row-local one stays off.
-                                contextMenu: false,
-                              ),
-                            ),
-                            ReorderableDragStartListener(
-                              index: i,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 16,
-                                ),
-                                child: Icon(
-                                  Icons.drag_handle_rounded,
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                      child: _QueueRow(
+                        index: i,
+                        track: t,
+                        playing: i == index,
+                        onPlay: () => state.player.playAt(i),
+                        state: state,
                       ),
                     );
                   },
@@ -922,6 +890,150 @@ class _UpNextTab extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// One Up next row: the track plus its reorder handle.
+///
+/// The handle and the row's ⋮ share one hover state, so both spring in
+/// on hover and hide together when the pointer leaves.
+class _QueueRow extends StatefulWidget {
+  const _QueueRow({
+    required this.index,
+    required this.track,
+    required this.playing,
+    required this.onPlay,
+    required this.state,
+  });
+
+  final int index;
+  final Track track;
+  final bool playing;
+  final VoidCallback onPlay;
+  final AppState state;
+
+  @override
+  State<_QueueRow> createState() => _QueueRowState();
+}
+
+class _QueueRowState extends State<_QueueRow> {
+  bool _hovering = false;
+  final M3EMenuController _menuController = M3EMenuController();
+
+  @override
+  void dispose() {
+    _menuController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return M3EMenuAnchor(
+      controller: _menuController,
+      menuChildren: _queueMenuItems(context),
+      builder: (ctx, controller, child) => child!,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: GestureDetector(
+          onSecondaryTapDown: (details) =>
+              _menuController.open(position: details.localPosition),
+          child: Row(
+            children: [
+              Expanded(
+                child: TrackRow(
+                  track: widget.track,
+                  playing: widget.playing,
+                  onPlay: widget.onPlay,
+                  rateable: true,
+                  // The row hosts its own right-click menu; the row-local
+                  // one stays off.
+                  contextMenu: false,
+                  // Shared so the ⋮ and the handle appear together.
+                  hovering: _hovering,
+                ),
+              ),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutBack,
+                child: _hovering
+                    ? ReorderableDragStartListener(
+                        index: widget.index,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 16,
+                          ),
+                          child: Icon(
+                            Icons.drag_handle_rounded,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _queueMenuItems(BuildContext context) {
+    final state = widget.state;
+    final currentIndex = state.player.state.index;
+    final enabled = widget.index != currentIndex;
+    return [
+      M3EMenuItemButton(
+        onPressed: enabled
+            ? () => _runQueueAction(_QueueRowAction.playNext)
+            : null,
+        leadingIcon: const Icon(Icons.playlist_play_rounded),
+        child: const Text('Play next'),
+      ),
+      M3EMenuItemButton(
+        onPressed: () => _runQueueAction(_QueueRowAction.addToPlaylist),
+        leadingIcon: const Icon(Icons.playlist_add_rounded),
+        child: const Text('Add to playlist'),
+      ),
+      M3EMenuItemButton(
+        onPressed: () => _runQueueAction(_QueueRowAction.copyLink),
+        leadingIcon: const Icon(Icons.link_rounded),
+        child: const Text('Copy link'),
+      ),
+      M3EMenuItemButton(
+        onPressed: () => _runQueueAction(_QueueRowAction.remove),
+        leadingIcon: const Icon(Icons.delete_outline_rounded),
+        child: const Text('Remove from queue'),
+      ),
+    ];
+  }
+
+  void _runQueueAction(_QueueRowAction action) {
+    final state = widget.state;
+    final index = widget.index;
+    final track = widget.track;
+    switch (action) {
+      case _QueueRowAction.playNext:
+        final cur = state.player.state.index;
+        if (index != cur) {
+          state.player.moveQueue(index, index < cur ? cur : cur + 1);
+        }
+      case _QueueRowAction.addToPlaylist:
+        unawaited(state.openPlaylistDialog(track));
+      case _QueueRowAction.copyLink:
+        unawaited(Clipboard.setData(
+          ClipboardData(text: 'https://youtu.be/${track.videoId}'),
+        ));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Link copied to clipboard.')),
+          );
+        }
+      case _QueueRowAction.remove:
+        _removeQueueTrack(context, state, index, track);
+    }
   }
 }
 
@@ -968,67 +1080,6 @@ void _removeQueueTrack(
       ),
     ),
   );
-}
-
-/// Right-click menu for one queue row.
-Future<void> _showQueueRowMenu(
-  BuildContext context,
-  AppState state,
-  Offset globalPosition,
-  int index,
-  Track track,
-) async {
-  final currentIndex = state.player.state.index;
-  final selected = await showSpringMenu<_QueueRowAction>(
-    context: context,
-    position: globalPosition,
-    items: [
-      SpringMenuItem(
-        icon: const Icon(Icons.playlist_play_rounded),
-        label: 'Play next',
-        value: _QueueRowAction.playNext,
-        enabled: index != currentIndex,
-      ),
-      const SpringMenuItem(
-        icon: Icon(Icons.playlist_add_rounded),
-        label: 'Add to playlist',
-        value: _QueueRowAction.addToPlaylist,
-      ),
-      const SpringMenuItem(
-        icon: Icon(Icons.link_rounded),
-        label: 'Copy link',
-        value: _QueueRowAction.copyLink,
-      ),
-      const SpringMenuItem(
-        icon: Icon(Icons.delete_outline_rounded),
-        label: 'Remove from queue',
-        value: _QueueRowAction.remove,
-      ),
-    ],
-  );
-  if (!context.mounted) return;
-  switch (selected) {
-    case _QueueRowAction.playNext:
-      // Jump the song to right behind the current one.
-      final cur = state.player.state.index;
-      if (index != cur) {
-        state.player.moveQueue(index, index < cur ? cur : cur + 1);
-      }
-    case _QueueRowAction.addToPlaylist:
-      unawaited(state.openPlaylistDialog(track));
-    case _QueueRowAction.copyLink:
-      await Clipboard.setData(
-        ClipboardData(text: 'https://youtu.be/${track.videoId}'),
-      );
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Link copied to clipboard.')),
-      );
-    case _QueueRowAction.remove:
-      _removeQueueTrack(context, state, index, track);
-    case null:
-      break;
-  }
 }
 
 class _LyricsTab extends StatefulWidget {

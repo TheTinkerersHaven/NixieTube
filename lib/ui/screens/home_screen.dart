@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
@@ -157,7 +158,10 @@ class HomeScreen extends StatelessWidget {
         // reveals in place (the shimmer comes from the theme config).
         enabled: loading,
         enableSwitchAnimation: true,
-        child: ListView(
+        child: SilkyListView(
+          scrollSpeed: 1.5,
+          silkyScrollDuration: const Duration(milliseconds: 700),
+          animationCurve: Curves.easeOutQuart,
           // Bottom clearance for the floating player bar overlay.
           padding: const EdgeInsets.fromLTRB(
             screenPadding,
@@ -413,6 +417,13 @@ class HomeScreen extends StatelessWidget {
               onTap: () {
                 if (mix != null) {
                   if (!loading) unawaited(state.playMix(mix));
+                  return;
+                }
+                if (entry.item.isPlaylist) {
+                  state.openPlaylistById(
+                    entry.item.browseId,
+                    item: entry.item,
+                  );
                   return;
                 }
                 state.go(Screen.detail, detail: entry.item);
@@ -707,7 +718,7 @@ class _QuickPicksGrid extends StatelessWidget {
               // Artist (UC) or album (MPRE): both open the detail page.
               state.go(Screen.detail, detail: item);
             } else {
-              state.openPlaylistById(id);
+              state.openPlaylistById(id, item: item);
             }
           }
         }
@@ -963,7 +974,10 @@ class _LikedSideList extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: ListView.builder(
+          child: SilkyListView.builder(
+            scrollSpeed: 1.5,
+            silkyScrollDuration: const Duration(milliseconds: 700),
+            animationCurve: Curves.easeOutQuart,
             itemCount: liked.length,
             itemBuilder: (context, i) {
               final t = liked[i];
@@ -1117,7 +1131,13 @@ class _ShelfSection extends StatelessWidget {
           final b = item as BrowseItem;
           return BrowseCard(
             item: b,
-            onTap: () => state.go(Screen.detail, detail: b),
+            onTap: () {
+              if (b.isPlaylist) {
+                state.openPlaylistById(b.browseId, item: b);
+              } else {
+                state.go(Screen.detail, detail: b);
+              }
+            },
           );
         },
       );

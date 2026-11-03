@@ -6,6 +6,7 @@ import 'dart:async' show unawaited;
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
+import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
@@ -192,7 +193,10 @@ class _SearchScreenState extends State<SearchScreen> {
       }
       rows.add((kind: 2, key: null, items: null, item: null));
     }
-    return ListView.builder(
+    return SilkyListView.builder(
+      scrollSpeed: 1.5,
+      silkyScrollDuration: const Duration(milliseconds: 700),
+      animationCurve: Curves.easeOutQuart,
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
         0,
@@ -258,7 +262,13 @@ class _SearchScreenState extends State<SearchScreen> {
     final b = item as BrowseItem;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      onTap: () => state.go(Screen.detail, detail: b),
+      onTap: () {
+        if (b.isPlaylist) {
+          state.openPlaylistById(b.browseId, item: b);
+        } else {
+          state.go(Screen.detail, detail: b);
+        }
+      },
       leading: ArtworkImage(
         b.thumbnails.isEmpty
             ? null
@@ -273,7 +283,10 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _noResults(BuildContext context, AppState state) {
-    return ListView(
+    return SilkyListView(
+      scrollSpeed: 1.5,
+      silkyScrollDuration: const Duration(milliseconds: 700),
+      animationCurve: Curves.easeOutQuart,
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
         screenPadding,
@@ -289,7 +302,10 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _suggestions(BuildContext context, AppState state) {
-    return ListView(
+    return SilkyListView(
+      scrollSpeed: 1.5,
+      silkyScrollDuration: const Duration(milliseconds: 700),
+      animationCurve: Curves.easeOutQuart,
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
         screenPadding,

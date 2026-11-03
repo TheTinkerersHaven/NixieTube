@@ -4,6 +4,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
+import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
@@ -11,10 +12,11 @@ import '../theme.dart';
 import '../widgets/album_panel.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/cards.dart';
-import '../widgets/fab_menu_down.dart';
 import '../widgets/rails.dart';
 
 import '../widgets/palette_backdrop.dart';
+
+enum _PlaylistMenuAction { rename, delete }
 
 /// Collage sources an opened playlist's view paints for [playlist].
 ///
@@ -45,7 +47,7 @@ class LibraryScreen extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (opened != null && account != null)
+        if (opened != null)
           RepaintBoundary(
             child: ListenableBuilder(
               listenable: state.paletteTick,
@@ -77,40 +79,35 @@ class LibraryScreen extends StatelessWidget {
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                   ),
-                  if (opened != null && opened.playlist.id != '__liked')
-                    // M3E action menu: the three-dot trigger
-                    // morphs and springs pill items open below
-                    // it (downwards, so the header menu never
-                    // flies off the top of the screen),
-                    // replacing the old popup menu.
-                    M3EFabMenuDown(
-                      icon: const Icon(Icons.more_vert_rounded),
-                      closeIcon: const Icon(Icons.close_rounded),
+                  if (opened != null && opened.editable)
+                    M3EPopupMenuButton<_PlaylistMenuAction>(
                       tooltip: 'More actions',
-                      size: M3EFabSize.small,
-                      color: M3EFabColor.surface,
-                      position: M3EFabMenuPosition.right,
-                      items: [
-                        M3EFabMenuItem(
-                          icon: const Icon(
-                            Icons.drive_file_rename_outline_rounded,
-                          ),
-                          label: 'Rename playlist',
-                          onPressed: () => _handlePlaylistEdit(
-                            context,
-                            state,
-                            opened,
-                            'rename',
+                      icon: const Icon(Icons.more_vert_rounded),
+                      onSelected: (action) => _handlePlaylistEdit(
+                        context,
+                        state,
+                        opened,
+                        action == _PlaylistMenuAction.rename ? 'rename' : 'delete',
+                      ),
+                      itemBuilder: (context) => [
+                        const M3EPopupMenuItem<_PlaylistMenuAction>(
+                          value: _PlaylistMenuAction.rename,
+                          child: Row(
+                            children: [
+                              Icon(Icons.drive_file_rename_outline_rounded),
+                              SizedBox(width: 12),
+                              Text('Rename playlist'),
+                            ],
                           ),
                         ),
-                        M3EFabMenuItem(
-                          icon: const Icon(Icons.delete_rounded),
-                          label: 'Delete playlist',
-                          onPressed: () => _handlePlaylistEdit(
-                            context,
-                            state,
-                            opened,
-                            'delete',
+                        const M3EPopupMenuItem<_PlaylistMenuAction>(
+                          value: _PlaylistMenuAction.delete,
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete_rounded),
+                              SizedBox(width: 12),
+                              Text('Delete playlist'),
+                            ],
                           ),
                         ),
                       ],
@@ -124,10 +121,10 @@ class LibraryScreen extends StatelessWidget {
                 ],
               ),
             ),
-            if (account == null)
-              _signInPrompt(context, state)
-            else if (opened != null)
+            if (opened != null)
               Expanded(child: _openPlaylist(context, state, opened))
+            else if (account == null)
+              _signInPrompt(context, state)
             else
               Expanded(child: _tabs(context, state)),
           ],
@@ -242,18 +239,19 @@ class LibraryScreen extends StatelessWidget {
       title: pl.title,
       subtitle: pl.id == '__liked'
           ? (note == null ? 'Automatic playlist' : 'Automatic playlist · $note')
-          : '',
+          : opened.subtitle,
       description: '',
       art: pl.art,
       arts: playlistViewArts(pl),
       owner: pl.id == '__liked'
           ? (account != null ? ArtistRef(account) : null)
-          : (pl.owner.isEmpty
-                ? null
-                : ArtistRef(
-                    pl.owner,
-                    browseId: pl.ownerId.isEmpty ? null : pl.ownerId,
-                  )),
+          : (opened.author ??
+                (pl.owner.isEmpty
+                    ? null
+                    : ArtistRef(
+                        pl.owner,
+                        browseId: pl.ownerId.isEmpty ? null : pl.ownerId,
+                      ))),
       ownerAvatarUrl: pl.id == '__liked' ? accountAvatar : null,
       tracks: opened.tracks,
       numbered: false,
@@ -263,12 +261,12 @@ class LibraryScreen extends StatelessWidget {
       listLoading:
           context.select<AppState, bool>((s) => s.libraryLoading) &&
           opened.tracks.isEmpty,
-      // Own playlists can be edited (remove tracks); the liked list is
-      // read-only.
-      removable: pl.id != '__liked' && account != null,
-      onRemoveTrack: pl.id == '__liked'
-          ? null
-          : (t) => state.removeTrackFromPlaylist(pl.id, t),
+      // Only playlists the account can edit show remove actions; public
+      // and read-only lists opened from any surface look the same.
+      removable: opened.editable,
+      onRemoveTrack: opened.editable
+          ? (t) => state.removeTrackFromPlaylist(pl.id, t)
+          : null,
     );
   }
 
@@ -399,7 +397,10 @@ class LibraryScreen extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final cols = (constraints.maxWidth / 150).floor().clamp(2, 8);
-        return GridView.builder(
+        return SilkyGridView.builder(
+          scrollSpeed: 1.5,
+          silkyScrollDuration: const Duration(milliseconds: 700),
+          animationCurve: Curves.easeOutQuart,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: cols,
             childAspectRatio: 1.0,
@@ -434,7 +435,10 @@ class LibraryScreen extends StatelessWidget {
     final recent = context.select<AppState, List<BrowseItem>>(
       (s) => s.recentArtists,
     );
-    return ListView(
+    return SilkyListView(
+      scrollSpeed: 1.5,
+      silkyScrollDuration: const Duration(milliseconds: 700),
+      animationCurve: Curves.easeOutQuart,
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
         screenPadding,

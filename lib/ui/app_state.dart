@@ -155,9 +155,41 @@ class DetailUiState {
 
 /// Open playlist with its tracks, or null when browsing the library root.
 class OpenPlaylist {
-  OpenPlaylist(this.playlist, this.tracks);
+  OpenPlaylist(
+    this.playlist,
+    this.tracks, {
+    this.subtitle = '',
+    this.author,
+    this.editable = false,
+  });
+
   AccountPlaylist playlist;
   List<Track> tracks;
+
+  /// Page subtitle as YouTube Music reports it (e.g. "Playlist • 2024").
+  final String subtitle;
+
+  /// Creator credit from the playlist page, with its channel link.
+  final ArtistRef? author;
+
+  /// Whether the signed-in account can edit this playlist.
+  final bool editable;
+
+  OpenPlaylist copyWith({
+    AccountPlaylist? playlist,
+    List<Track>? tracks,
+    String? subtitle,
+    ArtistRef? author,
+    bool? editable,
+  }) {
+    return OpenPlaylist(
+      playlist ?? this.playlist,
+      tracks ?? this.tracks,
+      subtitle: subtitle ?? this.subtitle,
+      author: author ?? this.author,
+      editable: editable ?? this.editable,
+    );
+  }
 }
 
 /// Normalizes a name for navigation matching.
@@ -472,6 +504,13 @@ class AppState extends ChangeNotifier {
       _loadDetail(entry.detail!);
     }
     _safeNotify();
+  }
+
+  /// Reloads the current detail page in place (used after edits such as
+  /// removing a track from an open playlist).
+  void reloadDetail() {
+    final item = _detailItem;
+    if (item != null) _loadDetail(item);
   }
 
   /// Opens an artist page, resolving unlinked credits first.
@@ -1560,9 +1599,8 @@ class AppState extends ChangeNotifier {
       _updateLikedPlaylistEntry();
       final opened = _openPlaylist;
       if (opened != null && opened.playlist.id == '__liked') {
-        _openPlaylist = OpenPlaylist(
-          opened.playlist,
-          _stampLikedIds(List.of(_liked)),
+        _openPlaylist = opened.copyWith(
+          tracks: _stampLikedIds(List.of(_liked)),
         );
       }
       if (cacheChanged) _saveTrackMeta();
@@ -2168,7 +2206,7 @@ class AppState extends ChangeNotifier {
         if (r != null &&
             (r.art != opened.playlist.art ||
                 r.arts.length != opened.playlist.arts.length)) {
-          _openPlaylist = OpenPlaylist(r, opened.tracks);
+          _openPlaylist = opened.copyWith(playlist: r);
           changed = true;
         }
       }
@@ -2248,15 +2286,51 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Opens the library playlist with [id].
-  void openPlaylistById(String id) {
-    for (final pl in _playlists) {
-      if (pl.id == id) {
-        unawaited(openPlaylist(pl));
-        go(Screen.library);
-        return;
-      }
-    }
+  /// The raw `PL…` id behind a playlist browse id (`VLPL…`), so the
+  /// same playlist resolves identically from every surface.
+  static String playlistIdFrom(String browseId) {
+    final id = browseId.trim();
+    if (id.length > 2 && id.startsWith('VL')) return id.substring(2);
+    return id;
+  }
+
+  /// Whether the open playlist came from the library tab itself, which
+  /// decides whether closing it returns to the library root or pops the
+  /// screen the user opened it from.
+  bool _openedPlaylistFromLibrary = true;
+
+  /// Opens any playlist from any surface (library, home, search, an
+  /// artist page) in the one playlist view, with the same information
+  /// regardless of where it was tapped.
+  ///
+  /// [browseId] may be a raw `PL…` id or a `VL…` browse id; [params]
+  /// carries a browse filter (e.g. an artist's top-songs list) and
+  /// [item] the title/artwork the caller already has while the page
+  /// loads.
+  void openPlaylistById(
+    String browseId, {
+    String? params,
+    BrowseItem? item,
+  }) {
+    final id = playlistIdFrom(browseId);
+    final known = _playlists.where((p) => p.id == id).firstOrNull;
+    final seed =
+        known ??
+        AccountPlaylist(
+          id: id,
+          title: item?.title ?? '',
+          itemCount: 0,
+          art: item?.displayArtwork,
+        );
+    _openedPlaylistFromLibrary = _screen == Screen.library;
+    unawaited(
+      _loadOpenPlaylist(
+        seed,
+        browseId: browseId,
+        params: params,
+        initialSubtitle: item?.subtitle ?? '',
+      ),
+    );
   }
 
   /// Creates a new playlist and refreshes the library.
@@ -2290,7 +2364,7 @@ class AppState extends ChangeNotifier {
     final api = _api;
     final ok = await api.deletePlaylist(playlistId);
     if (ok) {
-      if (_openPlaylist?.playlist.id == playlistId) _openPlaylist = null;
+      if (_openPlaylist?.playlist.id == playlistId) closePlaylist();
       await loadLibrary();
     }
     return ok;
@@ -2309,8 +2383,8 @@ class AppState extends ChangeNotifier {
         final remaining = opened.tracks
             .where((t) => t.videoId != track.videoId)
             .toList();
-        _openPlaylist = OpenPlaylist(
-          AccountPlaylist(
+        _openPlaylist = opened.copyWith(
+          playlist: AccountPlaylist(
             id: opened.playlist.id,
             title: opened.playlist.title,
             itemCount: remaining.length,
@@ -2319,7 +2393,7 @@ class AppState extends ChangeNotifier {
             owner: opened.playlist.owner,
             ownerId: opened.playlist.ownerId,
           ),
-          remaining,
+          tracks: remaining,
         );
         _safeNotify();
       }
@@ -2329,10 +2403,26 @@ class AppState extends ChangeNotifier {
 
   /// Opens [pl], entering its screen immediately while tracks load.
   /// Stale loads (closed or superseded meanwhile) are dropped.
-  Future<void> openPlaylist(AccountPlaylist pl) async {
+  Future<void> openPlaylist(AccountPlaylist pl) {
+    _openedPlaylistFromLibrary = _screen == Screen.library;
+    return _loadOpenPlaylist(pl, browseId: pl.id);
+  }
+
+  /// Shows the playlist view immediately (so the tapped row has
+  /// somewhere to land) and then fills it from the canonical playlist
+  /// page, whether or not the list belongs to the account.
+  Future<void> _loadOpenPlaylist(
+    AccountPlaylist seed, {
+    required String browseId,
+    String? params,
+    String initialSubtitle = '',
+  }) async {
     final gen = ++_openPlaylistGen;
-    if (pl.id == '__liked') {
-      _openPlaylist = OpenPlaylist(pl, _stampLikedIds(List.of(_liked)));
+    final id = seed.id;
+    if (id == '__liked') {
+      _openPlaylist = OpenPlaylist(seed, _stampLikedIds(List.of(_liked)));
+      _libraryLoading = false;
+      _enterPlaylistView();
       // Panel enrichment (album/explicit/full credits — the library
       // lists send none) refreshes the open view progressively via
       // refreshTrackMeta, which republishes it per chunk.
@@ -2340,10 +2430,9 @@ class AppState extends ChangeNotifier {
       unawaited(
         _requestTrackRatings(_openPlaylist!.tracks, (statuses) {
           final opened = _openPlaylist;
-          if (opened != null && opened.playlist.id == pl.id) {
-            _openPlaylist = OpenPlaylist(
-              opened.playlist,
-              opened.tracks
+          if (opened != null && opened.playlist.id == id) {
+            _openPlaylist = opened.copyWith(
+              tracks: opened.tracks
                   .map(
                     (t) => statuses[t.videoId] == null
                         ? t
@@ -2355,16 +2444,32 @@ class AppState extends ChangeNotifier {
           }
         }),
       );
-      _safeNotify();
       return;
     }
     final api = _api;
-    final current = _playlists.where((p) => p.id == pl.id).firstOrNull ?? pl;
-    _openPlaylist = OpenPlaylist(current, []);
+    final current = _playlists.where((p) => p.id == id).firstOrNull ?? seed;
+    _openPlaylist = OpenPlaylist(
+      current,
+      [],
+      subtitle: initialSubtitle,
+      editable: _playlists.any((p) => p.id == id),
+    );
     _libraryLoading = true;
-    _safeNotify();
+    _enterPlaylistView();
     try {
-      var tracks = await api.playlistTracks(pl.id);
+      PlaylistDetail? detail;
+      try {
+        final pageId = browseId.startsWith('PL') ? 'VL$browseId' : browseId;
+        detail = await _tube.playlist(pageId, params: params);
+      } catch (_) {}
+      var tracks = detail?.tracks ?? const <Track>[];
+      if (tracks.isEmpty) {
+        // Some mixes and read-only lists have no playlist shelf the
+        // page parser recognises; the row list still loads.
+        try {
+          tracks = await api.playlistTracks(id);
+        } catch (_) {}
+      }
       // Empty credits and distributor placeholders alike resolve
       // through InnerTube's watch-next panel.
       final sparse = tracks
@@ -2381,15 +2486,43 @@ class AppState extends ChangeNotifier {
       }
       tracks = _stampLikedIds(tracks);
       if (gen != _openPlaylistGen) return;
-      _openPlaylist = OpenPlaylist(current, tracks);
+      final author =
+          detail?.author ??
+          (current.owner.isEmpty
+              ? null
+              : ArtistRef(
+                  current.owner,
+                  browseId: current.ownerId.isEmpty
+                      ? null
+                      : current.ownerId,
+                ));
+      final playlist = AccountPlaylist(
+        id: id,
+        title: (detail?.title.trim().isNotEmpty ?? false)
+            ? detail!.title
+            : current.title,
+        itemCount: tracks.length,
+        art: detail?.displayArtwork ?? current.art,
+        arts: current.arts,
+        owner: author?.name ?? current.owner,
+        ownerId: author?.browseId ?? current.ownerId,
+      );
+      _openPlaylist = OpenPlaylist(
+        playlist,
+        tracks,
+        subtitle: (detail?.subtitle.trim().isNotEmpty ?? false)
+            ? detail!.subtitle
+            : initialSubtitle,
+        author: author,
+        editable: detail?.editable ?? _playlists.any((p) => p.id == id),
+      );
       unawaited(
         _requestTrackRatings(tracks, (statuses) {
           final opened = _openPlaylist;
           if (gen != _openPlaylistGen) return;
-          if (opened != null && opened.playlist.id == pl.id) {
-            _openPlaylist = OpenPlaylist(
-              opened.playlist,
-              opened.tracks
+          if (opened != null && opened.playlist.id == id) {
+            _openPlaylist = opened.copyWith(
+              tracks: opened.tracks
                   .map(
                     (t) => statuses[t.videoId] == null
                         ? t
@@ -2410,13 +2543,29 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Closes the open playlist, returning to the library root.
+  /// Switches to the one playlist view. The library tab is the host;
+  /// opening from anywhere else pushes the origin so Back returns there.
+  void _enterPlaylistView() {
+    if (_screen != Screen.library) {
+      go(Screen.library);
+    } else {
+      _safeNotify();
+    }
+  }
+
+  /// Closes the open playlist. Returns to the library root when it was
+  /// opened there, otherwise pops back to the screen it came from.
   /// Invalidates any in-flight load so it cannot reopen the view.
   void closePlaylist() {
     ++_openPlaylistGen;
     _openPlaylist = null;
     _libraryLoading = false;
-    _safeNotify();
+    if (!_openedPlaylistFromLibrary && _canGoBack) {
+      _openedPlaylistFromLibrary = true;
+      goBack();
+    } else {
+      _safeNotify();
+    }
   }
 
   // ---------- Playlist dialog ----------
@@ -2656,9 +2805,8 @@ class AppState extends ChangeNotifier {
     if (stamped != null) detail = stamped;
     final opened = _openPlaylist;
     if (opened != null) {
-      _openPlaylist = OpenPlaylist(
-        opened.playlist,
-        opened.tracks.map(update).toList(),
+      _openPlaylist = opened.copyWith(
+        tracks: opened.tracks.map(update).toList(),
       );
     }
     _safeNotify();
@@ -2699,6 +2847,8 @@ class AppState extends ChangeNotifier {
           thumbnails: pl.thumbnails,
           tracks: pl.tracks.map(update).toList(),
           author: pl.author,
+          id: pl.id,
+          editable: pl.editable,
         ),
         error: d.error,
       );
@@ -3716,7 +3866,10 @@ class AppState extends ChangeNotifier {
     _activity = [];
     _discover = [];
     _recentArtists = [];
+    ++_openPlaylistGen;
     _openPlaylist = null;
+    _openedPlaylistFromLibrary = true;
+    _libraryLoading = false;
     // No session left: reset the validity verdict so the UI
     // doesn't keep showing "expired" for a signed-out state.
     _playback.loginValid = true;

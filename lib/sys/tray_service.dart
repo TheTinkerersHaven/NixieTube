@@ -16,8 +16,10 @@ import 'paths.dart' show cacheDir;
 
 import 'package:flutter/foundation.dart' show ValueListenable, debugPrint;
 import 'package:material_ui/material_ui.dart' show Color, ColorScheme;
+import 'package:nativeapi/nativeapi.dart'
+    show Application, ListenerId, Window, WindowCloseRequestedEvent, WindowEvent;
 import 'package:tray_manager/tray_manager.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:window_manager/window_manager.dart' show WindowManager;
 
 import '../core/models/models.dart';
 import '../core/player/player_controller.dart';
@@ -71,7 +73,7 @@ class TrayMenuKey {
 /// driven by player states. Construct, then [start]; [dispose]
 /// tears everything down. All native calls are best-effort so the
 /// tray can never break startup.
-class TrayService with WindowListener {
+class TrayService {
   TrayService({
     required PlayerController controller,
     required Future<void> Function() onQuit,
@@ -91,6 +93,8 @@ class TrayService with WindowListener {
   Menu? _menu;
   MenuItem? _playPauseItem;
   ListenerId? _iconListenerId;
+  Window? _window;
+  ListenerId? _windowListenerId;
   final Map<MenuItem, ListenerId> _itemListeners = {};
   TrayMenuKey? _lastKey;
   Color? _lastIconBg;
@@ -127,7 +131,7 @@ class TrayService with WindowListener {
       await file.writeAsBytes(bytes, flush: true);
       final art = Image.fromFile(file.path);
       _icon?.icon = art;
-      await windowManager.setIcon(file.path);
+      Application.instance.setIcon(file.path);
     } catch (_) {}
   }
 
@@ -143,8 +147,6 @@ class TrayService with WindowListener {
     _started = true;
     try {
       if (!TrayManager.instance.isSupported()) return;
-      await windowManager.ensureInitialized();
-      await windowManager.setPreventClose(true);
       final icon = TrayIcon.create();
       if (icon == null) return;
       _icon = icon;
@@ -186,7 +188,11 @@ class TrayService with WindowListener {
             break;
         }
       });
-      windowManager.addListener(this);
+      final window = WindowManager.instance.getCurrent();
+      if (window != null) {
+        _window = window;
+        _windowListenerId = window.addListener(_onWindowEvent);
+      }
       _scheme.addListener(_onScheme);
       _sub = _controller.states.listen(_onState);
       _onState(_controller.state);
@@ -206,7 +212,13 @@ class TrayService with WindowListener {
     _sub = null;
     try {
       _scheme.removeListener(_onScheme);
-      windowManager.removeListener(this);
+      final listenerId = _windowListenerId;
+      final window = _window;
+      if (window != null && listenerId != null) {
+        window.removeListener(listenerId);
+      }
+      _windowListenerId = null;
+      _window = null;
       final icon = _icon;
       if (icon != null) {
         if (_iconListenerId != null) {
@@ -256,18 +268,22 @@ class TrayService with WindowListener {
   /// Shows the window when hidden, hides it when visible.
   Future<void> toggleWindow() async {
     try {
-      if (await windowManager.isVisible()) {
-        await windowManager.hide();
+      final window = _window;
+      if (window == null) return;
+      if (window.isVisible) {
+        window.hide();
       } else {
-        await windowManager.show();
-        await windowManager.focus();
+        window.show();
+        window.focus();
       }
     } catch (_) {}
   }
 
-  @override
-  void onWindowClose() {
-    // Close hides to the tray; Quit stays in the tray menu.
-    unawaited(windowManager.hide());
+  /// Close hides to the tray; Quit stays in the tray menu.
+  void _onWindowEvent(WindowEvent event) {
+    if (event is WindowCloseRequestedEvent) {
+      event.request.cancel();
+      _window?.hide();
+    }
   }
 }

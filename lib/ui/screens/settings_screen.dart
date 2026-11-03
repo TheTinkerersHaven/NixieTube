@@ -12,6 +12,7 @@ import 'dart:io' show Platform;
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
+import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../sys/browser_cookies.dart';
 import '../../sys/discord.dart';
@@ -46,7 +47,10 @@ class SettingsScreen extends StatelessWidget {
       (s) => s.config.underlineLinks,
     );
     final state = context.read<AppState>();
-    return ListView(
+    return SilkyListView(
+      scrollSpeed: 1.5,
+      silkyScrollDuration: const Duration(milliseconds: 700),
+      animationCurve: Curves.easeOutQuart,
       padding: const EdgeInsets.fromLTRB(
         screenPadding,
         screenPadding,

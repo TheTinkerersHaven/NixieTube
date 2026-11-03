@@ -4,6 +4,7 @@ import 'package:flutter/material.dart' as fm;
 import 'package:m3e_core/m3e_core.dart' show M3ELoadingIndicator;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
+import 'package:silky_scroll/silky_scroll.dart';
 import '../../sys/lastfm.dart';
 
 import '../../core/models/models.dart';
@@ -83,7 +84,10 @@ class SongInfoView extends StatelessWidget {
 
     return fm.SelectableRegion(
       selectionControls: emptyTextSelectionControls,
-      child: ListView(
+      child: SilkyListView(
+        scrollSpeed: 1.5,
+        silkyScrollDuration: const Duration(milliseconds: 700),
+        animationCurve: Curves.easeOutQuart,
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
           row('Title', track.title),
