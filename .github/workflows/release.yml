@@ -14,11 +14,13 @@ permissions:
 
 jobs:
   create-tag:
+    # Only tag from the default branch, so a dispatch from a feature
+    # branch can't create a release tag by accident.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     steps:
+      # Default shallow clone is enough: we only tag HEAD.
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Extract version from pubspec.yaml
         id: version
@@ -28,6 +30,10 @@ jobs:
           # strip leading/trailing whitespace
           RAW=$(echo "$RAW" | xargs)
           VERSION=$(printf '%s' "$RAW" | cut -d+ -f1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read version from pubspec.yaml"
+            exit 1
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Create and push tag
@@ -38,8 +44,8 @@ jobs:
           echo "Creating tag: ${TAG}"
 
           # Guard: never clobber an existing tag
-          if git ls-remote --exit-code --tags origin "${TAG}" 2>/dev/null; then
-            echo "ERROR: tag ${TAG} already exists on remote"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::tag ${TAG} already exists on remote"
             exit 1
           fi
 
@@ -52,8 +58,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           TAG="v${VERSION}"
           echo "Triggering build.yml for tag ${TAG}"
           # GITHUB_TOKEN CAN trigger workflow_dispatch (unlike push events)
-          gh workflow run build.yml --ref "${TAG}" --repo "${{ github.repository }}"
+          gh workflow run build.yml --ref "${TAG}" --repo "${REPO}"
