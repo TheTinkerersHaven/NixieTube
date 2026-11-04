@@ -2,7 +2,6 @@ import 'dart:async' show unawaited;
 import 'dart:io' show Platform, exit;
 
 import 'package:material_ui/material_ui.dart';
-import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:provider/provider.dart';
@@ -47,7 +46,6 @@ void _configureImageCache() {
   PaintingBinding.instance.imageCache.maximumSizeBytes = cacheSizeBytes;
 }
 
-
 /// Clears the in-memory image cache when the OS reports memory
 /// pressure, so a long scroll session can't pin decoded covers
 /// forever. The disk cache is the real store; the in-memory cache
@@ -64,9 +62,6 @@ class _ImageCachePressureObserver extends WidgetsBindingObserver {
 /// Discord, Last.fm), restores the session, and runs the app. All
 /// service startups are best-effort so none can break launch.
 void main(List<String> args) {
-  // Webview title-bar subprocess entry point (vendored
-  // desktop_webview_window); the main app continues below.
-  if (runWebViewTitleBarWidget(args)) return;
   WidgetsFlutterBinding.ensureInitialized();
   WidgetsBinding.instance.addObserver(_ImageCachePressureObserver());
   // Configure adaptive image cache based on available memory.

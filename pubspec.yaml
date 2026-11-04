@@ -1,7 +1,7 @@
 name: nixietube
 description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
-version: 0.4.0+101
+version: 0.4.1+106
 
 environment:
   sdk: ^3.13.5
@@ -49,11 +49,8 @@ dependencies:
   # window_manager's native API re-exports the window surface but not the
   # application-level one; the tray sets the window icon through Application.
   nativeapi: ^0.5.5
-  # Embedded Google-login window (system WebKit). Vendored path fork —
-  # see packages/desktop_webview_window/VENDORED.md for the native
-  # NULL-deref crash fixes that upstream 0.3.0 lacks.
-  desktop_webview_window:
-    path: packages/desktop_webview_window
+  # Embedded Google-login window (system WebKit).
+  desktop_webview_window: ^0.4.0
   silky_scroll: ^2.6.4
 dev_dependencies:
   flutter_test:

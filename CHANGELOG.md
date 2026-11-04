@@ -4,6 +4,12 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] — 2026-11-04
+
+### Changed
+
+- **The login window no longer uses the vendored webview fork.** It now runs on the published `desktop_webview_window` package.
+
 ## [0.4.0] — 2026-11-03
 
 ### Added

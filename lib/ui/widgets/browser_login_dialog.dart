@@ -7,10 +7,6 @@
 // email → password → 2FA → redirect chain → blank page) crashed when
 // cookies were polled automatically mid-redirect. A single
 // user-timed read avoids every in-flight-navigation native call.
-// The vendored webview plugin (see
-// packages/desktop_webview_window/VENDORED.md) additionally guards
-// the native NULL-derefs behind blank-page navigations and failed
-// JS evaluations.
 
 import 'dart:async';
 
@@ -45,7 +41,7 @@ const _loginButtonScript =
     'box-shadow:0 2px 8px rgba(0,0,0,.4);";'
     'b.addEventListener("click",function(){'
     'b.disabled=true;b.textContent="Reading session\\u2026";'
-    'try{window.webkit.messageHandlers.nixietubeLogin.postMessage("check");}'
+    'try{window.desktopWebview.postMessage("nixietubeLogin");}'
     'catch(e){b.disabled=false;b.textContent="I\'ve signed in \\u2014 import session";}'
     '});'
     'document.body.appendChild(b);'
@@ -106,10 +102,6 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
             title: 'Log in with Google',
             windowWidth: 1000,
             windowHeight: 700,
-            // No Flutter title bar: that spawns a second engine (Impeller)
-            // which fights the Skia main app over EGL. System
-            // decorations instead (see VENDORED.md).
-            titleBarHeight: 0,
           ),
         ),
       );
@@ -118,25 +110,12 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
         return;
       }
       _webview = webview;
-      setState(() {});
-      // In-page "I've signed in" button: injected into every new
-      // document (login redirects create fresh documents), shown only
-      // on music.youtube.com. Clicking posts to the 'nixietubeLogin'
-      // channel, which triggers the single cookie read below.
-      webview.registerJavaScriptMessageHandler(
-        'nixietubeLogin',
-        (name, body) => _checkNow(),
-      );
-      webview.addScriptToExecuteOnDocumentCreated(_loginButtonScript);
-      webview.launch('https://music.youtube.com');
+      webview.addJavaScriptHandler("nixietubeLogin", (_, _) => unawaited(_checkNow()));
+      await webview.addScriptToExecuteOnDocumentCreated(_loginButtonScript);
+      await webview.launch('https://music.youtube.com');
       // User closing the window counts as cancel. Mark closed so
       // dispose() never issues a second native close.
-      unawaited(
-        webview.onClose.then((_) {
-          _closed = true;
-          if (!_done) unawaited(_finish(null));
-        }, onError: (_) {}),
-      );
+      _watchClose(webview);
       _timeoutTimer = Timer(widget.timeout, () => _finish(null));
     } catch (_) {
       if (!mounted) return;
@@ -144,12 +123,21 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
     }
   }
 
+  /// Mark the window closed when the user dismisses it, so dispose()
+  /// never issues a second native close.
+  void _watchClose(Webview webview) {
+    unawaited(
+      webview.onClose.then((_) {
+        _closed = true;
+        if (!_done) unawaited(_finish(null));
+      }, onError: (_) {}),
+    );
+  }
+
   /// Single user-triggered cookie read, via the native cookie jar so
   /// HttpOnly session cookies (LOGIN_INFO and friends, invisible to
   /// `document.cookie` — which is why YouTube kept rejecting the
-  /// header) are included. Safe to call now: the vendored plugin
-  /// NULL-guards every cookie getter (see
-  /// packages/desktop_webview_window/VENDORED.md).
+  /// header) are included.
   Future<void> _checkNow() async {
     final webview = _webview;
     if (_done || _closed || _checking || webview == null) return;
@@ -158,7 +146,7 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
       _status = null;
     });
     try {
-      if (webview.isNavigating.value) {
+      if (webview.navigationState.value.isLoading) {
         setState(
           () => _status = 'Page still loading — wait a moment and try again.',
         );
@@ -207,7 +195,7 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
     _closed = true;
     Timer(const Duration(milliseconds: 500), () {
       try {
-        webview.close();
+        unawaited(webview.close());
       } catch (_) {}
     });
   }

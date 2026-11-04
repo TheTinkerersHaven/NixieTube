@@ -158,8 +158,6 @@ lib/
     ├── theme.dart               Seed schemes, dynamic color, radii
     ├── screens/               Home, library, search, detail, Now Playing, settings, first-run setup
     └── widgets/               Artwork tiles, rails, cards, player bar, seek slider, dialogs, lyrics list
-
-packages/desktop_webview_window/  Vendored login-webview fork; native NULL-deref crash fixes documented in packages/desktop_webview_window/VENDORED.md
 ```
 
 Playback state flows one way: `PlayerController` emits immutable `PlayerState` snapshots; `AppState` mirrors what the UI needs and the screens select narrow slices of it, so progress ticks never rebuild the tree. Heavy work (decodes, JSON, session saves) runs on isolates; network calls are all bounded with timeouts.
@@ -181,7 +179,7 @@ NixieTube stands on the shoulders of:
 - [LRCLIB](https://lrclib.net) — synced/plain lyrics
 - [M3E (`m3e_core`, `material_ui`, `motor`)](https://pub.dev/packages/m3e_core) — Material 3 Expressive components, shapes and springs
 - [just_audio](https://pub.dev/packages/just_audio) + [media_kit](https://pub.dev/packages/media_kit) (`just_audio_media_kit`, `media_kit_libs_linux`, mpv) — audio playback
-- [desktop_webview_window](https://github.com/MixinNetwork/flutter-plugins) (Apache-2.0) — embedded login window, vendored under `packages/desktop_webview_window` with native crash fixes (see `VENDORED.md`)
+- [desktop_webview_window](https://github.com/MixinNetwork/flutter-plugins) (Apache-2.0) — embedded login window
 - [flutter_secure_storage](https://pub.dev/packages/flutter_secure_storage) — the platform keyring the session is kept in
 - [tray_manager](https://pub.dev/packages/tray_manager) / [window_manager](https://pub.dev/packages/window_manager) — tray icon, window controls
 - [flutter_discord_rpc](https://pub.dev/packages/flutter_discord_rpc), [dbus](https://pub.dev/packages/dbus), [dynamic_color](https://pub.dev/packages/dynamic_color), [google_fonts](https://pub.dev/packages/google_fonts), [skeletonizer](https://pub.dev/packages/skeletonizer), [url_launcher](https://pub.dev/packages/url_launcher), [path_provider](https://pub.dev/packages/path_provider), [provider](https://pub.dev/packages/provider), [dio](https://pub.dev/packages/dio), [crypto](https://pub.dev/packages/crypto), [image](https://pub.dev/packages/image), [flutter_rust_bridge](https://pub.dev/packages/flutter_rust_bridge)

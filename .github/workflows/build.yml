@@ -22,11 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # Path dependency (packages/desktop_webview_window) lives
-          # in-repo, so submodules are not needed — but lfs-style
-          # large files would need `lfs: true` here.
-          submodules: false
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
