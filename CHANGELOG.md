@@ -4,6 +4,33 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.4.2] — 2026-11-07
+
+### Added
+
+- **Resolved stream URLs are cached for five minutes.** Replaying a track within the window skips the network resolve entirely; the stream resolver re-resolves only when the cached URL expires or the cache is cleared.
+- **Age-restricted tracks play through yt-dlp.** When InnerTube cannot return a playable stream, the app falls back to the `yt-dlp` binary, handing it your session cookie (when signed in) through a throwaway file, so age-restricted tracks resolve instead of failing.
+- **Search finds the recording you named.** Queries that name an exact song now fill in the matching single/EP tracks, pull the named recording from the artist's catalog when YouTube's results omit it, and rank the merged songs by text match.
+- **App updates.** Check GitHub releases from Settings → App updates and install a new AppImage in place; the running binary is replaced atomically and takes effect on the next launch. A "Check for updates" item also lives in the tray menu.
+- **Update banner at startup.** On launch the app checks GitHub for a newer release and shows a banner at the top of the window when one is available; tap "Settings" to install it. The banner is hidden while the check is in flight and when nothing is available.
+- **Dismissable banners.** Both the update-available banner and the expired-session banner now have a close button; dismissed banners stay hidden for the rest of the session.
+
+### Fixed
+
+- **The liked songs list no longer has extra padding.** Its inner scrollable had the same insets as the home page itself, double-spacing the list; it now fills its box edge to edge.
+- **Settings no longer crashes on versions without a build number.** Running with a bare version like `0.3.1` (no `+N`) tried to read a missing `split('+')[1]` and threw; it now falls back to "unknown".
+
+### Changed
+
+- **Upcoming tracks are resolved further ahead.** Playback used to pre-resolve only the next track, right when the current one started; it now resolves up to three tracks ahead in the background, and the immediate next track close to handoff (half its length ahead, capped at 30 seconds) so its signed URL is still fresh. Shuffle and repeat-one skip prefetching since the next track isn't predictable.
+- **The one-click import from your system browser is gone.** It read cookies through a headless Chromium + DevTools session that proved unreliable, so sign-in now happens through the in-app login window or by pasting a cookie header from DevTools.
+- **Playback errors are now reported through a single detailed SnackBar.** The mini player bar no longer shows its own inline error line, which was hidden while the Now Playing view was open; the SnackBar now carries the full error reason (for example the HTTP status from the CDN) instead of a generic "check your network" message.
+- **Settings are easier to scan.** Every section now carries a short description of what it contains.
+- **Track menus open under the three-dots button.** The ⋮ menu on a track row now anchors to the button itself instead of the row's left edge, and the button stays visible while the menu is open.
+- **The Up next drag handle stays visible with its menu.** Opening a track's ⋮ menu in the queue keeps the reorder handle revealed alongside it.
+
 ## [0.4.1] — 2026-11-04
 
 ### Changed
