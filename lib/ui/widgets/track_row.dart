@@ -1,7 +1,7 @@
-// Track list row ported from Kotlin `TrackRow`: artwork, title,
-// artist/album, duration, and an overflow menu. Rows stay lean on
-// purpose: rating is one tap, everything else (queue, playlists,
-// link, remove) lives in the ⋮ spring menu and the right-click menu.
+// Track list row: artwork, title, artist/album, duration, and an
+// overflow menu. Rows stay lean on purpose: rating is one tap,
+// everything else (queue, playlists, link, remove) lives in the ⋮
+// spring menu and the right-click menu.
 
 import 'dart:async' show unawaited;
 
@@ -13,11 +13,18 @@ import 'package:provider/provider.dart';
 import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../theme.dart';
+import '../format.dart';
 import 'artwork_image.dart';
 import 'song_info.dart';
 
 /// Actions in a track row's overflow menu.
-enum TrackRowAction { playNext, addToPlaylist, copyLink, removeFromPlaylist, songInfo }
+enum TrackRowAction {
+  playNext,
+  addToPlaylist,
+  copyLink,
+  removeFromPlaylist,
+  songInfo,
+}
 
 /// One track row. Rating buttons appear when [rateable] and signed in;
 /// [showPlaylists] adds the dialog entry to the overflow menu, and
@@ -36,6 +43,7 @@ class TrackRow extends StatefulWidget {
     this.showViews = false,
     this.contextMenu = true,
     this.hovering,
+    this.onMenuOpenChanged,
   });
 
   @override
@@ -64,16 +72,44 @@ class TrackRow extends StatefulWidget {
   /// its own. Hosts that wrap the row together with a sibling control
   /// (the Up next drag handle) pass it so both reveal and hide as one.
   final bool? hovering;
+
+  /// Notifies the host when this row's overflow menu opens or closes,
+  /// so sibling controls (e.g. the Up next drag handle) can stay
+  /// revealed alongside the ⋮ button.
+  final ValueChanged<bool>? onMenuOpenChanged;
 }
 
 class _TrackRowState extends State<TrackRow> {
   bool _hovering = false;
+  bool _menuOpen = false;
   final M3EMenuController _menuController = M3EMenuController();
+  final GlobalKey _anchorKey = GlobalKey();
+  final GlobalKey _moreKey = GlobalKey();
 
   @override
   void dispose() {
     _menuController.dispose();
     super.dispose();
+  }
+
+  void _openMoreMenu() {
+    setState(() => _menuOpen = true);
+    widget.onMenuOpenChanged?.call(true);
+    final anchorBox = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final buttonBox = _moreKey.currentContext?.findRenderObject() as RenderBox?;
+    if (anchorBox != null && buttonBox != null) {
+      final buttonOrigin = buttonBox.localToGlobal(Offset.zero);
+      final anchorOrigin = anchorBox.localToGlobal(Offset.zero);
+      final local = buttonOrigin - anchorOrigin;
+      _menuController.open(
+        position: Offset(
+          local.dx + buttonBox.size.width,
+          local.dy + buttonBox.size.height,
+        ),
+      );
+    } else {
+      _menuController.open();
+    }
   }
 
   String? get _viewsLabel {
@@ -92,10 +128,12 @@ class _TrackRowState extends State<TrackRow> {
     final rateable = widget.rateable;
     final contextMenu = widget.contextMenu;
     final signedIn = context.select<AppState, bool>((s) => s.account != null);
-    final liked = context.select<AppState, bool>((s) => s.isLiked(track.videoId));
+    final liked = context.select<AppState, bool>(
+      (s) => s.isLiked(track.videoId),
+    );
     // A host that wraps the row and a sibling control shares one hover
     // state with it, so both reveal together.
-    final hovering = widget.hovering ?? _hovering;
+    final hovering = (widget.hovering ?? _hovering) || _menuOpen;
     final subtitle = [
       track.artistNames(),
       track.album?.name ?? '',
@@ -178,7 +216,7 @@ class _TrackRowState extends State<TrackRow> {
                       children: [
                         if (track.durationSec > 0)
                           Text(
-                            _fmtDur(track.durationSec),
+                            formatDuration(track.durationSec),
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         if (viewsLabel != null)
@@ -245,7 +283,8 @@ class _TrackRowState extends State<TrackRow> {
                 ? IconButton(
                     icon: const Icon(Icons.more_vert_rounded),
                     tooltip: 'More actions',
-                    onPressed: () => _menuController.open(),
+                    key: _moreKey,
+                    onPressed: _openMoreMenu,
                   )
                 : const SizedBox.shrink(),
           ),
@@ -266,16 +305,22 @@ class _TrackRowState extends State<TrackRow> {
     // enabled, right-click) opens the M3E popup menu instead of the
     // old spring pill stack.
     final anchored = M3EMenuAnchor(
+      key: _anchorKey,
       controller: _menuController,
       menuChildren: _buildMenuItems(context, context.read<AppState>()),
+      onClose: () {
+        if (mounted) {
+          setState(() => _menuOpen = false);
+          widget.onMenuOpenChanged?.call(false);
+        }
+      },
       builder: (ctx, controller, child) => child!,
       child: hovered,
     );
     if (!contextMenu) return anchored;
     return GestureDetector(
-      onSecondaryTapDown: (details) => _menuController.open(
-        position: details.localPosition,
-      ),
+      onSecondaryTapDown: (details) =>
+          _menuController.open(position: details.localPosition),
       child: anchored,
     );
   }
@@ -305,7 +350,8 @@ class _TrackRowState extends State<TrackRow> {
       ),
       if (widget.removable && widget.onRemove != null)
         M3EMenuItemButton(
-          onPressed: () => _runMenuAction(TrackRowAction.removeFromPlaylist, state),
+          onPressed: () =>
+              _runMenuAction(TrackRowAction.removeFromPlaylist, state),
           leadingIcon: const Icon(Icons.remove_circle_outline_rounded),
           child: const Text('Remove from playlist'),
         ),
@@ -320,17 +366,18 @@ class _TrackRowState extends State<TrackRow> {
         } else {
           state.player.enqueueNext(widget.track);
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Queued next')),
-            );
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Queued next')));
           }
         }
       case TrackRowAction.addToPlaylist:
         unawaited(state.openPlaylistDialog(widget.track));
       case TrackRowAction.copyLink:
-        unawaited(Clipboard.setData(
-          ClipboardData(text: 'https://youtu.be/${widget.track.videoId}'),
-        ));
+        unawaited(
+          Clipboard.setData(
+            ClipboardData(text: 'https://youtu.be/${widget.track.videoId}'),
+          ),
+        );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Link copied to clipboard.')),
@@ -362,12 +409,4 @@ class _TrackRowState extends State<TrackRow> {
         widget.onRemove?.call();
     }
   }
-
 }
-
-String _fmtDur(int sec) {
-  if (sec <= 0) return '0:00';
-  return '${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}';
-}
-
-

@@ -1,4 +1,4 @@
-// Full Now Playing view ported from Kotlin `NowPlaying`: tinted backdrop,
+// Full Now Playing view: tinted backdrop,
 // cover, transport controls and Up-next/Lyrics/Info tabs. Shows nothing
 // when no track is loaded.
 
@@ -15,6 +15,7 @@ import '../../core/innertube/lyrics.dart' show LyricsSource;
 import '../../core/models/models.dart';
 import '../../core/player/player_state.dart';
 import '../app_state.dart';
+import '../format.dart';
 import '../theme.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/lyrics_list.dart';
@@ -373,7 +374,7 @@ class _TransportColumnState extends State<_TransportColumn> {
                 color: shuffle ? scheme.primary : scheme.onSurface,
                 onPressed: loading ? null : () => state.player.toggleShuffle(),
               ),
-              // Sized M3 targets like Kotlin: 60dp buttons, 48dp glyphs.
+              // Sized M3 targets: 60dp buttons, 48dp glyphs.
               IconButton(
                 icon: const Icon(Icons.skip_previous_rounded, size: 48),
                 tooltip: 'Previous',
@@ -918,6 +919,7 @@ class _QueueRow extends StatefulWidget {
 
 class _QueueRowState extends State<_QueueRow> {
   bool _hovering = false;
+  bool _menuOpen = false;
   final M3EMenuController _menuController = M3EMenuController();
 
   @override
@@ -951,13 +953,15 @@ class _QueueRowState extends State<_QueueRow> {
                   // one stays off.
                   contextMenu: false,
                   // Shared so the ⋮ and the handle appear together.
-                  hovering: _hovering,
+                  hovering: _hovering || _menuOpen,
+                  onMenuOpenChanged: (open) =>
+                      setState(() => _menuOpen = open),
                 ),
               ),
               AnimatedSize(
                 duration: const Duration(milliseconds: 220),
                 curve: Curves.easeOutBack,
-                child: _hovering
+                child: (_hovering || _menuOpen)
                     ? ReorderableDragStartListener(
                         index: widget.index,
                         child: Padding(
@@ -1023,9 +1027,11 @@ class _QueueRowState extends State<_QueueRow> {
       case _QueueRowAction.addToPlaylist:
         unawaited(state.openPlaylistDialog(track));
       case _QueueRowAction.copyLink:
-        unawaited(Clipboard.setData(
-          ClipboardData(text: 'https://youtu.be/${track.videoId}'),
-        ));
+        unawaited(
+          Clipboard.setData(
+            ClipboardData(text: 'https://youtu.be/${track.videoId}'),
+          ),
+        );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Link copied to clipboard.')),

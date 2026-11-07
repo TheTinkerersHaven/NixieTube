@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -18,7 +19,6 @@ import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/track_row.dart';
-
 
 class _QuietTube extends InnerTube {
   @override
