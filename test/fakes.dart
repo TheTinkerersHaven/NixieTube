@@ -77,8 +77,7 @@ class FakeTube extends InnerTube {
   }
 
   @override
-  Future<RatingStatus> rating(String videoId) async =>
-      RatingStatus.indifferent;
+  Future<RatingStatus> rating(String videoId) async => RatingStatus.indifferent;
 
   @override
   Future<Track> enrichTrack(Track track) async => track;
@@ -102,22 +101,19 @@ Future<AppState> bootAppState(
   final player = PlayerController(
     engine: engine ?? FakeEngine(),
     tube: tube,
-    resolveStream: resolveStream ??
+    resolveStream:
+        resolveStream ??
         ((id) async => ResolvedStream(url: 'https://x/$id', bitrate: 1)),
     configDirPath: configDirPath ?? dir.path,
   );
   addTearDown(player.dispose);
-  final art = ArtworkStore(
-    cacheDirPath: artDirPath ?? '${dir.path}/art',
-  );
+  final art = ArtworkStore(cacheDirPath: artDirPath ?? '${dir.path}/art');
   addTearDown(art.close);
   final state = AppState(
     tube: tube,
     player: player,
     art: art,
-    config: SysConfig(
-      configPath: '${dir.path}/config.properties',
-    ),
+    config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: openUrl ?? ((_) async {}),
   );
   addTearDown(state.dispose);

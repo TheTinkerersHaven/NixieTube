@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -21,7 +22,6 @@ import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/now_playing_screen.dart';
 import 'package:nixietube/ui/theme.dart';
-
 
 Future<AppState> _boot(WidgetTester tester) async {
   final dir = Directory.systemTemp.createTempSync('nt-sleep-test');
