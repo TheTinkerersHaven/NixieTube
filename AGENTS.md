@@ -1,6 +1,55 @@
 # NixieTube — agent operating rules
 
+## Project overview
+
+NixieTube is a native Linux desktop client for YouTube Music, built with Flutter (Dart). It plays music, manages your library (playlists, liked songs, followed artists, recent activity), shows lyrics, scrobbles to Last.fm, exposes MPRIS / Discord Rich Presence, and lives in the system tray. Distributed as an AppImage.
+
+- **Auth:** one browser-cookie session (InnerTube) covers playback, history, likes and the whole library. Credentials live in the platform secret store (libsecret / keyring), never in a plain-text file.
+- **Audio:** `just_audio` + `media_kit` (mpv backend) on Linux.
+- **UI:** M3E (`material_ui`, `m3e_core`) with Material 3 (`useMaterial3: true`), dynamic color, Google Sans Flex font.
+- **Network:** all calls via a shared Dio client with timeouts; resolved stream URLs cached 5 minutes; artwork cached on disk.
+- **Update:** checks GitHub releases at startup, shows a dismissable banner, installs a new AppImage atomically (`<exe>.new` → rename).
+
+## Where things live
+
+```
+lib/
+├── main.dart                  App entry point, services, tray, themed root
+├── theme.dart                 YTM-red seed scheme, dynamic color, radii
+├── core/
+│   ├── artwork/artwork_store.dart   Disk-cached covers
+│   ├── innertube/                   InnerTube client: auth, library, browse, search, radio, ratings, lyrics, stream resolve
+│   ├── models/models.dart           Track, shelf, playlist, detail models
+│   └── player/                      Queue, shuffle/repeat/radio, sleep timer, session persistence, engines
+├── sys/
+│   ├── updater.dart           GitHub release check + atomic AppImage replace
+│   ├── browser_cookies.dart   One-click cookie import from browsers
+│   ├── browser_login.dart     Cookie payload helpers
+│   ├── cache_store.dart       On-disk JSON caches
+│   ├── discord.dart           Discord Rich Presence
+│   ├── http_client.dart       Shared Dio factory
+│   ├── lastfm.dart            Last.fm auth + scrobbling
+│   ├── mpris.dart             MPRIS D-Bus interface
+│   ├── paths.dart             XDG config/cache directories
+│   ├── secure_store.dart      Credential store (platform keystore)
+│   ├── sys_config.dart        Settings store + credential migration
+│   ├── tray_icon.dart         Dynamic tray icon renderer
+│   └── tray_service.dart      Tray menu, show/hide, quit
+├── ui/
+│   ├── app.dart               Single-window shell (rail, overlays, banners)
+│   ├── app_state.dart         Central ChangeNotifier: nav, library, ratings, pins, recents, login sessions, update state
+│   ├── theme.dart             Seed schemes, dynamic color, radii
+│   ├── screens/               Home, library, search, detail, Now Playing, settings, first-run setup
+│   └── widgets/               Artwork tiles, rails, cards, player bar, seek slider, dialogs, lyrics list
+```
+
+Key symbols:
+- `AppState` (`lib/ui/app_state.dart`) — the central `ChangeNotifier`. Most UI reads go through `context.select<AppState, ...>`; writes go through methods on the state.
+- `Updater` (`lib/sys/updater.dart`) — `checkForUpdates()` hits the GitHub releases API; `applyUpdate()` downloads to `<exe>.new` and atomically renames.
+- `UpdateInfo` — data class returned by `checkForUpdates()`, carries `version` and the download URL.
+
 ## File editing
+
 - Always modify files with the built-in `edit`, `write`, and `patch` tools.
 - Never use sed, awk, perl, python, echo/cat redirection or heredocs to change files.
 - Use bash only for running builds, tests, git, and read-only inspection.
@@ -14,19 +63,43 @@ The agent must **never** commit, push, tag, or force-push on the user's behalf. 
 - **Never force-push remote tags.**
 - Before any release: the user decides when the tree is clean, what goes into the commit, the tag name, and when to push.
 
-## Everything else
+## Code style & conventions
 
 - Never hard-wrap prose. In Markdown and any text written for a reader (README, CHANGELOG, AGENTS, docs, and replies to the user), a paragraph or a bullet stays on one line; the renderer wraps it. Only `dart format` decides code line breaks, and comments follow the wrapping of the file around them.
-- `flutter analyze` clean, affected tests green, `flutter build linux --release` succeeds before a release is considered done.
-- Bump the `+<num>` build in `pubspec.yaml` (`version: 0.2.1+N`) on every build; the build number must change whenever the binary changes so the version stays meaningful.
 - M3 (`useMaterial3: true`); M3E components throughout; no hardcoding user-facing content except explicitly requested section names.
-- One login: a browser-cookie session (InnerTube) covers playback, listening history and the whole account library; per-session sign-out.
-- Credentials (the cookie, the session token, the Last.fm secrets) live in the platform secret store, never in a plain-text file; the legacy `auth.properties` is migrated into the store and deleted. A sandbox (a custom `SysConfig` path, as the tests use) must never touch the real keyring.
-- Square thumbnails must use YouTube's own square art — no client-side auto-crop and no bar trimming; the store never crops (whole-frame decode).
 - Keep resource usage minimal; verify via execution, not speculation.
 - Check whether an existing dependency already implements a feature before hand-rolling it.
 - Prefer `dart pub global run dartdoc` with 9.0.0 pinned for `dart doc`.
-- Test gotchas: M3E buttons need `tapAt(getCenter(...))`; skeletonizer widget tests use bounded pumps (never `pumpAndSettle`); `testWidgets` fails on stray timers and the pending-timer check runs **before** `addTearDown`; real `dart:io` futures never complete under FakeAsync; this suite uses real short delays in plain `test()` (no `fake_async`); `mockDio` builds on `newHttpClient()` so injected dios have no retry interceptor.
+
+## Build, analyze, test
+
+Before considering any work done:
+
+```bash
+flutter analyze          # must be clean (1 pre-existing info lint is OK)
+flutter test             # all tests green
+flutter build linux --release  # must succeed
+```
+
+- Bump the `+<num>` build in `pubspec.yaml` (`version: 0.4.1+N`) on every build; the build number must change whenever the binary changes so the version stays meaningful.
+- When adding a user-facing feature, update `CHANGELOG.md` under `[Unreleased]` and bump the build number.
+
+## Testing gotchas
+
+- M3E buttons need `tapAt(getCenter(...))` in widget tests.
+- Skeletonizer widget tests use bounded pumps — never `pumpAndSettle`.
+- `testWidgets` fails on stray timers; the pending-timer check runs **before** `addTearDown`.
+- Real `dart:io` futures never complete under `FakeAsync`; this suite uses real short delays in plain `test()` (no `fake_async`).
+- `mockDio` builds on `newHttpClient()` so injected dios have no retry interceptor.
+- A sandbox (a custom `SysConfig` path, as the tests use) must never touch the real keyring.
+
+## Domain knowledge
+
+- **Auth session:** cookie + SAPISIDHASH. `AuthSession.fromCookie(cookie)` parses it; `loginValid` is true when the saved cookie session still reads the library.
+- **Stream resolution:** `StreamResolver` resolves playable URLs via yt-dlp; results are cached 5 minutes with TTL. Lookahead prefetches up to 3 tracks ahead.
+- **AppImage updates:** `Updater.applyUpdate()` only replaces when running from an `.AppImage` path; local `flutter run` skips gracefully. The new binary takes effect on next launch.
+- **Banner pattern:** banners live in `lib/ui/app.dart` as `_SessionBanner`, `_AudioBackendBanner`, `_UpdateBanner`. Each reads its visibility via `context.select` and is dismissed via `AppState.dismiss*Banner()`, which also must be read via `context.select` so Provider rebuilds the banner when the flag flips.
+- **Square thumbnails:** must use YouTube's own square art — no client-side auto-crop and no bar trimming; the artwork store never crops (whole-frame decode).
 
 ## Writing the changelog
 

@@ -2,7 +2,7 @@
   <img alt="NixieTube" src="assets/icon/nixietube.png" width="200">
 </p>
 
-<p align="center">A YouTube Music desktop client for Linux — playback, library, quick picks and lyrics, in a Material 3 Expressive interface.</p>
+<p align="center">NixieTube — a YouTube Music desktop client for Linux. Playback, library, quick picks and lyrics in a Material 3 Expressive interface.</p>
 
 <p align="center">
   <img alt="Flutter" src="https://img.shields.io/badge/Flutter-3.47-FF0000?style=flat-square&logo=flutter&logoColor=white">
@@ -20,35 +20,45 @@ The repository is private, so shields.io cannot read it: badges that query the G
 
 ---
 
-## Get the app
+# What NixieTube is
+
+NixieTube is a native Linux desktop app for YouTube Music. It opens your music library in a clean, Material 3 Expressive window — home feed, playlists, liked songs, artists you follow, search, Now Playing — without a browser tab eating your RAM.
+
+You sign in once with your Google account, and everything just works: playback, listening history, likes, playlists, recent activity, even age-restricted tracks. Your session lives in your system keyring, not in a plain-text file anywhere on disk.
+
+# Why use it
+
+- **One sign-in, everything unlocked.** A browser cookie session covers playback, history, likes and your whole library. Consent, 2FA and passkeys all work in the embedded login window.
+- **Your library, front and centre.** Playlists, followed artists and the songs you liked (straight from YouTube's own "Liked Music" playlist, newest first).
+- **Gapless transitions.** The next track's stream is resolved before the current song ends, so playback starts immediately — no resolve delay between songs.
+- **Stays out of your way.** Closing the window hides NixieTube to the tray while playback keeps going. Transport controls live in the tray menu, and media keys / MPRIS / `playerctl` all work.
+- **Scrobble and share.** Last.fm scrobbling, Discord Rich Presence and MPRIS are built in, each with its own toggle in Settings.
+- **Sleep timer.** On Now Playing, open the ⋮ menu and pick 15/30/45/60 minutes, end of track, or end of queue.
+- **Keeps your covers fresh.** Artwork is cached on disk with integrity checks, and there's a one-click "Clear artwork cache" if anything ever looks stale.
+- **Self-updates.** On launch the app checks GitHub for a new release and shows a banner at the top of the window when one is available — tap "Settings" to install the new AppImage in place. It takes effect on the next start.
+- **Distributed as an AppImage.** Grab the file, `chmod +x` it, run it. No install step, no system packages to touch.
+
+# Getting the app
 
 Grab the latest build from the [Releases page](https://github.com/TheTinkerersHaven/NixieTube/releases/latest):
 
 | Platform | Download |
 |----------|----------|
-| Linux    | `NixieTube-<version>-x86_64.AppImage` — make it executable with `chmod +x`, then run it |
+| Linux | `NixieTube-<version>-x86_64.AppImage` — `chmod +x` it, then run it |
 
-## Using NixieTube
+# First steps
 
-**Signing in.** One sign-in covers everything: a browser-cookie session unlocks playback, listening history and the whole account library (playlists, liked songs, recent activity, followed artists). Press **Log in with browser**, sign into Google in the login window (consent, 2FA and passkeys all work there), then press the floating **I've signed in** button inside that window — or open YouTube Music in your own browser and use **I've signed in — import now**. A manual cookie paste is available as a last resort. The session (cookie, session token and the Last.fm credentials) is kept in the platform secret store — the keyring on Linux — not in a plain-text file.
+**Signing in.** Press **Log in with browser**, sign into Google in the login window, then press the floating **I've signed in** button inside that window. Or open YouTube Music in your own browser and use **I've signed in — import now** to paste your cookie manually. A manual cookie paste is available as a last resort.
 
-**First start.** A fresh install opens with a short setup: what the app is, the sign-in, and a few choices (accent color, reduced motion, high contrast, Last.fm). **Skip setup** ends it for good, an account that is already signed in never sees it, and **Settings → Setup** puts it back whenever you want a walkthrough.
+**First start.** A fresh install opens with a short setup: what the app is, signing in, and a few choices (accent color, reduced motion, high contrast, Last.fm). **Skip setup** ends it for good. An account that's already signed in never sees it again, and **Settings → Setup** puts it back whenever you want a walkthrough.
 
-**Listening.** The home screen opens on your quick picks and liked songs, then mixes, discover and shelves. **Long-press** a quick-pick tile to pin it to the front. Everything you play moves to the head of recent activity, so picks stay fresh; they also survive restarts ahead of the server history.
+**Listening.** The home screen opens on your quick picks and liked songs, then mixes, discover and shelves. Long-press a quick-pick tile to pin it to the front. Everything you play moves to the head of recent activity, so picks stay fresh — and they survive restarts ahead of the server history.
 
-**Your library.** The library holds your playlists, the artists you follow and the songs you liked — the liked list straight from YouTube's own "Liked Music" playlist, newest like first, with the count YouTube reports for it.
+**Your library.** The library holds your playlists, the artists you follow and the songs you liked — straight from YouTube's own "Liked Music" playlist, newest like first, with the count YouTube reports for it.
 
-**Sleep timer.** On the Now Playing screen, open the ⋮ menu and pick **Sleep timer**: 15/30/45/60 minutes, end of track, or end of queue. The header menu entry shows the remaining time while armed.
+**Desktop integrations.** Last.fm scrobbling, Discord Rich Presence and MPRIS (media keys, `playerctl`) live under **Settings → Desktop integrations**. Listening-history reporting to YouTube is a separate toggle under Playback.
 
-**Tray.** Closing the window hides the app to the tray instead of quitting — playback keeps going. The tray menu has transport controls, Show/Hide and Quit; the tray (and window) icon is the 4-sided M3E cookie re-rendered in your theme colors.
-
-**Scrobbling & integrations.** Last.fm scrobbling, Discord Rich Presence and MPRIS (media keys, `playerctl`) live under **Settings → Desktop integrations**. Listening-history reporting to YouTube is a separate toggle under Playback.
-
-**Covers.** Artwork is cached on disk (raw downloads plus rendered crops) with integrity checks. If covers ever look stale, **Settings → Debug → Clear artwork cache** re-fetches everything from scratch.
-
----
-
-## Building from source
+# Building from source
 
 ### Prerequisites
 
@@ -62,12 +72,11 @@ sudo apt-get install -y clang cmake ninja-build pkg-config \
   libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev
 ```
 
-`libwebkit2gtk`/`libsoup` back the embedded Google-login window; `libayatana-appindicator` backs the tray icon; `libsecret` is the library the credential store links against.
+`libwebkit2gtk`/`libsoup` back the embedded Google-login window; `libayatana-appindicator` backs the tray icon; `libsecret` is what the credential store links against.
 
-The saved session also needs a running [Secret Service](https://specifications.freedesktop.org/secret-service/) backend — `gnome-keyring` (with the `secrets` component) or `kwallet`/`ksecretd`. Desktop sessions normally start one for you. Verify the backend is reachable:
+The saved session also needs a running [Secret Service](https://specifications.freedesktop.org/secret-service/) backend — `gnome-keyring` (with the `secrets` component) or `kwallet`/`ksecretd`. Desktop sessions normally start one for you. Verify it's reachable:
 
 ```bash
-# Should print a stored value (round-trip test)
 echo "test" | secret-tool store --label=test app nixietube_test
 secret-tool lookup app nixietube_test
 secret-tool clear app nixietube_test
@@ -97,12 +106,9 @@ dart pub global activate dartdoc 9.0.0
 dart pub global run dartdoc --output doc/api .
 ```
 
-> `dart doc` with the bundled SDK crashes inside dartdoc itself
-> ([dart-lang/dartdoc#4180](https://github.com/dart-lang/dartdoc/issues/4180));
-> the pinned 9.0.0 release generates cleanly. Doc generation is
-> configured in [dartdoc_options.yaml](dartdoc_options.yaml).
+> `dart doc` with the bundled SDK crashes inside dartdoc itself ([dart-lang/dartdoc#4180](https://github.com/dart-lang/dartdoc/issues/4180)); the pinned 9.0.0 release generates cleanly. Doc generation is configured in [dartdoc_options.yaml](dartdoc_options.yaml).
 
-## Configuration
+# Configuration
 
 Compile-time options, set with `--dart-define`:
 
@@ -114,7 +120,7 @@ Compile-time options, set with `--dart-define`:
 flutter run --dart-define=APP_VERSION=0.3.0+1
 ```
 
-## Architecture
+# Architecture
 
 Everything the app needs from YouTube comes over one InnerTube session: the browser cookie is the only credential, and it is read from the platform keyring at startup. Playlists, the liked list and the writes on them all go through that one client.
 
@@ -162,7 +168,7 @@ lib/
 
 Playback state flows one way: `PlayerController` emits immutable `PlayerState` snapshots; `AppState` mirrors what the UI needs and the screens select narrow slices of it, so progress ticks never rebuild the tree. Heavy work (decodes, JSON, session saves) runs on isolates; network calls are all bounded with timeouts.
 
-## Releases
+# Releases
 
 The app version is centrally managed in `pubspec.yaml` (`version: <build-name>+<build-number>`); git tags track the build-name as `v<build-name>`. The changelog lives in [CHANGELOG.md](CHANGELOG.md).
 
@@ -170,7 +176,7 @@ The app version is centrally managed in `pubspec.yaml` (`version: <build-name>+<
 2. **Run the Release workflow** (`Actions` → `Release` → manual) — it reads the version, creates and pushes tag `v<build-name>`, and triggers the `Build` workflow. Or tag manually (`git tag v1.2.3 && git push origin v1.2.3`); never force-push a remote tag.
 3. The `Build` workflow analyzes, verifies tag↔pubspec agreement, builds the Linux bundle plus AppImage, and publishes a GitHub Release.
 
-## Credits
+# Credits
 
 NixieTube stands on the shoulders of:
 
@@ -186,6 +192,6 @@ NixieTube stands on the shoulders of:
 - [Metrolist](https://github.com/MetrolistGroup/Metrolist) (GPL-3.0) — inspiration for preferring the API's own square crops
 - [AppImage](https://appimage.org) (`appimagetool`) — Linux distribution
 
-## License
+# License
 
 MIT — see [LICENSE](LICENSE).
