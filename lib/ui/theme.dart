@@ -1,7 +1,6 @@
-// Material 3 theme ported from Kotlin `Theme.kt` + `Style.kt`.
+// Material 3 theme.
 //
-// Only the dark scheme is applied (the Kotlin `App` hardcodes
-// `YtmDarkScheme`); the light scheme is defined but unused there too.
+// Only the dark scheme is applied; the light scheme is defined but unused.
 
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';

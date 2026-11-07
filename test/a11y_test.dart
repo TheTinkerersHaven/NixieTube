@@ -9,8 +9,9 @@ import 'package:nixietube/ui/a11y.dart';
 import 'fakes.dart';
 
 void main() {
-  testWidgets('motionDuration falls back to full duration without AppState',
-      (tester) async {
+  testWidgets('motionDuration falls back to full duration without AppState', (
+    tester,
+  ) async {
     const d = Duration(milliseconds: 300);
     late Duration got;
     await tester.pumpWidget(
@@ -26,8 +27,9 @@ void main() {
     expect(got, d);
   });
 
-  testWidgets('highContrastOf defaults to false without AppState',
-      (tester) async {
+  testWidgets('highContrastOf defaults to false without AppState', (
+    tester,
+  ) async {
     late bool got;
     await tester.pumpWidget(
       MaterialApp(
@@ -42,8 +44,9 @@ void main() {
     expect(got, isFalse);
   });
 
-  testWidgets('motionDuration collapses to zero when reduced motion is on',
-      (tester) async {
+  testWidgets('motionDuration collapses to zero when reduced motion is on', (
+    tester,
+  ) async {
     final dir = Directory.systemTemp.createTempSync('nt-a11y');
     addTearDown(() => dir.deleteSync(recursive: true));
     final tube = FakeTube();

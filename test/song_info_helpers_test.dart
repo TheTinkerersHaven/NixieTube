@@ -3,7 +3,8 @@
 // and the compact K/M formatter agrees with the Likes row.
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nixietube/ui/widgets/song_info.dart' show playsLabel, compactCount;
+import 'package:nixietube/ui/format.dart' show compactCount;
+import 'package:nixietube/ui/widgets/song_info.dart' show playsLabel;
 
 void main() {
   group('playsLabel', () {

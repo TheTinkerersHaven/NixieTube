@@ -10,6 +10,7 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -59,7 +60,6 @@ class _FakeEngine extends FakeEngine {
 
   @override
   bool isPlaying() => playing;
-
 }
 
 /// InnerTube stub: the real client schedules network

@@ -12,6 +12,7 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -23,7 +24,6 @@ import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/playlist_dialog.dart';
-
 
 class _FakeTube extends InnerTube {
   @override

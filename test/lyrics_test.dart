@@ -46,7 +46,7 @@ void main() {
       expect(normalizeLrc('Song (feat. Guest)'), 'song');
       expect(normalizeLrc('Song - Live'), 'song');
       // "Remastered" has no word boundary after "remaster", so only the
-      // exact "Remaster" form strips — same as Kotlin.
+      // exact "Remaster" form strips.
       expect(normalizeLrc('Song - Remaster 2023'), 'song');
       expect(normalizeLrc('Song - Remastered 2023'), 'song remastered 2023');
       expect(normalizeLrc("Don't Stop!"), 'dont stop');

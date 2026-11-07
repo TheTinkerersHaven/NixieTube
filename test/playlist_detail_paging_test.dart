@@ -76,7 +76,11 @@ void main() {
         return (
           200,
           jsonEncode(
-            _playlistPage([_row('a', 'A'), _row('b', 'B'), _continuation('t1')]),
+            _playlistPage([
+              _row('a', 'A'),
+              _row('b', 'B'),
+              _continuation('t1'),
+            ]),
           ),
         );
       }
@@ -84,7 +88,11 @@ void main() {
         return (
           200,
           jsonEncode(
-            _continuedPage([_row('c', 'C'), _row('d', 'D'), _continuation('t2')]),
+            _continuedPage([
+              _row('c', 'C'),
+              _row('d', 'D'),
+              _continuation('t2'),
+            ]),
           ),
         );
       }
@@ -109,10 +117,7 @@ void main() {
     var calls = 0;
     final client = mockDio((options) async {
       calls++;
-      return (
-        200,
-        jsonEncode(_playlistPage([_row('a', 'A'), _row('b', 'B')])),
-      );
+      return (200, jsonEncode(_playlistPage([_row('a', 'A'), _row('b', 'B')])));
     });
     final tube = InnerTube(dio: client);
 

@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -28,7 +29,6 @@ import 'package:nixietube/ui/widgets/album_panel.dart';
 import 'package:nixietube/ui/widgets/loading_placeholders.dart';
 import 'package:nixietube/ui/widgets/lyrics_list.dart';
 import 'package:nixietube/ui/widgets/track_row.dart';
-
 
 /// InnerTube with held detail fetches: tests release the
 /// background load deterministically instead of racing it.

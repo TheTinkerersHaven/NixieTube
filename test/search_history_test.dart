@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
@@ -14,7 +15,6 @@ import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
-
 
 class _EmptyTube extends InnerTube {
   @override
@@ -44,6 +44,7 @@ Future<AppState> _boot() async {
     openUrl: (_) async {},
   );
   addTearDown(state.dispose);
+  addTearDown(() async => await state.deletePersistedSearchHistory());
   return state;
 }
 
@@ -84,9 +85,10 @@ void main() {
       // Unknown entries are a no-op (and notify nothing observable).
       state.removeSearchHistory('zzz');
       expect(state.searchHistory, ['ccc', 'aaa']);
+
+      await pumpEventQueue();
       // A fresh state reads back the persisted remainder on startup.
       final reread = await _boot();
-      await reread.loadAuth();
       expect(reread.searchHistory, ['ccc', 'aaa']);
     },
   );

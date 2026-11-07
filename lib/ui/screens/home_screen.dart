@@ -1,5 +1,5 @@
-// Home screen ported from Kotlin `HomePanel`: greeting, mood chips,
-// personal quick picks, discover rail, and content shelves.
+// Home screen: greeting, mood chips, personal quick picks, discover rail,
+// and content shelves.
 
 import 'dart:async' show unawaited;
 
@@ -11,7 +11,9 @@ import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
+import '../state/pinned_picks_state.dart';
 import '../theme.dart';
+import '../widgets/screen_list.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/cards.dart';
 import '../widgets/loading_placeholders.dart';
@@ -420,10 +422,7 @@ class HomeScreen extends StatelessWidget {
                   return;
                 }
                 if (entry.item.isPlaylist) {
-                  state.openPlaylistById(
-                    entry.item.browseId,
-                    item: entry.item,
-                  );
+                  state.openPlaylistById(entry.item.browseId, item: entry.item);
                   return;
                 }
                 state.go(Screen.detail, detail: entry.item);
@@ -447,7 +446,7 @@ class HomeScreen extends StatelessWidget {
         final wide = constraints.maxWidth >= 900;
         final grid = _QuickPicksGrid(songs: songs, pins: pins);
         if (!wide) {
-          // Narrow: liked list capped at 400px like Kotlin, scrolling inside.
+          // Narrow: liked list capped at 400px, scrolling inside.
           return Column(
             children: [
               grid,
@@ -457,7 +456,7 @@ class HomeScreen extends StatelessWidget {
           );
         }
         // Wide: cut the liked list to the grid's exact height so its rows
-        // scroll/clip where the quick-pick tiles end (Kotlin measurement).
+        // scroll/clip where the quick-pick tiles end.
         final gridW = (constraints.maxWidth - 16) * 155 / 255;
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -635,7 +634,7 @@ List<ShelfItem> orderQuickPicks({
 }) {
   final seenIds = <String>{};
   bool fresh(ShelfItem item) {
-    final k = AppState.pickKeyOf(item);
+    final k = PinnedPicksState.keyOf(item);
     if (k == null) return true;
     return seenIds.add(k);
   }
@@ -737,9 +736,7 @@ class _QuickPicksGrid extends StatelessWidget {
           }
           // Pinned browsable entries (albums, artists, playlists).
           final b = item as BrowseItem;
-          final art = b.thumbnails.isEmpty
-              ? null
-              : b.bestArtwork;
+          final art = b.thumbnails.isEmpty ? null : b.bestArtwork;
           return QuickPickCard(
             title: b.title,
             subtitle: b.subtitle,
@@ -940,7 +937,7 @@ class _PersonalHeading extends StatelessWidget {
 
 /// Liked songs list: rows under a header with Play all. Fills the height
 /// given by the parent (grid height on wide windows, 400px when stacked)
-/// with the rows scrolling inside, like Kotlin's measured column.
+/// with the rows scrolling inside a measured column.
 class _LikedSideList extends StatelessWidget {
   const _LikedSideList({required this.liked});
 
@@ -974,11 +971,11 @@ class _LikedSideList extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: SilkyListView.builder(
-            scrollSpeed: 1.5,
-            silkyScrollDuration: const Duration(milliseconds: 700),
-            animationCurve: Curves.easeOutQuart,
+          child: screenListBuilder(
             itemCount: liked.length,
+            topPadding: 0,
+            horizontalPadding: 0,
+            bottomClearance: 0,
             itemBuilder: (context, i) {
               final t = liked[i];
               return TrackRow(

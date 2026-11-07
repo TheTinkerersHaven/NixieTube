@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:material_ui/material_ui.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -23,7 +24,6 @@ import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/detail_screen.dart';
 import 'package:nixietube/ui/screens/home_screen.dart';
 import 'package:nixietube/ui/screens/search_screen.dart';
-
 
 Future<AppState> _bootShell(WidgetTester tester) async {
   final dir = Directory.systemTemp.createTempSync('nt-apptrans-test');

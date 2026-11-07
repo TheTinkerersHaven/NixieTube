@@ -1,7 +1,9 @@
-// The Last.fm browser-approval flow: connect, confirm, or reopen.
+// The Last.fm sign-in panel: connect, confirm, or reopen.
 //
 // Shared by the settings card and the first-run setup, so the account
-// can be connected from either place.
+// can be connected from either place. The panel owns the flow state
+// (the pending token, the in-flight flag and the failure notice), so
+// both screens stay free of duplicated bookkeeping.
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
@@ -10,81 +12,82 @@ import 'package:provider/provider.dart';
 import '../../sys/lastfm.dart';
 import '../app_state.dart';
 
-/// The Last.fm sign-in actions.
-class LastFmAuthActions extends StatelessWidget {
-  const LastFmAuthActions({
-    super.key,
-    required this.token,
-    required this.busy,
-    required this.onStart,
-    required this.onBusyChange,
-    required this.onFailed,
-    required this.onToken,
-    required this.onSignedIn,
-  });
+/// The Last.fm sign-in actions, including the failure notice.
+class LastFmAuthActions extends StatefulWidget {
+  const LastFmAuthActions({super.key});
 
-  /// The token waiting for the browser approval, or null when the
-  /// flow has not started.
-  final String? token;
+  @override
+  State<LastFmAuthActions> createState() => _LastFmAuthActionsState();
+}
 
-  /// Whether a request is in flight.
-  final bool busy;
+class _LastFmAuthActionsState extends State<LastFmAuthActions> {
+  bool _busy = false;
+  bool _failed = false;
+  String? _token;
 
-  /// Called when a request starts.
-  final VoidCallback onStart;
-
-  /// Called with the new busy state.
-  final ValueChanged<bool> onBusyChange;
-
-  /// Called when the request failed or was denied.
-  final VoidCallback onFailed;
-
-  /// Called with the token the browser has to approve.
-  final ValueChanged<String?> onToken;
-
-  /// Called when the account is connected.
-  final VoidCallback onSignedIn;
-
-  Future<void> _requestToken(BuildContext context) async {
-    onStart();
+  /// Asks Last.fm for a token and opens the approval page.
+  Future<void> _requestToken() async {
+    setState(() {
+      _failed = false;
+      _busy = true;
+    });
     final lastfm = context.read<LastFmService>();
     final app = context.read<AppState>();
     final fresh = await lastfm.requestToken();
-    if (!context.mounted) return;
-    if (fresh != null) {
-      onToken(fresh);
-      await app.openUrl(lastfm.authorizeUrl(fresh));
+    if (!mounted) return;
+    if (fresh == null) {
+      setState(() => _failed = true);
     } else {
-      onFailed();
+      setState(() => _token = fresh);
+      await app.openUrl(lastfm.authorizeUrl(fresh));
     }
-    onBusyChange(false);
+    if (mounted) setState(() => _busy = false);
   }
 
-  Future<void> _complete(BuildContext context) async {
-    onStart();
+  /// Confirms the token the user approved in the browser.
+  Future<void> _complete() async {
+    setState(() {
+      _failed = false;
+      _busy = true;
+    });
     final lastfm = context.read<LastFmService>();
-    final ok = await lastfm.completeAuth(token!);
-    if (!context.mounted) return;
+    final ok = await lastfm.completeAuth(_token!);
+    if (!mounted) return;
     if (ok) {
-      onSignedIn();
+      setState(() => _token = null);
     } else {
-      onFailed();
+      setState(() => _failed = true);
     }
-    onBusyChange(false);
+    setState(() => _busy = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (token == null) {
-      return Row(
-        children: [
-          M3EFilledButton(
-            onPressed: busy ? null : () => _requestToken(context),
-            child: Text(busy ? 'Requesting…' : 'Connect with last.fm'),
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_failed) ...[
+          Text(
+            'Sign-in failed or was denied. Check the key/secret and try '
+            'again.',
+            style: TextStyle(color: scheme.error),
           ),
+          const SizedBox(height: 8),
         ],
-      );
-    }
+        if (_token == null)
+          M3EFilledButton(
+            onPressed: _busy ? null : _requestToken,
+            child: Text(_busy ? 'Requesting…' : 'Connect with last.fm'),
+          )
+        else
+          _approvalActions(context),
+      ],
+    );
+  }
+
+  /// The actions shown while a token waits for the browser approval.
+  Widget _approvalActions(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -100,19 +103,19 @@ class LastFmAuthActions extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             M3EFilledButton(
-              onPressed: busy ? null : () => _complete(context),
-              child: Text(busy ? 'Verifying…' : "I've authorized it"),
+              onPressed: _busy ? null : _complete,
+              child: Text(_busy ? 'Verifying…' : "I've authorized it"),
             ),
             // The token is short-lived: if it expired before the
             // approval, a fresh one is the way forward — without
             // leaving the settings.
             M3ETextButton(
-              onPressed: busy ? null : () => _requestToken(context),
+              onPressed: _busy ? null : _requestToken,
               child: const Text('Get a new token'),
             ),
             M3ETextButton(
               onPressed: () => context.read<AppState>().openUrl(
-                context.read<LastFmService>().authorizeUrl(token!),
+                context.read<LastFmService>().authorizeUrl(_token!),
               ),
               child: const Text('Reopen browser'),
             ),

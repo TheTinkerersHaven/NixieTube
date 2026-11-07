@@ -1,6 +1,5 @@
-// Detail screen ported from Kotlin `Detail.kt` + `AlbumPanel.kt`:
-// loading/error states, artist view (banner, pills, top songs, rails,
-// bio) and the shared album/playlist panel.
+// Detail screen: loading/error states, artist view (banner, pills, top
+// songs, rails, bio) and the shared album/playlist panel.
 
 import 'dart:typed_data';
 import 'dart:math' as math;
@@ -420,10 +419,7 @@ class _ArtistAppBar extends StatelessWidget {
       backgroundColor: Theme.of(context).colorScheme.surface,
       surfaceTintColor: Colors.transparent,
       scrolledUnderElevation: 0,
-      flexibleSpace: _ArtistFlexibleSpace(
-        artist: artist,
-        bannerUrl: bannerUrl,
-      ),
+      flexibleSpace: _ArtistFlexibleSpace(artist: artist, bannerUrl: bannerUrl),
     );
   }
 }
@@ -463,8 +459,8 @@ class _ArtistFlexibleSpace extends StatelessWidget {
     // away with the hero and fades just before it would run into the
     // toolbar; at that point the small bar title jumps in.
     final collapsedPx = current - minExtent;
-    final bigTitleOpacity =
-        ((collapsedPx - _barTitleAtPx) / _bigTitleFadePx).clamp(0.0, 1.0);
+    final bigTitleOpacity = ((collapsedPx - _barTitleAtPx) / _bigTitleFadePx)
+        .clamp(0.0, 1.0);
     final showBarTitle = collapsedPx <= _barTitleAtPx + 0.5;
     final barHeight = minExtent > 0 ? minExtent : 56.0;
     // The back button's circular backdrop and white icon follow the
@@ -671,11 +667,11 @@ class _AboutCard extends StatelessWidget {
             fullTp.dispose();
 
             final availH = c.maxHeight.isFinite ? c.maxHeight : 200.0;
-            final titleH = (theme.textTheme.titleLarge?.fontSize ?? 22) + spaceSm;
-            final linesThatFit =
-                ((availH - titleH - spaceSm) / lineHeight)
-                    .floor()
-                    .clamp(1, 1000);
+            final titleH =
+                (theme.textTheme.titleLarge?.fontSize ?? 22) + spaceSm;
+            final linesThatFit = ((availH - titleH - spaceSm) / lineHeight)
+                .floor()
+                .clamp(1, 1000);
             final overflows = fullLines > linesThatFit;
 
             final maxLines = fillHeight ? linesThatFit : _maxLines;
@@ -691,10 +687,7 @@ class _AboutCard extends StatelessWidget {
               children: [
                 Text('About', style: theme.textTheme.titleLarge),
                 const SizedBox(height: spaceSm),
-                if (fillHeight)
-                  Expanded(child: textWidget)
-                else
-                  textWidget,
+                if (fillHeight) Expanded(child: textWidget) else textWidget,
                 if (overflows) ...[
                   const SizedBox(height: spaceSm),
                   M3ETextButton(

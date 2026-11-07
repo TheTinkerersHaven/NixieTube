@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/account_library.dart';
@@ -15,7 +16,6 @@ import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
-
 
 class _QuietTube extends InnerTube {
   PlaylistDetail? playlistDetail;
@@ -161,9 +161,7 @@ void main() {
     env.tube.playlistDetail = const PlaylistDetail(
       title: 'Road trip',
       subtitle: 'Playlist • 3 songs',
-      thumbnails: [
-        Thumbnail('https://x/art.jpg', width: 640, height: 640),
-      ],
+      thumbnails: [Thumbnail('https://x/art.jpg', width: 640, height: 640)],
       tracks: [],
       author: ArtistRef('Creator', browseId: 'UCC'),
       id: 'PLabc',

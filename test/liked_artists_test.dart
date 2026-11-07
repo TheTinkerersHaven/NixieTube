@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 
 import 'fakes.dart';
+
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
@@ -204,7 +205,11 @@ void main() {
 
       // The open liked view snapshots the stale credit…
       await env.state.openPlaylist(
-        const AccountPlaylist(id: '__liked', title: 'Liked songs', itemCount: 1),
+        const AccountPlaylist(
+          id: '__liked',
+          title: 'Liked songs',
+          itemCount: 1,
+        ),
       );
       expect(env.state.openedPlaylist!.tracks.single.artistNames(), 'Release');
 

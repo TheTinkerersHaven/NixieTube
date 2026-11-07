@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -17,7 +18,6 @@ import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/widgets/album_panel.dart';
 
 import 'mock_dio.dart';
-
 
 void main() {
   group('AlbumPlaylistView sort logic', () {

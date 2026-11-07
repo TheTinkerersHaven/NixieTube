@@ -5,11 +5,12 @@ import 'package:m3e_core/m3e_core.dart' show M3ELoadingIndicator;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:silky_scroll/silky_scroll.dart';
+
 import '../../sys/lastfm.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
-import 'seek_slider.dart' show formatClock;
+import '../format.dart';
 
 class SongInfoView extends StatelessWidget {
   const SongInfoView({super.key, required this.track, this.theme});
@@ -51,8 +52,9 @@ class SongInfoView extends StatelessWidget {
                 SelectionContainer.disabled(
                   child: Text(
                     label,
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
                 if (onTap != null)
@@ -98,7 +100,10 @@ class SongInfoView extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 6,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -124,20 +129,14 @@ class SongInfoView extends StatelessWidget {
                                 },
                                 child: Text(
                                   track.artists[i].name,
-                                  style: theme.textTheme.bodyLarge
-                                      ?.copyWith(
-                                        color: theme
-                                            .colorScheme
-                                            .primary,
-                                        decoration: linkDecoration,
-                                      ),
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                    decoration: linkDecoration,
+                                  ),
                                 ),
                               ),
                               if (i != track.artists.length - 1)
-                                Text(
-                                  ', ',
-                                  style: theme.textTheme.bodyLarge,
-                                ),
+                                Text(', ', style: theme.textTheme.bodyLarge),
                             ],
                           ],
                         ),
@@ -178,8 +177,6 @@ class SongInfoView extends StatelessWidget {
     );
   }
 }
-
-
 
 /// One track's assembled song-info payload: the Last.fm track metadata
 /// (null when nothing matched confidently), the artist tag list, and the
@@ -243,8 +240,8 @@ class _LastFmInfoState extends State<_LastFmInfo> {
     final playsF = views.isNotEmpty
         ? Future<String>.value(views)
         : state
-            .fetchYtmPlayCount(widget.track.videoId)
-            .then((n) => n > 0 ? compactCount(n) : '');
+              .fetchYtmPlayCount(widget.track.videoId)
+              .then((n) => n > 0 ? compactCount(n) : '');
     final r = await Future.wait<Object?>([trackF, artistF, playsF]);
     return (
       r[0] as Map<String, dynamic>?,
@@ -300,7 +297,10 @@ class _LastFmInfoState extends State<_LastFmInfo> {
     var s = (raw is String ? raw : '${raw ?? ''}')
         .replaceAll(RegExp('<[^>]*>'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
-        .replaceAll(RegExp(r'Read more on Last\.(fm|com).*$', caseSensitive: false), '')
+        .replaceAll(
+          RegExp(r'Read more on Last\.(fm|com).*$', caseSensitive: false),
+          '',
+        )
         .trim();
     if (s.isEmpty) return null;
     // Trim a trailing dangling separator.
@@ -332,8 +332,8 @@ class _LastFmInfoState extends State<_LastFmInfo> {
             ),
           );
         }
-        final (trackData, artistTags, ytmPlays) = snapshot.data ??
-            (null, const <String>[], '');
+        final (trackData, artistTags, ytmPlays) =
+            snapshot.data ?? (null, const <String>[], '');
         const dash = '—';
         final trackTags = <String>[];
         final toptags = trackData?['toptags'];
@@ -352,10 +352,14 @@ class _LastFmInfoState extends State<_LastFmInfo> {
         String playRow(Object? v) =>
             playCountValue(v) > 0 ? _fmtCount(v) : dash;
         final rows = <Widget>[
-          widget.row('Song tags',
-              trackTags.isEmpty ? dash : trackTags.join(', ')),
           widget.row(
-              'Artist tags', artistTags.isEmpty ? dash : artistTags.join(', ')),
+            'Song tags',
+            trackTags.isEmpty ? dash : trackTags.join(', '),
+          ),
+          widget.row(
+            'Artist tags',
+            artistTags.isEmpty ? dash : artistTags.join(', '),
+          ),
           widget.row('YTM plays', ytmPlays.isEmpty ? dash : ytmPlays),
           widget.row(
             'Last.fm plays',
@@ -370,8 +374,9 @@ class _LastFmInfoState extends State<_LastFmInfo> {
           // YouTube uploads without album metadata get Last.fm's album.
           if (widget.track.album == null) {
             final album = trackData['album'];
-            final albumName =
-                album is Map ? ('${album['title'] ?? ''}').trim() : '';
+            final albumName = album is Map
+                ? ('${album['title'] ?? ''}').trim()
+                : '';
             if (albumName.isNotEmpty) {
               rows.add(widget.row('Album (Last.fm)', albumName));
             }
@@ -391,19 +396,6 @@ class _LastFmInfoState extends State<_LastFmInfo> {
 /// Parses a Last.fm counter value; returns 0 when absent or malformed.
 int playCountValue(Object? v) =>
     v is num ? v.toInt() : int.tryParse('${v ?? ''}') ?? 0;
-
-/// Compact K/M rendering shared with `Likes` in [SongInfoView]'s rows;
-/// top-level so both call sites stay consistent (and reachable in tests).
-String compactCount(int n) {
-  if (n < 0) return '';
-  if (n < 1000) return '$n';
-  if (n < 1000000) {
-    final v = n / 1000;
-    return v >= 100 ? '${v.round()}K' : '${v.toStringAsFixed(1)}K';
-  }
-  final m = n / 1000000;
-  return m >= 100 ? '${m.round()}M' : '${m.toStringAsFixed(1)}M';
-}
 
 /// YTM list rows carry the count as a localized display string ("653M
 /// `plays`", "1,234,567 `views`"). When the string looks like a numeric

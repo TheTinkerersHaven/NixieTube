@@ -136,8 +136,8 @@ class _LyricsListState extends State<LyricsList> {
         // an ancestor PageView would page the TabBarView back here.
         final tabIndex = widget.visibleTabIndex;
         if (tabIndex != null) {
-          final tabs = widget.tabController ??
-              DefaultTabController.maybeOf(context);
+          final tabs =
+              widget.tabController ?? DefaultTabController.maybeOf(context);
           if (tabs == null || tabs.index != tabIndex || tabs.indexIsChanging) {
             return;
           }

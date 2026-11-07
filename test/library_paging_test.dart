@@ -38,10 +38,7 @@ Map<String, dynamic> _row(
       'watchEndpoint': {'videoId': videoId},
     },
     if (likedAt != null)
-      'playlistItemData': {
-        'videoId': videoId,
-        'voteSortValue': likedAt,
-      },
+      'playlistItemData': {'videoId': videoId, 'voteSortValue': likedAt},
     if (duration != null)
       'fixedColumns': [
         {
@@ -87,7 +84,9 @@ Map<String, dynamic> _shelfPage(
               'content': {
                 'sectionListRenderer': {
                   'contents': [
-                    {renderer: {'contents': contents}},
+                    {
+                      renderer: {'contents': contents},
+                    },
                   ],
                   if (sectionToken != null)
                     'continuations': [
@@ -175,19 +174,18 @@ Map<String, dynamic> _playlistPage(
     },
   };
   if (songCount != null) {
-    page['contents']['twoColumnBrowseResultsRenderer']['secondaryContents']
-        ['sectionListRenderer']['contents'][0]['musicPlaylistShelfRenderer']
-        ['header'] = <String, dynamic>{
-      'musicResponsiveHeaderRenderer': <String, dynamic>{
-        'secondSubtitle': <String, dynamic>{
-          'runs': <Map<String, dynamic>>[
-            <String, dynamic>{'text': '$songCount songs'},
-            <String, dynamic>{'text': ' • '},
-            <String, dynamic>{'text': '6+ hours'},
-          ],
-        },
-      },
-    };
+    page['contents']['twoColumnBrowseResultsRenderer']['secondaryContents']['sectionListRenderer']['contents'][0]['musicPlaylistShelfRenderer']['header'] =
+        <String, dynamic>{
+          'musicResponsiveHeaderRenderer': <String, dynamic>{
+            'secondSubtitle': <String, dynamic>{
+              'runs': <Map<String, dynamic>>[
+                <String, dynamic>{'text': '$songCount songs'},
+                <String, dynamic>{'text': ' • '},
+                <String, dynamic>{'text': '6+ hours'},
+              ],
+            },
+          },
+        };
   }
   return page;
 }
@@ -217,23 +215,20 @@ class _LikedServer {
     final parsed = jsonDecode(body) as Map<String, dynamic>;
     final continuation = parsed['continuation'];
     if (continuation == 'sort-newest') {
-      return (
-        200,
-        jsonEncode(_likedPage(playlist, 'tok1')),
-      );
+      return (200, jsonEncode(_likedPage(playlist, 'tok1')));
     }
     if (continuation == 'tok1') {
-      return (
-        200,
-        jsonEncode(_likedPage(nextPage, null)),
-      );
+      return (200, jsonEncode(_likedPage(nextPage, null)));
     }
     return (200, jsonEncode(_playlistPage(const [], songCount: songCount)));
   }
 }
 
 void main() {
-  final auth = const AuthSession(cookie: 'SID=x; SAPISID=y', sapisidHash: '1_abc');
+  final auth = const AuthSession(
+    cookie: 'SID=x; SAPISID=y',
+    sapisidHash: '1_abc',
+  );
 
   group('liked songs paging', () {
     test('follows the shelf token across pages', () async {
@@ -241,7 +236,9 @@ void main() {
         playlist: [('a', 'a', 400), ('b', 'b', 300)],
         nextPage: [('c', 'c', 200), ('d', 'd', 100)],
       );
-      final client = mockDio((options) async => server.handle(options.data as String));
+      final client = mockDio(
+        (options) async => server.handle(options.data as String),
+      );
       final tube = InnerTube(auth: auth, dio: client);
 
       final liked = await tube.likedVideos();
@@ -254,7 +251,9 @@ void main() {
 
     test('stops when the shelf runs out of tokens', () async {
       final server = _LikedServer(playlist: [('a', 'a', 100)]);
-      final client = mockDio((options) async => server.handle(options.data as String));
+      final client = mockDio(
+        (options) async => server.handle(options.data as String),
+      );
       final tube = InnerTube(auth: auth, dio: client);
 
       final liked = await tube.likedVideos(max: 1);
@@ -266,7 +265,9 @@ void main() {
       final server = _LikedServer(
         playlist: [('a', 'a', 100), ('b', 'b', 200), ('c', 'c', 300)],
       );
-      final client = mockDio((options) async => server.handle(options.data as String));
+      final client = mockDio(
+        (options) async => server.handle(options.data as String),
+      );
       final tube = InnerTube(auth: auth, dio: client);
 
       final liked = await tube.likedVideos(max: 2);
@@ -281,10 +282,7 @@ void main() {
       final client = mockDio((options) async {
         final body = jsonDecode(options.data as String) as Map<String, dynamic>;
         if (body['continuation'] == 'sort-newest') {
-          return (
-            200,
-            jsonEncode(_likedPage([('a', 'Newest', 300)], null)),
-          );
+          return (200, jsonEncode(_likedPage([('a', 'Newest', 300)], null)));
         }
         expect(body['browseId'], 'VLLM');
         return (200, jsonEncode(_playlistPage([('x', 'x', 1)])));
@@ -301,7 +299,9 @@ void main() {
         playlist: [('a', 'Playlist song', 200)],
         songCount: 524,
       );
-      final client = mockDio((options) async => server.handle(options.data as String));
+      final client = mockDio(
+        (options) async => server.handle(options.data as String),
+      );
       final tube = InnerTube(auth: auth, dio: client);
 
       final liked = await tube.likedVideos();
@@ -320,7 +320,9 @@ void main() {
           ('c', 'Middle', 200),
         ],
       );
-      final client = mockDio((options) async => server.handle(options.data as String));
+      final client = mockDio(
+        (options) async => server.handle(options.data as String),
+      );
       final tube = InnerTube(auth: auth, dio: client);
 
       final liked = await tube.likedVideos();
@@ -333,7 +335,9 @@ void main() {
         playlist: [('v0', 'Repeat', 100)],
         nextPage: [('v0', 'Repeat', 100)],
       );
-      final client = mockDio((options) async => server.handle(options.data as String));
+      final client = mockDio(
+        (options) async => server.handle(options.data as String),
+      );
       final tube = InnerTube(auth: auth, dio: client);
 
       final liked = await tube.likedVideos();
@@ -382,10 +386,7 @@ void main() {
         final body = jsonDecode(options.data as String) as Map<String, dynamic>;
         if (body.containsKey('continuation')) {
           expect(body['continuation'], 'tok1');
-          return (
-            200,
-            jsonEncode(_appendedPage(['c', 'd'], idPrefix: 'w')),
-          );
+          return (200, jsonEncode(_appendedPage(['c', 'd'], idPrefix: 'w')));
         }
         expect(body['browseId'], 'VLPLtest');
         return (200, jsonEncode(_shelfPage(['a', 'b'], 'tok1')));
@@ -406,9 +407,7 @@ void main() {
         calls++;
         return (
           200,
-          jsonEncode(
-            _shelfPage(['a', 'b'], null, sectionToken: 'other-shelf'),
-          ),
+          jsonEncode(_shelfPage(['a', 'b'], null, sectionToken: 'other-shelf')),
         );
       });
       final tube = InnerTube(auth: auth, dio: client);
@@ -430,7 +429,8 @@ Map<String, dynamic> _appendedPage(
     {
       'appendContinuationItemsAction': {
         'continuationItems': [
-          for (var i = 0; i < titles.length; i++) _row('$idPrefix$i', titles[i]),
+          for (var i = 0; i < titles.length; i++)
+            _row('$idPrefix$i', titles[i]),
         ],
       },
     },

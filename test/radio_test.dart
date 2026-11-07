@@ -19,6 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 
 import 'fakes.dart';
+
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';

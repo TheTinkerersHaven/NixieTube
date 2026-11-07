@@ -1,4 +1,4 @@
-// Search screen ported from Kotlin `searchPanel`: query field, section
+// Search screen: query field, section
 // filter chips, and categorized results.
 
 import 'dart:async' show unawaited;
@@ -6,11 +6,11 @@ import 'dart:async' show unawaited;
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
-import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../theme.dart';
+import '../widgets/screen_list.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/rails.dart';
 import '../widgets/track_row.dart';
@@ -185,7 +185,8 @@ class _SearchScreenState extends State<SearchScreen> {
     final playingId = state.playerState.current?.videoId;
     // Flatten the sections into a lazy list so off-screen rows (and
     // their artwork decodes) are only built when scrolled into view.
-    final rows = <({int kind, String? key, List<ShelfItem>? items, ShelfItem? item})>[];
+    final rows =
+        <({int kind, String? key, List<ShelfItem>? items, ShelfItem? item})>[];
     for (final key in keys) {
       rows.add((kind: 0, key: key, items: sections[key]!, item: null));
       for (final item in sections[key]!) {
@@ -193,16 +194,8 @@ class _SearchScreenState extends State<SearchScreen> {
       }
       rows.add((kind: 2, key: null, items: null, item: null));
     }
-    return SilkyListView.builder(
-      scrollSpeed: 1.5,
-      silkyScrollDuration: const Duration(milliseconds: 700),
-      animationCurve: Curves.easeOutQuart,
-      padding: const EdgeInsets.fromLTRB(
-        screenPadding,
-        0,
-        screenPadding,
-        screenPadding + playerBarClearance,
-      ),
+    return screenListBuilder(
+      topPadding: 0,
       itemCount: rows.length,
       itemBuilder: (context, i) {
         final r = rows[i];
@@ -270,9 +263,7 @@ class _SearchScreenState extends State<SearchScreen> {
         }
       },
       leading: ArtworkImage(
-        b.thumbnails.isEmpty
-            ? null
-            : b.bestArtwork,
+        b.thumbnails.isEmpty ? null : b.bestArtwork,
         size: 48,
         radius: rowArtRadius,
         iconSize: 24,
@@ -283,16 +274,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _noResults(BuildContext context, AppState state) {
-    return SilkyListView(
-      scrollSpeed: 1.5,
-      silkyScrollDuration: const Duration(milliseconds: 700),
-      animationCurve: Curves.easeOutQuart,
-      padding: const EdgeInsets.fromLTRB(
-        screenPadding,
-        screenPadding,
-        screenPadding,
-        screenPadding + playerBarClearance,
-      ),
+    return screenList(
       children: [
         const Text('No results found'),
         const SizedBox(height: 16),
@@ -302,16 +284,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _suggestions(BuildContext context, AppState state) {
-    return SilkyListView(
-      scrollSpeed: 1.5,
-      silkyScrollDuration: const Duration(milliseconds: 700),
-      animationCurve: Curves.easeOutQuart,
-      padding: const EdgeInsets.fromLTRB(
-        screenPadding,
-        screenPadding,
-        screenPadding,
-        screenPadding + playerBarClearance,
-      ),
+    return screenList(
       children: [
         const Text('Try searching for songs, artists or albums.'),
         const SizedBox(height: 16),

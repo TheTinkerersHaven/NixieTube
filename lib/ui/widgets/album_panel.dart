@@ -1,6 +1,6 @@
 // Shared album/playlist panel: left art column (vertically centered),
 // right sortable track list. One view for album detail, playlist detail
-// and the open library playlist, mirroring Kotlin `AlbumPanel`.
+// and the open library playlist.
 
 import 'dart:async';
 
@@ -15,11 +15,9 @@ import 'package:m3e_core/m3e_core.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
+import '../format.dart';
 import 'loading_placeholders.dart';
 import 'track_row.dart';
-
-String _fmtDur(int sec) =>
-    '${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}';
 
 /// Album-style header reused for albums, playlists and the open library
 /// playlist: art column + owner row with creator avatar.
@@ -47,7 +45,7 @@ class AlbumPlaylistView extends StatefulWidget {
   final String description;
   final String? art;
 
-  /// Collage sources; more than one renders a 2x2 grid like Kotlin
+  /// Collage sources; more than one renders a 2x2 grid
   /// `PlaylistArt`, a single entry falls back to [art].
   final List<String> arts;
 
@@ -208,7 +206,7 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
                       const SizedBox(height: 4),
                       Text(
                         '${widget.tracks.length} songs'
-                        '${totalSec > 0 ? ' • ${_fmtDur(totalSec)}' : ''}',
+                        '${totalSec > 0 ? ' • ${formatDuration(totalSec)}' : ''}',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -386,7 +384,7 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
 }
 
 /// Playlist artwork: 2x2 collage when several arts are given, single
-/// artwork otherwise. Port of Kotlin `PlaylistArt`.
+/// artwork otherwise.
 class _PlaylistArt extends StatelessWidget {
   const _PlaylistArt({
     required this.art,
@@ -474,7 +472,7 @@ class _PlaylistArt extends StatelessWidget {
 
 /// Creator row: channel avatar + name, clickable only for verified artist
 /// pages. Plain names, own channel and non-channel credits (compilations)
-/// render as static text, mirroring Kotlin's author handling.
+/// render as static text.
 class _OwnerRow extends StatefulWidget {
   const _OwnerRow({required this.owner, required this.fallbackAvatarUrl});
 

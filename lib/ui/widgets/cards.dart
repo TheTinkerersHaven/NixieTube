@@ -1,5 +1,4 @@
-// Shelf cards ported from Kotlin `BrowseCard`, `TrackRailCard`,
-// `QuickPickCard` and `SimilarArtistCard`.
+// Shelf cards: `QuickPickCard` and `SimilarArtistCard`.
 
 import 'package:material_ui/material_ui.dart';
 
@@ -10,7 +9,12 @@ import 'artwork_image.dart';
 /// Card for a browsable shelf item (album, playlist, artist): 208dp wide,
 /// 200dp art, two-line title plus subtitle.
 class BrowseCard extends StatelessWidget {
-  const BrowseCard({super.key, required this.item, required this.onTap, this.width});
+  const BrowseCard({
+    super.key,
+    required this.item,
+    required this.onTap,
+    this.width,
+  });
 
   final BrowseItem item;
   final VoidCallback onTap;
@@ -19,9 +23,7 @@ class BrowseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final art = item.thumbnails.isEmpty
-        ? null
-        : item.bestArtwork;
+    final art = item.thumbnails.isEmpty ? null : item.bestArtwork;
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -248,9 +250,7 @@ class SimilarArtistCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final art = item.thumbnails.isEmpty
-        ? null
-        : item.bestArtwork;
+    final art = item.thumbnails.isEmpty ? null : item.bestArtwork;
     return InkWell(
       onTap: onTap,
       child: Container(

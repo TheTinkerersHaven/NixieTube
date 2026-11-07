@@ -7,13 +7,7 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app_state.dart';
-
-/// Formats a millisecond count as m:ss.
-String formatClock(int ms) {
-  if (ms <= 0) return '0:00';
-  final s = ms ~/ 1000;
-  return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
-}
+import '../format.dart';
 
 /// Seek slider with local drag state, a glide when a
 /// point is tapped, and an end-to-start sweep when the

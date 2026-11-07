@@ -8,8 +8,9 @@ import 'package:nixietube/ui/widgets/volume_slider.dart';
 import 'fakes.dart';
 
 void main() {
-  testWidgets('VolumeSlider renders at the current player volume',
-      (tester) async {
+  testWidgets('VolumeSlider renders at the current player volume', (
+    tester,
+  ) async {
     final tube = FakeTube();
     addTearDown(tube.close);
     final state = await bootAppState(tester, tube: tube);

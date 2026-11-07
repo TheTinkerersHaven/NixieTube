@@ -1,4 +1,4 @@
-// Library screen ported from Kotlin `LibraryPanel`: tabbed playlists,
+// Library screen: tabbed playlists,
 // artists and liked songs, plus the open-playlist view.
 
 import 'package:material_ui/material_ui.dart';
@@ -9,6 +9,7 @@ import 'package:silky_scroll/silky_scroll.dart';
 import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../theme.dart';
+import '../widgets/screen_list.dart';
 import '../widgets/album_panel.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/cards.dart';
@@ -87,7 +88,9 @@ class LibraryScreen extends StatelessWidget {
                         context,
                         state,
                         opened,
-                        action == _PlaylistMenuAction.rename ? 'rename' : 'delete',
+                        action == _PlaylistMenuAction.rename
+                            ? 'rename'
+                            : 'delete',
                       ),
                       itemBuilder: (context) => [
                         const M3EPopupMenuItem<_PlaylistMenuAction>(
@@ -435,16 +438,7 @@ class LibraryScreen extends StatelessWidget {
     final recent = context.select<AppState, List<BrowseItem>>(
       (s) => s.recentArtists,
     );
-    return SilkyListView(
-      scrollSpeed: 1.5,
-      silkyScrollDuration: const Duration(milliseconds: 700),
-      animationCurve: Curves.easeOutQuart,
-      padding: const EdgeInsets.fromLTRB(
-        screenPadding,
-        screenPadding,
-        screenPadding,
-        screenPadding + playerBarClearance,
-      ),
+    return screenList(
       children: [
         BrowseRail(
           title: 'Followed',

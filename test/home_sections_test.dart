@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -272,44 +273,41 @@ void main() {
       expect(find.byType(TrackRailCard), findsNothing);
     });
 
-    testWidgets(
-      'the feed drops the liked-music playlist card',
-      (tester) async {
-        // The feed offers the "Liked Music" auto-playlist as a
-        // suggested playlist. The home lists the liked songs in its own
-        // column, so the card is redundant and never shows.
-        tester.view.physicalSize = const Size(1600, 2000);
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.resetPhysicalSize);
-        final env = await _bootHome(tester);
-        env.tube.shelves = [
-          Shelf('Listen again', [
-            ShelfItem.browse(
-              title: 'Liked Music',
-              subtitle: 'Playlist',
-              browseId: 'VLLM',
-              thumbnails: const [],
-            ),
-            ShelfItem.browse(
-              title: 'Hyperlist',
-              subtitle: 'Playlist',
-              browseId: 'VLPLabc',
-              thumbnails: const [],
-            ),
-          ]),
-        ];
-        await env.state.loadHome();
+    testWidgets('the feed drops the liked-music playlist card', (tester) async {
+      // The feed offers the "Liked Music" auto-playlist as a
+      // suggested playlist. The home lists the liked songs in its own
+      // column, so the card is redundant and never shows.
+      tester.view.physicalSize = const Size(1600, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      final env = await _bootHome(tester);
+      env.tube.shelves = [
+        Shelf('Listen again', [
+          ShelfItem.browse(
+            title: 'Liked Music',
+            subtitle: 'Playlist',
+            browseId: 'VLLM',
+            thumbnails: const [],
+          ),
+          ShelfItem.browse(
+            title: 'Hyperlist',
+            subtitle: 'Playlist',
+            browseId: 'VLPLabc',
+            thumbnails: const [],
+          ),
+        ]),
+      ];
+      await env.state.loadHome();
 
-        final items = env.state.home.shelves.first.items;
-        expect(items.length, 1);
-        expect((items.first as BrowseItem).title, 'Hyperlist');
+      final items = env.state.home.shelves.first.items;
+      expect(items.length, 1);
+      expect((items.first as BrowseItem).title, 'Hyperlist');
 
-        await _pumpHome(tester, env.state);
-        await tester.pump();
-        expect(find.text('Liked Music'), findsNothing);
-        expect(find.text('Hyperlist'), findsOneWidget);
-      },
-    );
+      await _pumpHome(tester, env.state);
+      await tester.pump();
+      expect(find.text('Liked Music'), findsNothing);
+      expect(find.text('Hyperlist'), findsOneWidget);
+    });
 
     testWidgets(
       'leftover shelves drop mixes already shown under Albums made for you',

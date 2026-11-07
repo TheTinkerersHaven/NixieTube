@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/account_library.dart';
@@ -20,7 +21,6 @@ import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/home_screen.dart';
 import 'package:nixietube/ui/screens/library_screen.dart';
 import 'package:provider/provider.dart';
-
 
 /// A tube that never reaches the network.
 class _QuietTube extends InnerTube {

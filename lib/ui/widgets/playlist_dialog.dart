@@ -1,5 +1,5 @@
-// Add-to-playlist dialog ported from Kotlin `PlaylistPickerDialog`:
-// play-next shortcut plus one toggle row per account playlist.
+// Add-to-playlist dialog: play-next shortcut plus one toggle row per
+// account playlist.
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';

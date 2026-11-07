@@ -1,5 +1,5 @@
-// Rails ported from Kotlin `RailHeader`, `TrackRailGrid` and
-// `ArtistBrowseRail`: titled horizontal carousels with scroll arrows.
+// Rails: the header, the track grid and `ArtistBrowseRail` — titled
+// horizontal carousels with scroll arrows.
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
@@ -10,7 +10,7 @@ import '../a11y.dart';
 import 'cards.dart';
 
 /// Section header with title plus scroll-left/right buttons, mirroring
-/// Kotlin `RailHeader`. Each press transitions exactly one viewport
+/// the rail header. Each press transitions exactly one viewport
 /// page ([step] only covers the pre-layout window with no viewport).
 class RailHeader extends StatelessWidget {
   const RailHeader({
@@ -98,7 +98,8 @@ class TrackRailGrid extends StatelessWidget {
         scrollSpeed: 1.5,
         silkyScrollDuration: const Duration(milliseconds: 700),
         animationCurve: Curves.easeOutQuart,
-        mouseWheelVerticalDeltaBehavior: MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
+        mouseWheelVerticalDeltaBehavior:
+            MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
         scrollDirection: Axis.horizontal,
         itemCount: tracks.length,
         itemBuilder: (context, i) {
@@ -174,8 +175,8 @@ class _BrowseRailState extends State<BrowseRail> {
               scrollSpeed: 1.5,
               silkyScrollDuration: const Duration(milliseconds: 700),
               animationCurve: Curves.easeOutQuart,
-              mouseWheelVerticalDeltaBehavior:
-                  MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
+              mouseWheelVerticalDeltaBehavior: MouseWheelVerticalDeltaBehavior
+                  .forwardToVerticalAncestorOrSelf,
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: widget.items.length,
@@ -220,8 +221,8 @@ class _BrowseRailState extends State<BrowseRail> {
                 scrollSpeed: 1.5,
                 silkyScrollDuration: const Duration(milliseconds: 700),
                 animationCurve: Curves.easeOutQuart,
-                mouseWheelVerticalDeltaBehavior:
-                    MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
+                mouseWheelVerticalDeltaBehavior: MouseWheelVerticalDeltaBehavior
+                    .forwardToVerticalAncestorOrSelf,
                 padding: EdgeInsets.zero,
                 itemCount: widget.items.length,
                 separatorBuilder: (_, _) => const SizedBox(width: gap),
@@ -382,8 +383,8 @@ class _TrackColumnsState extends State<TrackColumns> {
               scrollSpeed: 1.5,
               silkyScrollDuration: const Duration(milliseconds: 700),
               animationCurve: Curves.easeOutQuart,
-              mouseWheelVerticalDeltaBehavior:
-                  MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
+              mouseWheelVerticalDeltaBehavior: MouseWheelVerticalDeltaBehavior
+                  .forwardToVerticalAncestorOrSelf,
               scrollDirection: Axis.horizontal,
               child: IntrinsicHeight(
                 child: Row(
@@ -418,7 +419,7 @@ class _TrackColumnsState extends State<TrackColumns> {
   }
 }
 
-/// Centered error message with a retry button (Kotlin `ErrorBox`).
+/// Centered error message with a retry button.
 class ErrorBox extends StatelessWidget {
   const ErrorBox({super.key, required this.message, required this.onRetry});
 
