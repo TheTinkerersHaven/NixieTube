@@ -110,7 +110,10 @@ class _BrowserLoginWindowState extends State<_BrowserLoginWindow> {
         return;
       }
       _webview = webview;
-      webview.addJavaScriptHandler("nixietubeLogin", (_, _) => unawaited(_checkNow()));
+      webview.addJavaScriptHandler(
+        "nixietubeLogin",
+        (_, _) => unawaited(_checkNow()),
+      );
       await webview.addScriptToExecuteOnDocumentCreated(_loginButtonScript);
       await webview.launch('https://music.youtube.com');
       // User closing the window counts as cancel. Mark closed so

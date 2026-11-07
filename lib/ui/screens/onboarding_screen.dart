@@ -9,7 +9,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
-import '../../sys/browser_cookies.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/browser_login_dialog.dart';
@@ -74,43 +73,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _loginWithBrowserWindow() async {
     final state = context.read<AppState>();
-    final header = await showBrowserLoginDialog(context);
-    if (header == null || header.isEmpty || !mounted) return;
+    final cookie = await showBrowserLoginDialog(context);
+    if (cookie == null || cookie.isEmpty || !mounted) return;
     try {
-      await state.login(header);
+      await state.login(cookie);
     } catch (_) {
       // login() reports known failures via loginDetail.
     }
-  }
-
-  Future<void> _importFromBrowser(List<BrowserProfile> profiles) async {
-    final state = context.read<AppState>();
-    if (profiles.length > 1 && !mounted) return;
-    if (profiles.length > 1) {
-      final picked = await showDialog<BrowserProfile>(
-        context: context,
-        builder: (context) => SimpleDialog(
-          title: const Text('Choose a browser profile'),
-          children: [
-            for (final p in profiles)
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(context, p),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  child: Text('${p.label} — ${p.cookiesDb}'),
-                ),
-              ),
-          ],
-        ),
-      );
-      if (picked == null || !mounted) return;
-      await state.loginFromBrowser(profile: picked);
-      return;
-    }
-    await state.loginFromBrowser(profile: profiles.first);
   }
 
   @override
@@ -120,9 +89,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final signedIn = context.select<AppState, bool>((s) => s.hasCookieSession);
     final loginBusy = context.select<AppState, bool>((s) => s.loginBusy);
     final loginDetail = context.select<AppState, String?>((s) => s.loginDetail);
-    final profiles = context.select<AppState, List<BrowserProfile>>(
-      (s) => s.browserProfiles,
-    );
     final last = _Step.values.length - 1;
     final index = _Step.values.indexOf(_step);
     return Scaffold(
@@ -146,10 +112,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         signedIn: signedIn,
                         loginBusy: loginBusy,
                         loginDetail: loginDetail,
-                        profiles: profiles,
                         cookie: _cookie,
                         onBrowserWindow: _loginWithBrowserWindow,
-                        onImportBrowser: _importFromBrowser,
                         onPaste: () => state.login(_cookie.text),
                       ),
                       const _PersonalizeStep(),
@@ -296,10 +260,8 @@ class _SignInStep extends StatelessWidget {
     required this.signedIn,
     required this.loginBusy,
     required this.loginDetail,
-    required this.profiles,
     required this.cookie,
     required this.onBrowserWindow,
-    required this.onImportBrowser,
     required this.onPaste,
   });
 
@@ -307,10 +269,8 @@ class _SignInStep extends StatelessWidget {
   final bool signedIn;
   final bool loginBusy;
   final String? loginDetail;
-  final List<BrowserProfile> profiles;
   final TextEditingController cookie;
   final Future<void> Function() onBrowserWindow;
-  final Future<void> Function(List<BrowserProfile>) onImportBrowser;
   final Future<void> Function() onPaste;
 
   @override
@@ -354,23 +314,6 @@ class _SignInStep extends StatelessWidget {
               'the session is picked up when you confirm.',
               style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
-            if (profiles.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              M3ETextButton.icon(
-                onPressed: loginBusy ? null : () => onImportBrowser(profiles),
-                icon: const Icon(Icons.download_rounded),
-                label: Text(
-                  loginBusy
-                      ? 'Reading cookies…'
-                      : "I've signed in — import now",
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Reads the fresh session from your system browser directly.',
-                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            ],
             const SizedBox(height: 22),
             Text('Or paste the cookie by hand:', style: text.bodyMedium),
             const SizedBox(height: 8),
@@ -514,10 +457,6 @@ class _LastFmRow extends StatefulWidget {
 }
 
 class _LastFmRowState extends State<_LastFmRow> {
-  bool _busy = false;
-  bool _failed = false;
-  String? _token;
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -532,14 +471,6 @@ class _LastFmRowState extends State<_LastFmRow> {
           value: widget.enabled,
           onChanged: widget.onEnabled,
         ),
-        if (_failed) ...[
-          Text(
-            'Sign-in failed or was denied. Check the key/secret and try '
-            'again.',
-            style: TextStyle(color: scheme.error),
-          ),
-          const SizedBox(height: 8),
-        ],
         if (widget.signedIn)
           Row(
             children: [
@@ -554,18 +485,7 @@ class _LastFmRowState extends State<_LastFmRow> {
             ],
           )
         else
-          LastFmAuthActions(
-            token: _token,
-            busy: _busy,
-            onStart: () => setState(() {
-              _failed = false;
-              _busy = true;
-            }),
-            onBusyChange: (b) => setState(() => _busy = b),
-            onFailed: () => setState(() => _failed = true),
-            onToken: (t) => setState(() => _token = t),
-            onSignedIn: () => setState(() => _token = null),
-          ),
+          const LastFmAuthActions(),
       ],
     );
   }

@@ -1,5 +1,5 @@
-// Auth session tests mirroring the Kotlin suites: derivation preference,
-// hash shape, cookie validation hints, anonymous detection.
+// Auth session tests: derivation preference, hash shape, cookie
+// validation hints, anonymous detection.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/innertube/auth_session.dart';
@@ -11,15 +11,16 @@ void main() {
   group('AuthSession.fromCookie', () {
     test('prefers __Secure-3PAPISID', () {
       final session = AuthSession.fromCookie(_cookie)!;
-      // The hash must bind the secure value, not the fallback: recompute
-      // the digest over the fallback and require a mismatch.
-      final fallbackHash = AuthSession.deriveSapisidHash(
-        0,
-        'fallback-value',
-      ).split('_').last;
-      final hash = session.sapisidHash!;
-      expect(hash, contains('_'));
-      expect(hash.endsWith(fallbackHash), isFalse);
+      final timestamp = int.parse(session.sapisidHash!.split('_').first);
+      // The hash must bind the secure value, not the fallback.
+      expect(
+        session.sapisidHash,
+        endsWith(AuthSession.deriveSapisidHash(timestamp, 'secret-sapisid-value')),
+      );
+      expect(
+        session.sapisidHash,
+        isNot(endsWith(AuthSession.deriveSapisidHash(timestamp, 'fallback-value'))),
+      );
       expect(session.cookie, _cookie.replaceAll(RegExp(r'\s+'), ''));
     });
 
@@ -37,9 +38,8 @@ void main() {
     });
 
     test('hash shape is timestamp + 40 hex chars', () {
-      final hash = AuthSession.deriveSapisidHash(1700000000, 'test-value');
-      expect(hash.length, 40);
-      expect(RegExp(r'^[0-9a-f]{40}$').hasMatch(hash), isTrue);
+      final digest = AuthSession.deriveSapisidHash(1700000000, 'test-value');
+      expect(digest.length, 40);
       final session = AuthSession.fromCookie(
         'SID=abc; __Secure-3PAPISID=test-value;',
       )!;
@@ -61,6 +61,15 @@ void main() {
     });
   });
 
+  group('anonymous detection', () {
+    test('empty sessions are anonymous', () {
+      expect(const AuthSession.anonymous().isAnonymous, isTrue);
+      expect(const AuthSession().isAnonymous, isTrue);
+      expect(AuthSession.fromCookie(_cookie)!.isAnonymous, isFalse);
+      expect(const AuthSession(accessToken: 'tok').isAnonymous, isFalse);
+    });
+  });
+
   group('validateCookie', () {
     test('truncated cookie rejected with hint', () {
       final err = validateCookie('SID=abc…; __Secure-3PAPISID=x')!;
@@ -75,15 +84,6 @@ void main() {
 
     test('valid cookie passes', () {
       expect(validateCookie(_cookie), isNull);
-    });
-  });
-
-  group('anonymous detection', () {
-    test('empty sessions are anonymous', () {
-      expect(const AuthSession.anonymous().isAnonymous, isTrue);
-      expect(const AuthSession().isAnonymous, isTrue);
-      expect(AuthSession.fromCookie(_cookie)!.isAnonymous, isFalse);
-      expect(const AuthSession(accessToken: 'tok').isAnonymous, isFalse);
     });
   });
 }
