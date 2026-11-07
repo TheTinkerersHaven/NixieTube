@@ -1,4 +1,4 @@
-// Playback queue ownership, ported from Kotlin `PlayerController`.
+// Playback queue ownership.
 //
 // Resolves stream URLs, drives the [PlayerEngine], polls position via a
 // ticker, retries dying streams with a bounded budget, and persists/restores
@@ -242,9 +242,22 @@ class PlayerController implements PlayerEngineListener {
   /// cleared whenever playback starts somewhere explicit.
   final List<int> _shuffleHistory = [];
 
-  /// Prefetched next-track stream so transitions skip the resolve delay.
-  String? _prefetchedVideoId;
-  ResolvedStream? _prefetchedStream;
+  /// Prefetched next-track streams keyed by videoId, so transitions skip
+  /// the resolve delay. Up to [_prefetchLookahead] tracks ahead are
+  /// resolved in the background while the current track plays.
+  final _prefetchedStreams = <String, ResolvedStream>{};
+
+  /// How many tracks ahead to pre-resolve beyond the current one.
+  static const _prefetchLookahead = 3;
+
+  /// Minimum lead time before track end at which the immediate next
+  /// track's stream is resolved, so the signed URL is fresh at handoff.
+  static const _prefetchMinLeadTime = Duration(seconds: 10);
+
+  /// Timer that fires [_prefetchMinLeadTime] before the current track
+  /// ends, triggering a resolve of the immediate next track's stream.
+  Timer? _prefetchTimer;
+
   int _prefetchGen = 0;
 
   bool _disposed = false;
@@ -256,6 +269,7 @@ class PlayerController implements PlayerEngineListener {
     _playToken++;
     _sleepTimer?.cancel();
     _sleepTimer = null;
+    _cancelPrefetchTimer();
     _ticker?.cancel();
     _ticker = null;
     _prefetchGen++;
@@ -360,12 +374,7 @@ class PlayerController implements PlayerEngineListener {
     _update(_state.copyWith(loading: false, playing: true));
     updateTrackStats(track.videoId, stream.likes, stream.dislikes);
     _startTicker();
-    final cur = _state;
-    if (cur.queue.isNotEmpty &&
-        cur.index >= 0 &&
-        cur.index < cur.queue.length) {
-      prefetchNextFor(cur.index, List.of(cur.queue));
-    }
+    _schedulePrefetch();
     return true;
   }
 
@@ -465,18 +474,13 @@ class PlayerController implements PlayerEngineListener {
     _update(s.copyWith(queue: List.of(tracks), index: idx));
     refreshPrefetch();
   }
+
   /// Inserts [track] immediately after the current index.
   void enqueueNext(Track track) {
     final q = List<Track>.of(_state.queue);
     final at = (_state.index + 1).clamp(0, q.length);
     q.insert(at, track);
     _update(_state.copyWith(queue: q));
-    refreshPrefetch();
-  }
-
-  /// Appends [track] to the end of the queue.
-  void enqueueLast(Track track) {
-    _update(_state.copyWith(queue: [..._state.queue, track]));
     refreshPrefetch();
   }
 
@@ -522,6 +526,7 @@ class PlayerController implements PlayerEngineListener {
     final q = _state.queue;
     if (index >= 0 && index < q.length) {
       _shuffleHistory.clear();
+      _cancelPrefetchTimer();
       _update(_state.copyWith(index: index));
       _startCurrent();
     }
@@ -569,6 +574,7 @@ class PlayerController implements PlayerEngineListener {
         _playToken++;
         _ticker?.cancel();
         _ticker = null;
+        _cancelPrefetchTimer();
         unawaited(_engine.stop());
         _clearPrefetch();
         _loadedVideoId = null;
@@ -635,6 +641,7 @@ class PlayerController implements PlayerEngineListener {
       _playToken++;
       _ticker?.cancel();
       _ticker = null;
+      _cancelPrefetchTimer();
       unawaited(_engine.stop());
       _clearPrefetch();
       _loadedVideoId = null;
@@ -717,6 +724,7 @@ class PlayerController implements PlayerEngineListener {
     _ticker?.cancel();
     _ticker = null;
     unawaited(_engine.stop());
+    _cancelPrefetchTimer();
     _clearPrefetch();
     _loadedVideoId = null;
     _pendingSeekTargetMs = null;
@@ -987,6 +995,7 @@ class PlayerController implements PlayerEngineListener {
     _update(
       _state.copyWith(positionMs: target, seekEpoch: _state.seekEpoch + 1),
     );
+    _schedulePrefetch();
   }
 
   /// Sets engine and state volume, clamped to 0..100.
@@ -1274,12 +1283,9 @@ class PlayerController implements PlayerEngineListener {
     // Prefetch only ever skips the resolve step — the engine still
     // opens/buffers the URL, so a stale (expired) URL falls back to a
     // fresh resolve below.
-    final reused = track.videoId == _prefetchedVideoId
-        ? _prefetchedStream
-        : null;
+    final reused = _prefetchedStreams.remove(track.videoId);
     _prefetchGen++;
-    _prefetchedVideoId = null;
-    _prefetchedStream = null;
+    _cancelPrefetchTimer();
     // A previous track's ticker must not publish its old engine position
     // while the next stream is resolving.
     _ticker?.cancel();
@@ -1358,22 +1364,95 @@ class PlayerController implements PlayerEngineListener {
     _update(_state.copyWith(loading: false, playing: true));
     updateTrackStats(track.videoId, stream.likes, stream.dislikes);
     _startTicker(freshStart: true);
-    // Prefetch the next track while this one plays for gapless-ish handoff.
+    // Schedule the next-track prefetch to fire 10s before this track ends,
+    // so the signed URL is fresh at handoff instead of expiring while
+    // waiting. If already within the lead window, resolves immediately.
     if (token == _playToken) {
-      final cur = _state;
-      if (cur.queue.isNotEmpty &&
-          cur.index >= 0 &&
-          cur.index < cur.queue.length) {
-        prefetchNextFor(cur.index, List.of(cur.queue));
-      }
+      _schedulePrefetch();
     }
   }
 
-  /// Drops any prefetched next-track stream and cancels its resolve.
+  /// Drops any prefetched next-track streams and cancels their resolve.
   void _clearPrefetch() {
     _prefetchGen++;
-    _prefetchedVideoId = null;
-    _prefetchedStream = null;
+    _prefetchedStreams.clear();
+  }
+
+  /// Cancels the prefetch lead timer (the cached streams are cleared by
+  /// [_clearPrefetch]).
+  void _cancelPrefetchTimer() {
+    _prefetchTimer?.cancel();
+    _prefetchTimer = null;
+  }
+
+  /// Returns the lead time before track end at which prefetching should
+  /// start. Shorter tracks get a proportionally earlier start since they
+  /// end quickly; long tracks are capped at 30s so the signed URL stays
+  /// fresh at handoff.
+  Duration _prefetchLeadTimeFor(int durationMs) {
+    if (durationMs <= 0) return _prefetchMinLeadTime;
+    final half = Duration(milliseconds: durationMs ~/ 2);
+    final max = const Duration(seconds: 30);
+    if (half < _prefetchMinLeadTime) return _prefetchMinLeadTime;
+    if (half > max) return max;
+    return half;
+  }
+
+  /// Ensures up to [_prefetchLookahead] tracks ahead are pre-resolved.
+  ///
+  /// The immediate next track is resolved on a timer so its signed URL
+  /// stays fresh at handoff; subsequent tracks are resolved now (their
+  /// URLs are cached by the stream resolver and refreshed on consume if
+  /// stale). Called on playback start, seek, and queue changes.
+  void _schedulePrefetch() {
+    _cancelPrefetchTimer();
+    final s = _state;
+    if (s.current == null || s.stopped || s.loading) return;
+    if (s.queue.isEmpty || s.index < 0 || s.index >= s.queue.length) return;
+    if (s.shuffle || s.repeat == RepeatMode.one) {
+      _clearPrefetch();
+      return;
+    }
+
+    // Collect queue positions ahead that aren't already prefetched.
+    final toPrefetch = <String>[];
+    for (var i = s.index + 1;
+        i < s.queue.length && toPrefetch.length < _prefetchLookahead;
+        i++) {
+      final vid = s.queue[i].videoId;
+      if (!_prefetchedStreams.containsKey(vid)) {
+        toPrefetch.add(vid);
+      }
+    }
+    if (toPrefetch.isEmpty) return;
+
+    final gen = ++_prefetchGen;
+    final immediateNext = toPrefetch.first;
+    final rest = toPrefetch.skip(1);
+
+    // Resolve the lookahead tracks right away.
+    for (final vid in rest) {
+      unawaited(_prefetchTrack(vid, gen));
+    }
+
+    // Schedule the immediate next track close to handoff.
+    final duration = s.durationMs;
+    if (duration <= 0) {
+      unawaited(_prefetchTrack(immediateNext, gen));
+      return;
+    }
+    final remaining = duration - s.positionMs;
+    final leadTime = _prefetchLeadTimeFor(duration);
+    if (remaining <= leadTime.inMilliseconds) {
+      unawaited(_prefetchTrack(immediateNext, gen));
+      return;
+    }
+    final delay = Duration(milliseconds: remaining - leadTime.inMilliseconds);
+    _prefetchTimer = Timer(delay, () {
+      _prefetchTimer = null;
+      if (_disposed) return;
+      unawaited(_prefetchTrack(immediateNext, gen));
+    });
   }
 
   /// Re-resolves the expected next track for the current queue position.
@@ -1387,58 +1466,13 @@ class PlayerController implements PlayerEngineListener {
       _clearPrefetch();
       return;
     }
-    prefetchNextFor(s.index, List.of(s.queue));
+    _schedulePrefetch();
   }
 
-  /// Resolves the deterministic next track in the background.
-  ///
-  /// Skipped for shuffle (next is random) and repeat ONE (next is current).
-  /// The result is only kept when the queue/index still point at the same
-  /// next videoId, so queue edits safely invalidate it.
-  void prefetchNextFor(int currentIndex, List<Track> queueSnapshot) {
-    final gen = ++_prefetchGen;
-    final s = _state;
-    if (s.shuffle || s.repeat == RepeatMode.one) {
-      _prefetchedVideoId = null;
-      _prefetchedStream = null;
-      return;
-    }
-    final nextIndex = _deterministicNext(currentIndex, queueSnapshot, s.repeat);
-    if (nextIndex < 0) {
-      _prefetchedVideoId = null;
-      _prefetchedStream = null;
-      return;
-    }
-    final nextTrack = (nextIndex >= 0 && nextIndex < queueSnapshot.length)
-        ? queueSnapshot[nextIndex]
-        : null;
-    if (nextTrack == null) return;
-    if (nextTrack.videoId == _prefetchedVideoId && _prefetchedStream != null) {
-      return;
-    }
-    _prefetchedVideoId = null;
-    _prefetchedStream = null;
-    unawaited(_prefetchAsync(gen, currentIndex, nextIndex, nextTrack.videoId));
-  }
-
-  int _deterministicNext(
-    int currentIndex,
-    List<Track> queue,
-    RepeatMode repeat,
-  ) {
-    if (currentIndex + 1 >= 0 && currentIndex + 1 < queue.length) {
-      return currentIndex + 1;
-    }
-    if (repeat == RepeatMode.all && queue.isNotEmpty) return 0;
-    return -1;
-  }
-
-  Future<void> _prefetchAsync(
-    int gen,
-    int currentIndex,
-    int nextIndex,
-    String videoId,
-  ) async {
+  /// Resolves a single track's stream in the background and stores it in
+  /// the prefetch cache if the generation is still current. Never throws.
+  Future<void> _prefetchTrack(String videoId, int gen) async {
+    if (_prefetchedStreams.containsKey(videoId)) return;
     ResolvedStream? stream;
     try {
       stream = await _resolveStreamAndLength(videoId);
@@ -1446,22 +1480,8 @@ class PlayerController implements PlayerEngineListener {
       return;
     }
     if (gen != _prefetchGen) return;
-    final cur = _state;
-    final expectedNext = _deterministicNext(
-      currentIndex,
-      cur.queue,
-      cur.repeat,
-    );
-    final actual = (expectedNext >= 0 && expectedNext < cur.queue.length)
-        ? cur.queue[expectedNext]
-        : null;
-    if (cur.index == currentIndex &&
-        expectedNext == nextIndex &&
-        actual?.videoId == videoId &&
-        stream != null) {
-      _prefetchedVideoId = videoId;
-      _prefetchedStream = stream;
-    }
+    if (stream == null) return;
+    _prefetchedStreams[videoId] = stream;
   }
 
   /// Advances on natural finish unless explicitly stopped.
@@ -1555,52 +1575,62 @@ class PlayerController implements PlayerEngineListener {
         _ticker = null;
         return;
       }
-      var rawPos = _engine.positionMs();
-      if (rawPos < 0) rawPos = 0;
-      final target = _pendingSeekTargetMs;
-      int pos;
-      if (target != null) {
-        final age = _pendingSeekAt == null
-            ? Duration.zero
-            : DateTime.now().difference(_pendingSeekAt!);
-        final arrived = (rawPos - target).abs() <= seekArrivalToleranceMs;
-        final expired = age >= seekSettleTimeout;
-        // Network-stream seeks routinely take seconds (buffer flush +
-        // re-request). Report the target until the engine demonstrably
-        // arrives (1s window) or a generous timeout elapses.
-        if (!expired && !arrived) {
-          pos = target;
-        } else {
-          _pendingSeekTargetMs = null;
-          _pendingSeekAt = null;
-          pos = rawPos;
-        }
-      } else if (_awaitingFreshPosition) {
-        // The new track starts at 0; anything large or frozen here is
-        // the old track's ghost. Publish 0 until the engine restarts
-        // (back near zero, or moving) or the hold times out.
-        pos = _isFreshEnginePosition(rawPos) ? rawPos : 0;
-      } else {
-        pos = rawPos;
-      }
-      _lastRawEnginePos = rawPos;
-      // A held (likely stale) duration is as wrong as a held position:
-      // keep the catalog duration until the engine restarts.
-      final len = _awaitingFreshPosition ? 0 : _engine.durationMs();
-      final playing = _engine.isPlaying();
-      if (token != _playToken) return;
-      final cur = _state;
-      _update(
-        cur.copyWith(
-          positionMs: pos,
-          durationMs: len > 0 ? len : cur.durationMs,
-          playing: playing || cur.loading,
-        ),
-      );
-      if (playing &&
-          DateTime.now().millisecondsSinceEpoch - _lastSessionSaveMs > 15000) {
-        saveSession();
-      }
+      _tickOnce(token);
     });
+  }
+
+  /// One tick of the playback progress ticker. Resolves position,
+  /// duration and playing state, publishes the state, and saves the
+  /// session when due.
+  void _tickOnce(int token) {
+    var rawPos = _engine.positionMs();
+    if (rawPos < 0) rawPos = 0;
+    final pos = _resolvedPosition(rawPos);
+    _lastRawEnginePos = rawPos;
+    // A held (likely stale) duration is as wrong as a held position:
+    // keep the catalog duration until the engine restarts.
+    final len = _awaitingFreshPosition ? 0 : _engine.durationMs();
+    final playing = _engine.isPlaying();
+    if (token != _playToken) return;
+    final cur = _state;
+    _update(
+      cur.copyWith(
+        positionMs: pos,
+        durationMs: len > 0 ? len : cur.durationMs,
+        playing: playing || cur.loading,
+      ),
+    );
+    if (playing &&
+        DateTime.now().millisecondsSinceEpoch - _lastSessionSaveMs > 15000) {
+      saveSession();
+    }
+  }
+
+  /// Resolves the position to publish for this tick: seek target while
+  /// pending, 0 for a ghost fresh-engine position, else the raw engine
+  /// position.
+  int _resolvedPosition(int rawPos) {
+    final target = _pendingSeekTargetMs;
+    if (target != null) {
+      final age = _pendingSeekAt == null
+          ? Duration.zero
+          : DateTime.now().difference(_pendingSeekAt!);
+      final arrived = (rawPos - target).abs() <= seekArrivalToleranceMs;
+      final expired = age >= seekSettleTimeout;
+      // Network-stream seeks routinely take seconds (buffer flush +
+      // re-request). Report the target until the engine demonstrably
+      // arrives (1s window) or a generous timeout elapses.
+      if (!expired && !arrived) return target;
+      _pendingSeekTargetMs = null;
+      _pendingSeekAt = null;
+      return rawPos;
+    }
+    if (_awaitingFreshPosition) {
+      // The new track starts at 0; anything large or frozen here is
+      // the old track's ghost. Publish 0 until the engine restarts
+      // (back near zero, or moving) or the hold times out.
+      return _isFreshEnginePosition(rawPos) ? rawPos : 0;
+    }
+    return rawPos;
   }
 }

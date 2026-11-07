@@ -1,17 +1,25 @@
 // Stream URL resolution via the InnerTube player endpoint.
 //
-// The Kotlin client uses NewPipe (Java) here, which has no Dart equivalent.
-// Instead this calls the `player` endpoint directly with the VISIONOS client,
-// whose audio URLs need no deciphering and serve arbitrary byte ranges
-// (the same approach yt-dlp's `visionos` client uses, and what the previous
-// native shell validated for full-track streaming + seeking).
+// Signed-out playback uses the VISIONOS client, whose audio URLs need no
+// deciphering and serve arbitrary byte ranges. When VISIONOS returns a
+// login- or age-restriction status, the resolver falls back to yt-dlp
+// (shelling out to the `yt-dlp` binary) which handles cipher deciphering
+// and PO tokens for age-restricted tracks.
+//
+// Both clients return direct audio URLs when deciphering isn't needed.
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:logging/logging.dart';
 
 import '../../sys/http_client.dart';
 import 'json.dart';
+
+/// Logger for stream resolution diagnostics.
+final _log = Logger('nixietube.stream_resolver');
 
 const _visionosUserAgent =
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 '
@@ -20,6 +28,15 @@ const _visionosClientVersion = '1.02';
 const _visionosClientName = '101';
 const _ytOrigin = 'https://www.youtube.com';
 const _ytPlayer = 'https://www.youtube.com/youtubei/v1/player?alt=json';
+
+/// Age-restriction / login-related playability statuses that mean VISIONOS
+/// cannot play the track and the resolver should fall back to yt-dlp.
+const _ytDlpFallbackStatuses = {
+  'LOGIN_REQUIRED',
+  'AGE_VERIFICATION_REQUIRED',
+  'AGE_CHECK_REQUIRED',
+  'CONTENT_CHECK_REQUIRED',
+};
 
 /// Direct audio stream URL plus metadata.
 class ResolvedStream {
@@ -57,11 +74,27 @@ String? _codecOf(String mime) {
   return first.trim();
 }
 
+/// A resolved stream plus the moment it expires from the cache.
+class _CacheEntry {
+  const _CacheEntry(this.stream, this.expiry);
+
+  final ResolvedStream stream;
+  final DateTime expiry;
+}
+
 /// Resolves direct audio stream URLs through the InnerTube player endpoint.
 class StreamResolver {
-  StreamResolver({Dio? dio}) : _dio = dio ?? newHttpClient();
+  StreamResolver({Dio? dio, this._cookie})
+      : _dio = dio ?? newHttpClient();
 
   Dio _dio;
+
+  String? _cookie;
+
+  /// Updates the cookie used to authenticate yt-dlp for age-restricted
+  /// content. Called after the session is restored from the secret store.
+  set cookie(String? value) => _cookie = value;
+
   String? _visitor;
 
   /// When the cached visitor id was fetched. Visitor-bound stream URLs can
@@ -72,6 +105,16 @@ class StreamResolver {
 
   /// Maximum age of a cached visitor id before it is re-fetched.
   static const visitorTtl = Duration(minutes: 30);
+
+  /// How long a resolved stream URL is reused before being re-resolved.
+  /// Stream URLs can die server-side well before their `expire` timestamp,
+  /// so the TTL is deliberately short.
+  static const cacheTtl = Duration(minutes: 5);
+
+  /// Cached resolved streams keyed by video id. Only successful resolves
+  /// are stored; a track that currently resolves to null is retried fresh
+  /// each time in case it becomes playable later.
+  final _cache = <String, _CacheEntry>{};
 
   /// Releases the HTTP client. Call once at shutdown; in-flight
   /// requests fail fast instead of hanging on dispose.
@@ -84,6 +127,7 @@ class StreamResolver {
   Future<void> reset() async {
     _visitor = null;
     _visitorAt = null;
+    _cache.clear();
     try {
       _dio.close();
     } catch (_) {}
@@ -165,7 +209,37 @@ class StreamResolver {
 
   /// Resolves the highest-bitrate direct audio URL for [videoId], or null
   /// when nothing playable is offered.
+  ///
+  /// VISIONOS is tried first. If it returns a login or age-restriction
+  /// status, yt-dlp is used as a fallback (shelling out to the `yt-dlp`
+  /// binary). Successful results are cached for [_cacheTtl] so replaying
+  /// the same track doesn't repeat the (slow) yt-dlp shell-out.
   Future<ResolvedStream?> resolve(String videoId) async {
+    final entry = _cache[videoId];
+    if (entry != null && DateTime.now().isBefore(entry.expiry)) {
+      return entry.stream;
+    }
+
+    final visionos = await _resolveAnonymous(videoId);
+    if (visionos != null) {
+      _cache[videoId] = _CacheEntry(
+        visionos,
+        DateTime.now().add(cacheTtl),
+      );
+      return visionos;
+    }
+    final ytDlp = await _resolveYtDlp(videoId);
+    if (ytDlp != null) {
+      _cache[videoId] = _CacheEntry(
+        ytDlp,
+        DateTime.now().add(cacheTtl),
+      );
+    }
+    return ytDlp;
+  }
+
+  /// Signed-out resolve with the JS-less VISIONOS client.
+  Future<ResolvedStream?> _resolveAnonymous(String videoId) async {
     dynamic res;
     for (final refresh in [false, true]) {
       final visitor = await _visitorData(refresh);
@@ -177,10 +251,100 @@ class StreamResolver {
       }
       final status = str(nav(res, const ['playabilityStatus', 'status']));
       if (status == 'OK') break;
+      if (_ytDlpFallbackStatuses.contains(status)) {
+        _log.info(
+          'VISIONOS returned $status for $videoId — falling back to yt-dlp',
+        );
+        return null;
+      }
       res = null;
       if (refresh) break;
     }
     if (res == null) return null;
+    return _streamFrom(res);
+  }
+
+  /// Resolves via the `yt-dlp` binary, which handles cipher deciphering,
+  /// PO tokens, and age-restricted content. Returns null when yt-dlp is
+  /// unavailable or cannot extract a URL.
+  ///
+  /// When [_cookie] (a `Cookie:` header) is set it is written to a
+  /// throwaway Netscape-format file and passed via `--cookies`, so
+  /// age-restricted content authenticates with the viewer's session.
+  Future<ResolvedStream?> _resolveYtDlp(String videoId) async {
+    if (!await _ytDlpAvailable()) {
+      _log.warning('yt-dlp binary not available on PATH');
+      return null;
+    }
+    try {
+      final args = <String>[
+        '--format',
+        'bestaudio',
+        '--get-url',
+        '--no-check-certificates',
+      ];
+      String? cookieFile;
+      final cookie = _cookie;
+      if (cookie != null && cookie.isNotEmpty) {
+        final file = File(
+            '${Directory.systemTemp.path}/nixietube_yt_dlp_cookies.txt');
+        final netscape = _cookieToNetscape(cookie);
+        await file.writeAsString(netscape);
+        cookieFile = file.path;
+        args.addAll(['--cookies', cookieFile]);
+        _log.fine('Wrote yt-dlp cookie file at $cookieFile');
+      }
+      _log.fine('Running yt-dlp for $videoId with ${cookieFile != null ? 'cookies' : 'no cookies'}');
+      final result = await Process.run(
+        'yt-dlp',
+        [...args, 'https://www.youtube.com/watch?v=$videoId'],
+        runInShell: true,
+      ).timeout(const Duration(seconds: 30));
+      if (result.exitCode != 0 || result.stdout.isEmpty) {
+        _log.warning(
+          'yt-dlp failed for $videoId: exitCode=${result.exitCode} '
+          'stderr=${result.stderr}',
+        );
+        return null;
+      }
+      final url = result.stdout.trim().split('\n').first.trim();
+      if (url.isEmpty || !url.startsWith('http')) {
+        _log.warning('yt-dlp returned non-URL output for $videoId');
+        return null;
+      }
+      _log.info('Resolved stream for $videoId via yt-dlp: ${url.length} chars');
+      return ResolvedStream(
+        url: url,
+        bitrate: 0, // yt-dlp doesn't expose bitrate via --get-url
+        durationSec: 0,
+      );
+    } catch (error) {
+      _log.warning('yt-dlp exception for $videoId: $error');
+      return null;
+    } finally {
+      try {
+        await File('${Directory.systemTemp.path}/nixietube_yt_dlp_cookies.txt')
+            .delete();
+      } catch (_) {}
+    }
+  }
+
+  /// True when the `yt-dlp` binary is on PATH and executable.
+  Future<bool> _ytDlpAvailable() async {
+    try {
+      final result = await Process.run(
+        'yt-dlp',
+        ['--version'],
+        runInShell: true,
+      ).timeout(const Duration(seconds: 5));
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Picks the highest-bitrate audio format from a player response.
+  ResolvedStream? _streamFrom(dynamic res) {
     final length = int.tryParse(
       str(nav(res, const ['videoDetails', 'lengthSeconds'])) ?? '',
     );
@@ -205,5 +369,24 @@ class StreamResolver {
       }
     }
     return best;
+  }
+
+  /// Converts a `Cookie:` header string to Netscape cookie file format for
+  /// yt-dlp. All cookies are written against `.youtube.com` so they match
+  /// both `youtube.com` and `music.youtube.com` requests.
+  String _cookieToNetscape(String cookie) {
+    final buf = StringBuffer();
+    buf.writeln('# Netscape HTTP Cookie File');
+    buf.writeln('# Generated by NixieTube for yt-dlp authentication');
+    for (final pair in cookie.split(';')) {
+      final eq = pair.indexOf('=');
+      if (eq < 0) continue;
+      final name = pair.substring(0, eq).trim();
+      final value = pair.substring(eq + 1).trim();
+      if (name.isEmpty) continue;
+      // domain, include_subdomains, path, secure, expires, name, value
+      buf.writeln('.youtube.com\tTRUE\t/\tFALSE\t0\t$name\t$value');
+    }
+    return buf.toString();
   }
 }
