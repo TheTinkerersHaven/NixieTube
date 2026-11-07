@@ -17,7 +17,12 @@ import 'paths.dart' show cacheDir;
 import 'package:flutter/foundation.dart' show ValueListenable, debugPrint;
 import 'package:material_ui/material_ui.dart' show Color, ColorScheme;
 import 'package:nativeapi/nativeapi.dart'
-    show Application, ListenerId, Window, WindowCloseRequestedEvent, WindowEvent;
+    show
+        Application,
+        ListenerId,
+        Window,
+        WindowCloseRequestedEvent,
+        WindowEvent;
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart' show WindowManager;
 
@@ -26,6 +31,7 @@ import '../core/player/player_controller.dart';
 import '../core/player/player_state.dart';
 import '../ui/theme.dart' show buildTheme;
 import 'tray_icon.dart' show renderTrayIcon;
+import 'updater.dart' show Updater;
 
 /// Play/Pause menu label for [playing].
 String trayPlayPauseLabel(bool playing) => playing ? 'Pause' : 'Play';
@@ -78,15 +84,18 @@ class TrayService {
     required PlayerController controller,
     required Future<void> Function() onQuit,
     required ValueListenable<ColorScheme?> scheme,
+    Updater? updater,
   }) {
     _controller = controller;
     _onQuit = onQuit;
     _scheme = scheme;
+    _updater = updater ?? Updater();
   }
 
   late final PlayerController _controller;
   late final Future<void> Function() _onQuit;
   late final ValueListenable<ColorScheme?> _scheme;
+  late final Updater _updater;
 
   StreamSubscription<PlayerState>? _sub;
   TrayIcon? _icon;
@@ -175,6 +184,7 @@ class TrayService {
       add('Previous', () => _controller.previous());
       add('Next', () => _controller.next());
       menu.addSeparator();
+      add('Check for updates', () => unawaited(_checkForUpdates()));
       add('Show / Hide', () => toggleWindow());
       add('Quit', () => _onQuit());
       icon.setContextMenu(menu);
@@ -285,5 +295,15 @@ class TrayService {
       event.request.cancel();
       _window?.hide();
     }
+  }
+
+  /// Checks GitHub for a newer release and, if found, downloads and
+  /// atomically replaces the running AppImage. Silent on outcome — the
+  /// update takes effect on the next launch. Best-effort: a failure is
+  /// logged and the tray keeps working.
+  Future<void> _checkForUpdates() async {
+    final info = await _updater.checkForUpdates();
+    if (info == null) return;
+    await _updater.applyUpdate(info);
   }
 }
