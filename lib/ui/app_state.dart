@@ -1,12 +1,12 @@
 // Central UI state holder wiring navigation, content, library, ratings
-// and playback reporting. Ported from Kotlin `AppState`.
+// and playback reporting.
 //
-// Kotlin StateFlow/collectAsState becomes ChangeNotifier + Provider.
-// Async jobs are fenced with generation counters (Kotlin cancels Jobs).
+// State changes reach the widgets through ChangeNotifier + Provider.
+// Async jobs are fenced with generation counters, so a stale load never
+// publishes over a newer one.
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File;
 import 'dart:math' show Random;
 
 import 'package:material_ui/material_ui.dart'
@@ -37,21 +37,19 @@ import '../core/innertube/metadata.dart'
 import '../core/models/models.dart';
 import '../core/player/player_controller.dart';
 import '../core/player/player_state.dart';
-import '../sys/browser_cookies.dart';
 import '../sys/cache_store.dart';
-import '../sys/paths.dart';
+import '../sys/updater.dart';
 import '../sys/sys_config.dart';
+import '../core/innertube/stream_resolver.dart';
+import 'state/navigation_state.dart'
+    show Screen, NavigationState, sameNavigationName;
+import 'state/pinned_picks_state.dart' show PinnedPicksState;
+import 'state/rating_service.dart' show RatingService;
+import 'state/search_state.dart' show SearchState, SearchUiState;
 import 'theme.dart' show ThemeSource, resolveColorScheme;
 
-/// Navigation destinations for the single-window app.
-enum Screen { home, search, library, settings, detail }
-
-/// History entry for back navigation.
-class HistoryEntry {
-  HistoryEntry(this.screen, this.detail);
-  final Screen screen;
-  final BrowseItem? detail;
-}
+export 'state/navigation_state.dart' show Screen;
+export 'state/search_state.dart' show SearchUiState;
 
 /// Loaded state of the home feed.
 ///
@@ -123,20 +121,6 @@ class HomeUiState {
   }
 }
 
-/// Loaded state of the search results.
-class SearchUiState {
-  SearchUiState({
-    this.query = '',
-    this.loading = false,
-    this.sections = const {},
-    this.error,
-  });
-  String query;
-  bool loading;
-  Map<String, List<ShelfItem>> sections;
-  String? error;
-}
-
 /// Loaded state of the current detail page.
 class DetailUiState {
   DetailUiState({
@@ -193,8 +177,6 @@ class OpenPlaylist {
 }
 
 /// Normalizes a name for navigation matching.
-String navigationName(String value) => canonical(value);
-
 /// Content signature for change detection: length plus per-item identity
 /// and rating. Ratings arrive through the player stream, so they must
 /// participate or like buttons would go stale.
@@ -252,12 +234,6 @@ bool isVolumeOnlyUpdate(PlayerState prev, PlayerState next) {
       prev.sleepTimerMode == next.sleepTimerMode &&
       prev.sleepTimerEndsAtMs == next.sleepTimerEndsAtMs &&
       queueSignature(prev.queue) == queueSignature(next.queue);
-}
-
-bool sameNavigationName(String left, String right) {
-  if (left.toLowerCase() == right.toLowerCase()) return true;
-  final a = navigationName(left);
-  return a.isNotEmpty && a == navigationName(right);
 }
 
 /// Watchtime failure log (successes stay silent).
@@ -347,6 +323,8 @@ class AppState extends ChangeNotifier {
     required ArtworkStore art,
     required SysConfig config,
     required Future<void> Function(String url) openUrl,
+    StreamResolver? streamResolver,
+    Updater? updater,
     // Test seam: cookie session file. Production uses the shared
     // config dir; tests must pass a temp path — the login/logout
     // flows create and delete this file, and must never touch the
@@ -358,6 +336,17 @@ class AppState extends ChangeNotifier {
     _library = AccountLibrary(tube: tube);
     _config = config;
     _openUrl = openUrl;
+    _streamResolver = streamResolver ?? StreamResolver();
+    _updater = updater ?? Updater();
+    _rating = RatingService(likesTrack: _isLikedTrack);
+    _nav = NavigationState(onLoadDetail: _loadDetail);
+    _searchState = SearchState(
+      tube: tube,
+      stampSections: _stampSearchSections,
+      formatError: friendlyError,
+      recordEnrichedRating: _recordEnrichedRating,
+      onChanged: _safeNotify,
+    );
     _playback = PlaybackReporter(
       tube: tube,
       config: config,
@@ -368,7 +357,7 @@ class AppState extends ChangeNotifier {
     _loadTrackMeta();
     _loadArtistAvatars();
     _loadPlayCounts();
-    _loadPinnedPicks();
+    _pins.load();
     // Seed the published scheme from the remembered system accent:
     // the tray/window icon renders before the async platform fetch
     // lands, so without this it would start on the built-in fallback
@@ -391,6 +380,11 @@ class AppState extends ChangeNotifier {
   late final AccountLibrary _library;
   late final SysConfig _config;
   late final Future<void> Function(String url) _openUrl;
+  late final StreamResolver _streamResolver;
+  late final Updater _updater;
+  late final RatingService _rating;
+  late final NavigationState _nav;
+  late final SearchState _searchState;
 
   /// Opens [url] in the system's external browser (see the `openUrl`
   /// wiring in `main.dart`).
@@ -415,14 +409,38 @@ class AppState extends ChangeNotifier {
   PlayerController get player => _player;
   ArtworkStore get art => _art;
   SysConfig get config => _config;
+  RatingService get rating => _rating;
 
   /// Set by the startup audio probe when the native backend is
   /// unusable: playback refuses to start and the shell shows why,
   /// instead of a console message and a frozen transport.
   String? _audioBackendError;
 
+  /// Startup update-check state: the newer release (if any), whether a
+  /// check is in flight, and whether it has completed.
+  UpdateInfo? _updateInfo;
+  bool _updateChecking = false;
+  bool _updateChecked = false;
+  bool _dismissedUpdateBanner = false;
+
   /// True when the native audio backend failed the startup probe.
   bool get audioBackendUnavailable => _audioBackendError != null;
+
+  /// A newer release available on GitHub, or null when up to date.
+  UpdateInfo? get updateInfo => _updateInfo;
+
+  /// True while the startup update check is in flight.
+  bool get updateChecking => _updateChecking;
+
+  /// True when the startup update check has completed (available or not).
+  bool get updateChecked => _updateChecked;
+
+  /// Whether the user dismissed the update-available banner this session.
+  bool get updateBannerDismissed => _dismissedUpdateBanner;
+
+  /// Whether the user dismissed the expired-session banner this session.
+  bool get sessionBannerDismissed => _dismissedSessionBanner;
+  bool _dismissedSessionBanner = false;
 
   /// Records a failed audio backend: the player refuses playback
   /// (see `PlayerController.backendUnavailable`) and the shell shows
@@ -432,6 +450,54 @@ class AppState extends ChangeNotifier {
     _audioBackendError = message;
     _player.backendUnavailable = true;
     _player.backendUnavailableReason = message;
+    _safeNotify();
+  }
+
+  /// Checks GitHub for a newer release once at startup. Best-effort:
+  /// a failure is logged and the banner never shows. Call after the
+  /// state is mounted (e.g. from `main` before `runApp`).
+  Future<void> checkForUpdates() async {
+    if (_updateChecked) return;
+    _updateChecking = true;
+    _safeNotify();
+    try {
+      final info = await _updater.checkForUpdates();
+      if (!_disposed) {
+        _updateInfo = info;
+        _updateChecked = true;
+        _updateChecking = false;
+        _safeNotify();
+      }
+    } catch (_) {
+      if (!_disposed) {
+        _updateChecked = true;
+        _updateChecking = false;
+        _safeNotify();
+      }
+    }
+  }
+
+  /// Applies a downloaded update: replaces the running AppImage
+  /// atomically so the new version takes effect on the next launch.
+  /// Best-effort and never throws.
+  Future<void> applyUpdate() async {
+    if (_updateInfo == null) return;
+    try {
+      await _updater.applyUpdate(_updateInfo!);
+    } catch (_) {}
+  }
+
+  /// Dismisses the update-available banner for the rest of this session.
+  void dismissUpdateBanner() {
+    if (_dismissedUpdateBanner) return;
+    _dismissedUpdateBanner = true;
+    _safeNotify();
+  }
+
+  /// Dismisses the expired-session banner for the rest of this session.
+  void dismissSessionBanner() {
+    if (_dismissedSessionBanner) return;
+    _dismissedSessionBanner = true;
     _safeNotify();
   }
 
@@ -457,60 +523,37 @@ class AppState extends ChangeNotifier {
 
   // ---------- Navigation ----------
 
-  Screen _screen = Screen.home;
-  Screen get screen => _screen;
+  /// The current screen.
+  Screen get screen => _nav.screen;
 
-  BrowseItem? _detailItem;
-  BrowseItem? get detailItem => _detailItem;
+  /// The detail item shown by the detail screen.
+  BrowseItem? get detailItem => _nav.detailItem;
 
-  final List<HistoryEntry> _history = [];
-  bool _canGoBack = false;
-  bool get canGoBack => _canGoBack;
-
-  void _pushHistory() {
-    _history.add(HistoryEntry(_screen, _detailItem));
-    if (_history.length > 100) _history.removeAt(0);
-    _canGoBack = true;
-  }
+  /// Whether the user can navigate back.
+  bool get canGoBack => _nav.canGoBack;
 
   /// Direction of the latest navigation: false only for back pops.
   /// Pushes rise from the bottom, pops sink back down.
-  bool _lastNavForward = true;
-  bool get lastNavForward => _lastNavForward;
+  bool get lastNavForward => _nav.lastNavForward;
 
   /// Navigates forward, pushing the current screen for [goBack].
   /// Detail screens kick off their load on arrival.
   void go(Screen screen, {BrowseItem? detail}) {
-    _lastNavForward = true;
-    _pushHistory();
-    _screen = screen;
-    _detailItem = detail;
-    if (screen == Screen.detail && detail != null) {
-      _loadDetail(detail);
-    }
+    _nav.go(screen, detail: detail);
     _safeNotify();
   }
 
   /// Returns to the pushed screen, if any. Detail entries reload on
   /// arrival so back navigation never shows a stale page.
   void goBack() {
-    if (_history.isEmpty) return;
-    _lastNavForward = false;
-    final entry = _history.removeLast();
-    _canGoBack = _history.isNotEmpty;
-    _screen = entry.screen;
-    _detailItem = entry.detail;
-    if (entry.screen == Screen.detail && entry.detail != null) {
-      _loadDetail(entry.detail!);
-    }
+    if (!_nav.goBack()) return;
     _safeNotify();
   }
 
   /// Reloads the current detail page in place (used after edits such as
   /// removing a track from an open playlist).
   void reloadDetail() {
-    final item = _detailItem;
-    if (item != null) _loadDetail(item);
+    _nav.reloadDetail();
   }
 
   /// Opens an artist page, resolving unlinked credits first.
@@ -606,7 +649,6 @@ class AppState extends ChangeNotifier {
   // ---------- Home / search / detail ----------
 
   HomeUiState home = HomeUiState();
-  SearchUiState search = SearchUiState();
   DetailUiState detail = DetailUiState();
 
   List<Shelf>? _rankedShelvesCache;
@@ -805,7 +847,6 @@ class AppState extends ChangeNotifier {
     playSongs([seed, ...upcoming], 0);
   }
 
-  int _searchGen = 0;
   int _detailGen = 0;
   int _homeGen = 0;
 
@@ -903,133 +944,31 @@ class AppState extends ChangeNotifier {
     if (after != before) notifyListeners();
   }
 
-  File get _searchHistoryFile => File('${configDir().path}/search-history.txt');
+  /// The current search results.
+  SearchUiState get search => _searchState.search;
 
-  List<String> searchHistory = [];
+  /// The recorded search queries, newest first.
+  List<String> get searchHistory => _searchState.searchHistory;
 
-  void _loadSearchHistory() {
-    try {
-      final f = _searchHistoryFile;
-      if (!f.existsSync()) {
-        searchHistory = [];
-        return;
-      }
-      searchHistory = f
-          .readAsLinesSync()
-          .map((l) => l.trim())
-          .where((l) => l.isNotEmpty)
-          .toSet()
-          .take(12)
-          .toList();
-    } catch (_) {
-      searchHistory = [];
-    }
-  }
+  /// Reads the persisted search history into memory.
+  void loadSearchHistory() => _searchState.loadSearchHistory();
 
-  void _recordSearchHistory(String query) {
-    searchHistory = [
-      query,
-      ...searchHistory.where((q) => q.toLowerCase() != query.toLowerCase()),
-    ].take(12).toList();
-    unawaited(() async {
-      try {
-        await _searchHistoryFile.writeAsString('${searchHistory.join('\n')}\n');
-      } catch (_) {}
-    }());
-  }
+  /// Clears the in-memory and the persisted search history.
+  void clearSearchHistory() => _searchState.clearSearchHistory();
 
-  /// Clears the in-memory and persisted search history.
-  void clearSearchHistory() {
-    searchHistory = [];
-    unawaited(() async {
-      try {
-        final f = _searchHistoryFile;
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
-    }());
-    _safeNotify();
-  }
+  /// Deletes the persisted search history file.
+  Future<void> deletePersistedSearchHistory() =>
+      _searchState.deletePersistedSearchHistory();
 
-  /// Drops one query from the in-memory and persisted search history.
-  void removeSearchHistory(String query) {
-    final key = query.trim().toLowerCase();
-    if (key.isEmpty) return;
-    final kept = searchHistory.where((q) => q.toLowerCase() != key).toList();
-    if (kept.length == searchHistory.length) return;
-    searchHistory = kept;
-    unawaited(() async {
-      try {
-        await _searchHistoryFile.writeAsString('${searchHistory.join('\n')}\n');
-      } catch (_) {}
-    }());
-    _safeNotify();
-  }
+  /// Drops one query from the in-memory and the persisted history.
+  void removeSearchHistory(String query) =>
+      _searchState.removeSearchHistory(query);
 
-  /// Runs a search and enriches song rows, cancelling older queries.
-  Future<void> searchFor(String query) async {
-    final normalized = query.trim();
-    if (normalized.isEmpty) return;
-    _recordSearchHistory(normalized);
-    final gen = ++_searchGen;
-    search = SearchUiState(query: normalized, loading: true);
-    _safeNotify();
-    try {
-      final sections = await _tube.search(normalized);
-      if (gen != _searchGen) return;
-      search = SearchUiState(
-        query: normalized,
-        loading: false,
-        sections: _stampSearchSections(sections),
-      );
-      _safeNotify();
-      final songs =
-          sections['Songs']
-              ?.whereType<SongItem>()
-              .map((e) => e.track)
-              .toList() ??
-          [];
-      if (songs.isNotEmpty) {
-        final enriched = await _tube.enrichTracks(songs);
-        if (gen != _searchGen) return;
-        final byId = {for (final t in enriched) t.videoId: t};
-        final stamped = <String, List<ShelfItem>>{};
-        search.sections.forEach((key, items) {
-          stamped[key] = items.map((item) {
-            if (item is SongItem) {
-              final fresh = byId[item.track.videoId];
-              return fresh == null ? item : SongItem(fresh);
-            }
-            return item;
-          }).toList();
-        });
-        search = SearchUiState(
-          query: normalized,
-          loading: false,
-          sections: _stampSearchSections(stamped),
-        );
-        for (final t in enriched) {
-          if (t.rating != RatingStatus.unknown &&
-              _trustNetworkRating(t.videoId, t.rating)) {
-            _ratingCache[t.videoId] = t.rating;
-          }
-        }
-      }
-    } catch (e) {
-      if (gen != _searchGen) return;
-      search = SearchUiState(
-        query: normalized,
-        loading: false,
-        error: friendlyError(e),
-      );
-    }
-    _safeNotify();
-  }
+  /// Runs a search and enriches the song rows, cancelling older queries.
+  Future<void> searchFor(String query) => _searchState.searchFor(query);
 
   /// Clears the current search results and query.
-  void clearSearch() {
-    search = SearchUiState();
-    _safeNotify();
-  }
+  void clearSearch() => _searchState.clearSearch();
 
   /// Runs [searchFor] and navigates to the Search screen.
   void searchAndGo(String query) {
@@ -1201,71 +1140,11 @@ class AppState extends ChangeNotifier {
     unawaited(() async {
       try {
         if (item.browseId.startsWith('UC')) {
-          final artist = await _tube.artist(item.browseId);
-          if (gen != _detailGen) return;
-          // Enrich the preview's top songs with durations (and a few
-          // more tracks) from the songs playlist BEFORE publishing, so
-          // the first paint already shows durations instead of filling
-          // them in later. Falls back to the preview alone on failure.
-          ArtistDetail? published = artist;
-          if (artist != null && artist.songsPlaylistId != null) {
-            try {
-              final full = await _tube.playlist(
-                artist.songsPlaylistId!,
-                params: artist.songsPlaylistParams,
-              );
-              if (full != null && gen == _detailGen) {
-                final merged = List<Track>.of(artist.topSongs);
-                var changed = false;
-                for (var i = 0; i < full.tracks.length; i++) {
-                  final t = full.tracks[i];
-                  final idx = i < merged.length
-                      ? i
-                      : merged.indexWhere((e) => e.videoId == t.videoId);
-                  if (idx >= 0 && idx < merged.length) {
-                    final existing = merged[idx];
-                    if (existing.videoId == t.videoId ||
-                        existing.title == t.title) {
-                      final enriched = existing.copyWith(
-                        durationSec: existing.durationSec > 0
-                            ? existing.durationSec
-                            : t.durationSec,
-                        views: existing.views.trim().isNotEmpty
-                            ? existing.views
-                            : t.views,
-                      );
-                      if (enriched != existing) {
-                        merged[idx] = enriched;
-                        changed = true;
-                      }
-                    }
-                  } else if (merged.length < artistTopSongsCap) {
-                    merged.add(t);
-                    changed = true;
-                  }
-                  if (merged.length >= artistTopSongsCap) break;
-                }
-                if (changed) published = artist.copyWith(topSongs: merged);
-              }
-            } catch (_) {}
-          }
-          if (gen != _detailGen) return;
-          detail = DetailUiState(loading: false, artist: published);
+          await _loadArtistDetail(item, gen);
         } else if (item.browseId.startsWith('MPRE')) {
-          final album = await _tube.album(item.browseId);
-          if (gen != _detailGen) return;
-          detail = DetailUiState(loading: false, album: album);
-          if (album != null) _stampDetailRatings(gen, album.tracks);
+          await _loadAlbumDetail(item, gen);
         } else {
-          final playlist = await _tube.playlist(
-            item.browseId,
-            params: item.browseParams,
-          );
-          if (gen != _detailGen) return;
-          detail = DetailUiState(loading: false, playlist: playlist);
-          if (playlist != null) {
-            _stampDetailRatings(gen, playlist.tracks);
-          }
+          await _loadPlaylistDetail(item, gen);
         }
       } catch (e) {
         if (gen != _detailGen) return;
@@ -1273,6 +1152,88 @@ class AppState extends ChangeNotifier {
       }
       _safeNotify();
     }());
+  }
+
+  /// Loads an artist detail, enriching its top songs with durations and
+  /// views from the songs playlist BEFORE publishing, so the first paint
+  /// already shows durations instead of filling them in later. Falls back
+  /// to the preview alone on failure.
+  Future<void> _loadArtistDetail(BrowseItem item, int gen) async {
+    final artist = await _tube.artist(item.browseId);
+    if (gen != _detailGen) return;
+    ArtistDetail? published = artist;
+    if (artist != null && artist.songsPlaylistId != null) {
+      try {
+        final full = await _tube.playlist(
+          artist.songsPlaylistId!,
+          params: artist.songsPlaylistParams,
+        );
+        if (full != null && gen == _detailGen) {
+          final merged = _mergePlaylistTracksIntoTopSongs(
+            artist.topSongs,
+            full.tracks,
+          );
+          if (merged != artist.topSongs) {
+            published = artist.copyWith(topSongs: merged);
+          }
+        }
+      } catch (_) {}
+    }
+    if (gen != _detailGen) return;
+    detail = DetailUiState(loading: false, artist: published);
+  }
+
+  /// Merges a songs-playlist track list into the artist's top songs,
+  /// backfilling durations/views and appending missing tracks up to the
+  /// cap. Returns the merged list, or the original when unchanged.
+  List<Track> _mergePlaylistTracksIntoTopSongs(
+    List<Track> topSongs,
+    List<Track> full,
+  ) {
+    final merged = List<Track>.of(topSongs);
+    var changed = false;
+    for (final t in full) {
+      final idx = merged.indexWhere((e) => e.videoId == t.videoId);
+      if (idx >= 0 && idx < merged.length) {
+        final existing = merged[idx];
+        if (existing.videoId == t.videoId || existing.title == t.title) {
+          final enriched = existing.copyWith(
+            durationSec: existing.durationSec > 0
+                ? existing.durationSec
+                : t.durationSec,
+            views: existing.views.trim().isNotEmpty ? existing.views : t.views,
+          );
+          if (enriched != existing) {
+            merged[idx] = enriched;
+            changed = true;
+          }
+        }
+      } else if (merged.length < artistTopSongsCap) {
+        merged.add(t);
+        changed = true;
+      }
+      if (merged.length >= artistTopSongsCap) break;
+    }
+    return changed ? merged : topSongs;
+  }
+
+  Future<void> _loadAlbumDetail(BrowseItem item, int gen) async {
+    final album = await _tube.album(item.browseId);
+    if (gen != _detailGen) return;
+    detail = DetailUiState(loading: false, album: album);
+    if (album != null) _stampDetailRatings(gen, album.tracks);
+  }
+
+  Future<void> _loadPlaylistDetail(BrowseItem item, int gen) async {
+    final playlist = await _tube.playlist(
+      item.browseId,
+      params: item.browseParams,
+    );
+    if (gen != _detailGen) return;
+    detail = DetailUiState(loading: false, playlist: playlist);
+    if (playlist != null) {
+      _stampDetailRatings(gen, playlist.tracks);
+    }
   }
 
   // ---------- Account / library ----------
@@ -1751,119 +1712,22 @@ class AppState extends ChangeNotifier {
   /// Final per AppState, so the order never jumps mid-session.
   final int quickPicksNonce = Random().nextInt(1 << 31);
 
-  /// User-pinned quick picks, most recent pin last. YTM pins live
-  /// only in the official clients, so pins are stored locally as
-  /// snapshots and rendered ahead of the rotating pools.
-  static const _pinnedPicksCap = 12;
-  List<ShelfItem> _pinnedPicks = [];
-  List<ShelfItem> get pinnedPicks => _pinnedPicks;
+  /// User-pinned quick picks, most recent pin last.
+  late final PinnedPicksState _pins = PinnedPicksState(
+    read: _config.get,
+    write: _config.set,
+  );
 
-  static String? pickKeyOf(ShelfItem item) {
-    if (item is SongItem) {
-      return item.track.videoId.isEmpty ? null : 's:${item.track.videoId}';
-    }
-    if (item is BrowseItem) {
-      return item.browseId.isEmpty ? null : 'b:${item.browseId}';
-    }
-    return null;
-  }
+  /// The pinned quick picks, most recent pin last.
+  List<ShelfItem> get pinnedPicks => _pins.picks;
 
   /// True when [item] (by video/browse id) is in the pinned list.
-  bool isPinned(ShelfItem item) {
-    final id = pickKeyOf(item);
-    return id != null && _pinnedPicks.any((p) => pickKeyOf(p) == id);
-  }
+  bool isPinned(ShelfItem item) => _pins.contains(item);
 
-  /// Pins or unpins a quick-pick tile. Skeleton tiles and over-cap
-  /// pins are ignored. Reassigns (never mutates) so selects detect
-  /// the change and the grid rebuilds.
+  /// Pins or unpins a quick-pick tile.
   void togglePin(ShelfItem item) {
-    final id = pickKeyOf(item);
-    if (id == null || id.startsWith('s:skeleton-')) return;
-    if (_pinnedPicks.any((p) => pickKeyOf(p) == id)) {
-      _pinnedPicks = [
-        for (final p in _pinnedPicks)
-          if (pickKeyOf(p) != id) p,
-      ];
-    } else {
-      if (_pinnedPicks.length >= _pinnedPicksCap) return;
-      _pinnedPicks = [..._pinnedPicks, item];
-    }
-    _savePinnedPicks();
+    _pins.toggle(item);
     _safeNotify();
-  }
-
-  /// Snapshot encoding for one pin (static so it stays unit-testable
-  /// without an AppState instance).
-  static Map<String, dynamic> pinToJson(ShelfItem item) {
-    if (item is SongItem) return {'k': 's', 'track': item.track.toJson()};
-    final b = item as BrowseItem;
-    return {
-      'k': 'b',
-      'title': b.title,
-      'subtitle': b.subtitle,
-      'browseId': b.browseId,
-      'thumbnails': [for (final t in b.thumbnails) t.toJson()],
-    };
-  }
-
-  /// Decodes one pin snapshot; null on any schema drift (a stale pin
-  /// must never break startup).
-  static ShelfItem? pinFromJson(dynamic e) {
-    if (e is! Map) return null;
-    try {
-      if (e['k'] == 's') {
-        final t = e['track'];
-        if (t is! Map) return null;
-        return ShelfItem.song(
-          Track.fromJson(t.map((k, v) => MapEntry(k.toString(), v))),
-        );
-      }
-      if (e['k'] == 'b') {
-        final browseId = e['browseId']?.toString() ?? '';
-        if (browseId.isEmpty) return null;
-        final thumbs = e['thumbnails'];
-        return ShelfItem.browse(
-          title: e['title']?.toString() ?? '',
-          subtitle: e['subtitle']?.toString() ?? '',
-          browseId: browseId,
-          thumbnails: [
-            if (thumbs is List)
-              for (final t in thumbs)
-                if (t is Map)
-                  Thumbnail.fromJson(
-                    t.map((k, v) => MapEntry(k.toString(), v)),
-                  ),
-          ],
-        );
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  void _loadPinnedPicks() {
-    try {
-      final raw = _config.get('home.pinnedPicks', '');
-      if (raw.isEmpty) return;
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return;
-      _pinnedPicks = decoded
-          .map(pinFromJson)
-          .whereType<ShelfItem>()
-          .take(_pinnedPicksCap)
-          .toList();
-    } catch (_) {}
-  }
-
-  void _savePinnedPicks() {
-    try {
-      _config.set(
-        'home.pinnedPicks',
-        jsonEncode([for (final p in _pinnedPicks) pinToJson(p)]),
-      );
-    } catch (_) {}
   }
 
   List<BrowseItem> _recentArtists = [];
@@ -1907,8 +1771,6 @@ class AppState extends ChangeNotifier {
   final Map<String, bool> _artistPageCache = {};
   String? _ownChannelId;
   bool _ownChannelIdLoaded = false;
-  final Map<String, RatingStatus> _ratingCache = {};
-  Set<String> _likedIds = {};
 
   /// Track lengths (seconds) learned for queue rows from the queue
   /// metadata pass, so a re-queued or re-opened row never costs another
@@ -2090,7 +1952,7 @@ class AppState extends ChangeNotifier {
       ]);
       final playlists = results[0];
       if (playlists is List<AccountPlaylist>) _playlists = playlists;
-      // Fire-and-forget like Kotlin: covers pop in per chunk without
+      // Fire-and-forget: covers pop in per chunk without
       // parking the library behind the slowest artwork fetch.
       unawaited(_enrichPlaylistArtwork());
       final activity = results[1];
@@ -2139,8 +2001,8 @@ class AppState extends ChangeNotifier {
     }());
   }
 
-  /// Fills missing playlist artwork in background chunks of 4 (Kotlin
-  /// parity): largest InnerTube header art first, then the first tracks'
+  /// Fills missing playlist artwork in background chunks of 4: largest
+  /// InnerTube header art first, then the first tracks'
   /// artwork as a fallback. Track covers also backfill [AccountPlaylist.arts]
   /// whenever empty so cards and the header collage have something to show
   /// even when the header art resolved but no collage sources exist yet.
@@ -2307,11 +2169,7 @@ class AppState extends ChangeNotifier {
   /// carries a browse filter (e.g. an artist's top-songs list) and
   /// [item] the title/artwork the caller already has while the page
   /// loads.
-  void openPlaylistById(
-    String browseId, {
-    String? params,
-    BrowseItem? item,
-  }) {
+  void openPlaylistById(String browseId, {String? params, BrowseItem? item}) {
     final id = playlistIdFrom(browseId);
     final known = _playlists.where((p) => p.id == id).firstOrNull;
     final seed =
@@ -2322,7 +2180,7 @@ class AppState extends ChangeNotifier {
           itemCount: 0,
           art: item?.displayArtwork,
         );
-    _openedPlaylistFromLibrary = _screen == Screen.library;
+    _openedPlaylistFromLibrary = screen == Screen.library;
     unawaited(
       _loadOpenPlaylist(
         seed,
@@ -2404,7 +2262,7 @@ class AppState extends ChangeNotifier {
   /// Opens [pl], entering its screen immediately while tracks load.
   /// Stale loads (closed or superseded meanwhile) are dropped.
   Future<void> openPlaylist(AccountPlaylist pl) {
-    _openedPlaylistFromLibrary = _screen == Screen.library;
+    _openedPlaylistFromLibrary = screen == Screen.library;
     return _loadOpenPlaylist(pl, browseId: pl.id);
   }
 
@@ -2420,33 +2278,9 @@ class AppState extends ChangeNotifier {
     final gen = ++_openPlaylistGen;
     final id = seed.id;
     if (id == '__liked') {
-      _openPlaylist = OpenPlaylist(seed, _stampLikedIds(List.of(_liked)));
-      _libraryLoading = false;
-      _enterPlaylistView();
-      // Panel enrichment (album/explicit/full credits — the library
-      // lists send none) refreshes the open view progressively via
-      // refreshTrackMeta, which republishes it per chunk.
-      unawaited(refreshTrackMeta());
-      unawaited(
-        _requestTrackRatings(_openPlaylist!.tracks, (statuses) {
-          final opened = _openPlaylist;
-          if (opened != null && opened.playlist.id == id) {
-            _openPlaylist = opened.copyWith(
-              tracks: opened.tracks
-                  .map(
-                    (t) => statuses[t.videoId] == null
-                        ? t
-                        : t.copyWith(rating: statuses[t.videoId]!),
-                  )
-                  .toList(),
-            );
-            _safeNotify();
-          }
-        }),
-      );
+      _openLikedPlaylist(seed);
       return;
     }
-    final api = _api;
     final current = _playlists.where((p) => p.id == id).firstOrNull ?? seed;
     _openPlaylist = OpenPlaylist(
       current,
@@ -2457,83 +2291,11 @@ class AppState extends ChangeNotifier {
     _libraryLoading = true;
     _enterPlaylistView();
     try {
-      PlaylistDetail? detail;
-      try {
-        final pageId = browseId.startsWith('PL') ? 'VL$browseId' : browseId;
-        detail = await _tube.playlist(pageId, params: params);
-      } catch (_) {}
-      var tracks = detail?.tracks ?? const <Track>[];
-      if (tracks.isEmpty) {
-        // Some mixes and read-only lists have no playlist shelf the
-        // page parser recognises; the row list still loads.
-        try {
-          tracks = await api.playlistTracks(id);
-        } catch (_) {}
-      }
-      // Empty credits and distributor placeholders alike resolve
-      // through InnerTube's watch-next panel.
-      final sparse = tracks
-          .where((t) => t.artists.isEmpty || hasGenericReleaseArtist(t))
-          .toList();
-      if (sparse.isNotEmpty) {
-        try {
-          final enriched = await _tube.enrichTracks(sparse);
-          final byId = {for (final t in enriched) t.videoId: t};
-          tracks = _stampKnownRatings(
-            tracks.map((t) => byId[t.videoId] ?? t).toList(),
-          );
-        } catch (_) {}
-      }
-      tracks = _stampLikedIds(tracks);
+      final detail = await _fetchPlaylistDetail(browseId, params);
+      final tracks = await _playlistTracks(detail, id);
       if (gen != _openPlaylistGen) return;
-      final author =
-          detail?.author ??
-          (current.owner.isEmpty
-              ? null
-              : ArtistRef(
-                  current.owner,
-                  browseId: current.ownerId.isEmpty
-                      ? null
-                      : current.ownerId,
-                ));
-      final playlist = AccountPlaylist(
-        id: id,
-        title: (detail?.title.trim().isNotEmpty ?? false)
-            ? detail!.title
-            : current.title,
-        itemCount: tracks.length,
-        art: detail?.displayArtwork ?? current.art,
-        arts: current.arts,
-        owner: author?.name ?? current.owner,
-        ownerId: author?.browseId ?? current.ownerId,
-      );
-      _openPlaylist = OpenPlaylist(
-        playlist,
-        tracks,
-        subtitle: (detail?.subtitle.trim().isNotEmpty ?? false)
-            ? detail!.subtitle
-            : initialSubtitle,
-        author: author,
-        editable: detail?.editable ?? _playlists.any((p) => p.id == id),
-      );
-      unawaited(
-        _requestTrackRatings(tracks, (statuses) {
-          final opened = _openPlaylist;
-          if (gen != _openPlaylistGen) return;
-          if (opened != null && opened.playlist.id == id) {
-            _openPlaylist = opened.copyWith(
-              tracks: opened.tracks
-                  .map(
-                    (t) => statuses[t.videoId] == null
-                        ? t
-                        : t.copyWith(rating: statuses[t.videoId]!),
-                  )
-                  .toList(),
-            );
-            _safeNotify();
-          }
-        }),
-      );
+      _publishPlaylist(detail, tracks, current, id, initialSubtitle);
+      _stampOpenPlaylistRatings(tracks, id, gen);
     } finally {
       // A stale load must not clear the new view's spinner.
       if (gen == _openPlaylistGen) {
@@ -2543,10 +2305,135 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Reads the playlist page, tolerating a failed request.
+  Future<PlaylistDetail?> _fetchPlaylistDetail(
+    String browseId,
+    String? params,
+  ) async {
+    try {
+      final pageId = browseId.startsWith('PL') ? 'VL$browseId' : browseId;
+      return await _tube.playlist(pageId, params: params);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The tracks of the open playlist, enriched and stamped.
+  ///
+  /// The playlist page carries the rows when it has one; some mixes and
+  /// read-only lists only answer through the library row list.
+  Future<List<Track>> _playlistTracks(PlaylistDetail? detail, String id) async {
+    var tracks = detail?.tracks ?? const <Track>[];
+    if (tracks.isEmpty) {
+      try {
+        tracks = await _api.playlistTracks(id);
+      } catch (_) {}
+    }
+    tracks = await _enrichPlaylistTracks(tracks);
+    return _stampLikedIds(tracks);
+  }
+
+  /// Resolves the missing credits of [tracks].
+  ///
+  /// Empty credits and distributor placeholders alike resolve through
+  /// InnerTube's watch-next panel.
+  Future<List<Track>> _enrichPlaylistTracks(List<Track> tracks) async {
+    final sparse = tracks
+        .where((t) => t.artists.isEmpty || hasGenericReleaseArtist(t))
+        .toList();
+    if (sparse.isEmpty) return tracks;
+    try {
+      final enriched = await _tube.enrichTracks(sparse);
+      final byId = {for (final t in enriched) t.videoId: t};
+      return _stampKnownRatings(
+        tracks.map((t) => byId[t.videoId] ?? t).toList(),
+      );
+    } catch (_) {
+      return tracks;
+    }
+  }
+
+  /// Publishes the loaded playlist as the open view.
+  void _publishPlaylist(
+    PlaylistDetail? detail,
+    List<Track> tracks,
+    AccountPlaylist current,
+    String id,
+    String initialSubtitle,
+  ) {
+    final author = detail?.author ?? _libraryOwner(current);
+    _openPlaylist = OpenPlaylist(
+      AccountPlaylist(
+        id: id,
+        title: (detail?.title.trim().isNotEmpty ?? false)
+            ? detail!.title
+            : current.title,
+        itemCount: tracks.length,
+        art: detail?.displayArtwork ?? current.art,
+        arts: current.arts,
+        owner: author?.name ?? current.owner,
+        ownerId: author?.browseId ?? current.ownerId,
+      ),
+      tracks,
+      subtitle: (detail?.subtitle.trim().isNotEmpty ?? false)
+          ? detail!.subtitle
+          : initialSubtitle,
+      author: author,
+      editable: detail?.editable ?? _playlists.any((p) => p.id == id),
+    );
+  }
+
+  /// The owner of a library list, when it names one.
+  ArtistRef? _libraryOwner(AccountPlaylist current) {
+    if (current.owner.isEmpty) return null;
+    return ArtistRef(
+      current.owner,
+      browseId: current.ownerId.isEmpty ? null : current.ownerId,
+    );
+  }
+
+  /// Stamps the resolved ratings into the open playlist.
+  void _stampOpenPlaylistRatings(List<Track> tracks, String id, int gen) {
+    unawaited(
+      _requestTrackRatings(tracks, (statuses) {
+        final opened = _openPlaylist;
+        if (gen != _openPlaylistGen) return;
+        if (opened != null && opened.playlist.id == id) {
+          _openPlaylist = opened.copyWith(
+            tracks: _applyRatingStatuses(opened.tracks, statuses),
+          );
+          _safeNotify();
+        }
+      }),
+    );
+  }
+
+  /// Opens the liked-songs list, which the library already holds.
+  void _openLikedPlaylist(AccountPlaylist seed) {
+    _openPlaylist = OpenPlaylist(seed, _stampLikedIds(List.of(_liked)));
+    _libraryLoading = false;
+    _enterPlaylistView();
+    // Panel enrichment (album/explicit/full credits — the library
+    // lists send none) refreshes the open view progressively via
+    // refreshTrackMeta, which republishes it per chunk.
+    unawaited(refreshTrackMeta());
+    unawaited(
+      _requestTrackRatings(_openPlaylist!.tracks, (statuses) {
+        final opened = _openPlaylist;
+        if (opened != null && opened.playlist.id == seed.id) {
+          _openPlaylist = opened.copyWith(
+            tracks: _applyRatingStatuses(opened.tracks, statuses),
+          );
+          _safeNotify();
+        }
+      }),
+    );
+  }
+
   /// Switches to the one playlist view. The library tab is the host;
   /// opening from anywhere else pushes the origin so Back returns there.
   void _enterPlaylistView() {
-    if (_screen != Screen.library) {
+    if (screen != Screen.library) {
       go(Screen.library);
     } else {
       _safeNotify();
@@ -2560,7 +2447,7 @@ class AppState extends ChangeNotifier {
     ++_openPlaylistGen;
     _openPlaylist = null;
     _libraryLoading = false;
-    if (!_openedPlaylistFromLibrary && _canGoBack) {
+    if (!_openedPlaylistFromLibrary && canGoBack) {
       _openedPlaylistFromLibrary = true;
       goBack();
     } else {
@@ -2694,14 +2581,6 @@ class AppState extends ChangeNotifier {
 
   bool get ratingsAvailable => _account != null || !_tube.auth.isAnonymous;
 
-  /// Rates the currently playing track. Returns whether either backend
-  /// accepted the change.
-  Future<bool> rateCurrent(RatingStatus rating) {
-    final id = _player.state.current?.videoId;
-    if (id == null) return Future.value(false);
-    return rateTrack(id, rating);
-  }
-
   /// Rates a track with a SnackBar when both backends refuse, so a dead
   /// like button is diagnosable instead of silently stuck.
   Future<void> rateTrackFeedback(
@@ -2735,17 +2614,15 @@ class AppState extends ChangeNotifier {
   /// failure result) if the backend rejects the change.
   Future<bool> rateTrack(String videoId, RatingStatus rating) async {
     if (rating == RatingStatus.unknown) return false;
-    final previous =
-        _ratingCache[videoId] ?? _likedRating(videoId) ?? RatingStatus.unknown;
-    final wasLiked =
-        _likedIds.contains(videoId) || _liked.any((t) => t.videoId == videoId);
+    final previous = _rating.knownRating(videoId) ?? RatingStatus.unknown;
+    final wasLiked = _rating.isLiked(videoId);
 
     // Optimistic UI: the tapped button responds immediately.
     _applyRating(videoId, rating);
     if (rating == RatingStatus.like) {
-      _likedIds.add(videoId);
+      _rating.addLikedId(videoId);
     } else {
-      _likedIds.remove(videoId);
+      _rating.removeLikedId(videoId);
     }
     _safeNotify();
 
@@ -2759,9 +2636,9 @@ class AppState extends ChangeNotifier {
       // Revert the optimistic change.
       _applyRating(videoId, previous);
       if (wasLiked) {
-        _likedIds.add(videoId);
+        _rating.addLikedId(videoId);
       } else {
-        _likedIds.remove(videoId);
+        _rating.removeLikedId(videoId);
       }
       _safeNotify();
       return false;
@@ -2786,7 +2663,7 @@ class AppState extends ChangeNotifier {
   /// view (home rows, detail, open playlist), notifying listeners.
   void _applyRating(String videoId, RatingStatus rating) {
     _player.updateTrackRating(videoId, rating);
-    _ratingCache[videoId] = rating;
+    _rating.setCachedRating(videoId, rating);
     applyRatingToViews(videoId, rating);
     // Home rows keep their own track copies: restamp them from the cache
     // so the tapped like repaints everywhere, not just detail views.
@@ -2796,8 +2673,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Pushes a new rating into the visible detail and open-playlist track
-  /// lists so like buttons update where the user tapped them. Mirrors
-  /// Kotlin `applyRatingToViews`.
+  /// lists so like buttons update where the user tapped them.
   void applyRatingToViews(String videoId, RatingStatus rating) {
     Track update(Track t) =>
         t.videoId == videoId ? t.copyWith(rating: rating) : t;
@@ -2857,8 +2733,8 @@ class AppState extends ChangeNotifier {
   }
 
   /// Fetches like-state for detail album/playlist tracks and stamps it
-  /// into the visible page (guarded by the detail generation). Kotlin
-  /// requests detail-track ratings the same way; without this pass liked
+  /// into the visible page (guarded by the detail generation). Without
+  /// this pass liked
   /// songs never highlight on detail pages.
   void _stampDetailRatings(int gen, List<Track> tracks) {
     if (tracks.isEmpty) return;
@@ -2901,7 +2777,7 @@ class AppState extends ChangeNotifier {
     if (queue.isEmpty) return;
     final local = <String, RatingStatus>{};
     for (final t in queue) {
-      final known = _ratingCache[t.videoId] ?? _likedRating(t.videoId);
+      final known = _rating.knownRating(t.videoId);
       if (known != null && known != t.rating) local[t.videoId] = known;
     }
     if (local.isNotEmpty) _player.updateTrackRatings(local);
@@ -2920,7 +2796,7 @@ class AppState extends ChangeNotifier {
     for (final t in queue) {
       final id = t.videoId;
       if (id.isEmpty || !seen.add(id)) continue;
-      final needsRating = (_ratingCache[id] ?? _likedRating(id)) == null;
+      final needsRating = _rating.knownRating(id) == null;
       final needsDuration =
           t.durationSec <= 0 &&
           !_knownDurations.containsKey(id) &&
@@ -2944,7 +2820,7 @@ class AppState extends ChangeNotifier {
       final rating = e.value.rating;
       if (rating != RatingStatus.unknown &&
           _trustNetworkRating(e.key, rating)) {
-        _ratingCache[e.key] = rating;
+        _rating.setCachedRating(e.key, rating);
       }
     }
     final live = _player.state.queue.map((t) => t.videoId).toSet();
@@ -2956,7 +2832,7 @@ class AppState extends ChangeNotifier {
       if (secs != null && secs > 0 && t.durationSec <= 0) {
         durations[t.videoId] = secs;
       }
-      final known = _ratingCache[t.videoId];
+      final known = _rating.cachedRating(t.videoId);
       if (known != null && known != t.rating) ratings[t.videoId] = known;
     }
     if (durations.isNotEmpty) _player.updateTrackDurations(durations);
@@ -2976,7 +2852,7 @@ class AppState extends ChangeNotifier {
     final cached = <String, RatingStatus>{};
     final missing = <String>[];
     for (final id in pending) {
-      final known = _ratingCache[id] ?? _likedRating(id);
+      final known = _rating.knownRating(id);
       if (known != null) {
         cached[id] = known;
       } else {
@@ -2992,97 +2868,68 @@ class AppState extends ChangeNotifier {
           for (final e in fetched.entries)
             if (_trustNetworkRating(e.key, e.value)) e.key: e.value,
         };
-        _ratingCache.addAll(trusted);
+        _rating.setCachedRatings(trusted);
         cached.addAll(trusted);
       } catch (_) {}
     }
     onComplete(cached);
   }
 
+  /// Applies the resolved [statuses] to [tracks], leaving the tracks
+  /// without a known status untouched.
+  List<Track> _applyRatingStatuses(
+    List<Track> tracks,
+    Map<String, RatingStatus> statuses,
+  ) {
+    return tracks
+        .map(
+          (track) => statuses[track.videoId] == null
+              ? track
+              : track.copyWith(rating: statuses[track.videoId]!),
+        )
+        .toList();
+  }
+
   /// Public like-state check used by row buttons so they reflect
   /// locally known likes even when the track object's rating is stale.
-  bool isLiked(String videoId) => _likedRating(videoId) == RatingStatus.like;
+  bool isLiked(String videoId) => _rating.isLiked(videoId);
 
-  RatingStatus? _likedRating(String videoId) =>
-      (_likedIds.contains(videoId) || _liked.any((t) => t.videoId == videoId))
-      ? RatingStatus.like
-      : null;
+  /// Whether [videoId] belongs to the signed-in liked tracks.
+  bool _isLikedTrack(String videoId) => _liked.any((t) => t.videoId == videoId);
 
   /// Whether a network-fetched rating may be applied. Logged-out InnerTube
   /// reads confidently report INDIFFERENT for liked songs; those must
   /// never clobber locally known LIKE state (cache, liked ids/list).
   /// Explicit LIKE/DISLIKE always applies (it requires a real session).
-  bool _trustNetworkRating(String videoId, RatingStatus fetched) {
-    if (fetched == RatingStatus.like || fetched == RatingStatus.dislike) {
-      return true;
-    }
-    if (fetched != RatingStatus.indifferent) return false;
-    final local = _ratingCache[videoId] ?? _likedRating(videoId);
-    return local != RatingStatus.like;
-  }
+  bool _trustNetworkRating(String videoId, RatingStatus fetched) =>
+      _rating.trustNetworkRating(videoId, fetched);
 
   /// Applies locally known like-state (rating cache, then liked ids/list)
   /// onto [t]. Explicit cache entries always win, so unlikes/relikes
-  /// repaint correctly even when the track object predates them.
-  Track _stampKnownRating(Track t) {
-    final known = _ratingCache[t.videoId] ?? _likedRating(t.videoId);
-    if (known == null || known == t.rating) return t;
-    return t.copyWith(rating: known);
-  }
+  /// repaint correctly even when the track object's rating is stale.
+  Track _stampKnownRating(Track t) => _rating.stampKnownRating(t);
 
   /// Maps [_stampKnownRating] over a track list.
   List<Track> _stampKnownRatings(List<Track> tracks) =>
-      tracks.map(_stampKnownRating).toList();
+      _rating.stampKnownRatings(tracks);
 
   /// Maps [_stampKnownRating] over the song items of every home shelf.
-  List<Shelf> _stampShelves(List<Shelf> shelves) => [
-    for (final s in shelves)
-      Shelf(s.title, [
-        for (final item in s.items)
-          item is SongItem ? SongItem(_stampKnownRating(item.track)) : item,
-      ], continuation: s.continuation),
-  ];
+  List<Shelf> _stampShelves(List<Shelf> shelves) =>
+      _rating.stampShelves(shelves);
 
-  List<Track> _stampLikedIds(List<Track> tracks) => _stampKnownRatings(tracks);
+  List<Track> _stampLikedIds(List<Track> tracks) =>
+      _rating.stampKnownRatings(tracks);
 
   Map<String, List<ShelfItem>> _stampSearchSections(
     Map<String, List<ShelfItem>> sections,
-  ) {
-    return sections.map(
-      (key, items) => MapEntry(
-        key,
-        items
-            .map(
-              (item) => item is SongItem
-                  ? SongItem(_stampKnownRating(item.track))
-                  : item,
-            )
-            .toList(),
-      ),
-    );
-  }
+  ) => _rating.stampSearchSections(sections);
 
-  /// Refreshes the account liked-ids set and restamps visible surfaces.
-  Future<void> refreshLikedIds() async {
-    final api = _api;
-    try {
-      final ids = await api.likedVideoIds();
-      _likedIds = ids;
-      search = SearchUiState(
-        query: search.query,
-        sections: _stampSearchSections(search.sections),
-      );
-      // Liked ids are stamp input for Up Next too: repaint the queue
-      // from local knowledge without waiting for a queue change.
-      final local = <String, RatingStatus>{};
-      for (final t in _player.state.queue) {
-        if (_likedIds.contains(t.videoId) && t.rating != RatingStatus.like) {
-          local[t.videoId] = RatingStatus.like;
-        }
-      }
-      if (local.isNotEmpty) _player.updateTrackRatings(local);
-      _safeNotify();
-    } catch (_) {}
+  /// Records the rating carried by a freshly resolved track, when the
+  /// network rating may be trusted over the locally known state.
+  void _recordEnrichedRating(Track track) {
+    if (track.rating == RatingStatus.unknown) return;
+    if (!_rating.trustNetworkRating(track.videoId, track.rating)) return;
+    _rating.setCachedRating(track.videoId, track.rating);
   }
 
   /// Re-resolves the current track's rating when the account changes.
@@ -3094,7 +2941,7 @@ class AppState extends ChangeNotifier {
       if (rating != RatingStatus.unknown &&
           _trustNetworkRating(current.videoId, rating)) {
         _player.updateTrackRating(current.videoId, rating);
-        _ratingCache[current.videoId] = rating;
+        _rating.setCachedRating(current.videoId, rating);
       }
     } catch (_) {}
   }
@@ -3172,7 +3019,8 @@ class AppState extends ChangeNotifier {
     if (track != null && key != null && key.isNotEmpty) {
       final cached = _lyricsCache['$key:${source.name}'];
       if (cached != null) {
-        final otherKey = '$key:${source == LyricsSource.lrclib ? 'ytmusic' : 'lrclib'}';
+        final otherKey =
+            '$key:${source == LyricsSource.lrclib ? 'ytmusic' : 'lrclib'}';
         final other = _lyricsCache[otherKey];
         _lyrics = cached.isNotEmpty ? cached : (other ?? cached);
         _safeNotify();
@@ -3213,6 +3061,7 @@ class AppState extends ChangeNotifier {
   Future<void> _fetchLyricsFor(String key) async {
     final current = _player.state.current;
     if (current == null || current.videoId != key) return;
+
     final selected = lyricsSource;
     final lrclibKey = '$key:lrclib';
     final ytmKey = '$key:ytmusic';
@@ -3222,12 +3071,11 @@ class AppState extends ChangeNotifier {
     // Both providers already cached: switching the toggle is instant.
     if (cachedLrclib != null && cachedYtm != null) {
       if (_player.state.current?.videoId == key) {
-        _lyrics = selected == LyricsSource.lrclib
-            ? (cachedLrclib.isNotEmpty ? cachedLrclib : cachedYtm)
-            : (cachedYtm.isNotEmpty ? cachedYtm : cachedLrclib);
-        _lyricsError = false;
-        _lyricsLoading = false;
-        _safeNotify();
+        _applyLyrics(
+          selected == LyricsSource.lrclib
+              ? (cachedLrclib.isNotEmpty ? cachedLrclib : cachedYtm)
+              : (cachedYtm.isNotEmpty ? cachedYtm : cachedLrclib),
+        );
       }
       return;
     }
@@ -3237,55 +3085,27 @@ class AppState extends ChangeNotifier {
     _lyricsError = false;
     _safeNotify();
     try {
-      // Fetch the missing provider(s). When one is already cached we
-      // still kick the other in parallel so both end up cached and a
-      // later toggle never waits on the network.
-      Future<List<LyricLine>> lrclibFuture;
-      Future<String?> albumFuture;
-      if (cachedLrclib != null) {
-        lrclibFuture = Future.value(cachedLrclib);
-        albumFuture = Future.value(null);
-      } else {
-        final pending = fetchLyricsAndAlbum(
-          current.artistNames(),
-          current.title,
-          current.album?.name ?? '',
-          current.durationSec,
-        );
-        lrclibFuture = pending.then((r) => r.lines).catchError(
-          (_) => <LyricLine>[],
-        );
-        albumFuture = pending.then((r) => r.album).catchError((_) => null);
-      }
-      final ytmFuture = cachedYtm != null
-          ? Future.value(cachedYtm)
-          : fetchYtmLyrics(key).catchError((_) => <LyricLine>[]);
-
-      final results = await Future.wait<Object?>([
-        lrclibFuture.then<Object?>((r) => r),
-        albumFuture.then<Object?>((r) => r),
-        ytmFuture.then<Object?>((r) => r),
-      ]);
+      final fetched = await _fetchLyricsProviders(
+        current,
+        cachedLrclib,
+        cachedYtm,
+        lrclibKey,
+        ytmKey,
+      );
       if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
 
-      final lrclibLines = (results[0] is List<LyricLine>)
-          ? results[0] as List<LyricLine>
-          : <LyricLine>[];
-      final album = results[1] as String?;
-      final ytmLines = (results[2] is List<LyricLine>)
-          ? results[2] as List<LyricLine>
-          : <LyricLine>[];
-
-      if (cachedLrclib == null) _cacheLyrics(lrclibKey, lrclibLines);
-      if (cachedYtm == null) _cacheLyrics(ytmKey, ytmLines);
-      if (album != null && album.isNotEmpty) {
-        _player.updateTrackAlbum(key, album);
+      if (cachedLrclib == null) _cacheLyrics(lrclibKey, fetched.lrclibLines);
+      if (cachedYtm == null) _cacheLyrics(ytmKey, fetched.ytmLines);
+      if (fetched.album != null && fetched.album!.isNotEmpty) {
+        _player.updateTrackAlbum(key, fetched.album!);
       }
-      final selectedLines =
-          selected == LyricsSource.lrclib ? lrclibLines : ytmLines;
-      final fallbackLines =
-          selected == LyricsSource.lrclib ? ytmLines : lrclibLines;
-      _lyrics = selectedLines.isNotEmpty ? selectedLines : fallbackLines;
+      final chosen = selected == LyricsSource.lrclib
+          ? fetched.lrclibLines
+          : fetched.ytmLines;
+      final fallback = selected == LyricsSource.lrclib
+          ? fetched.ytmLines
+          : fetched.lrclibLines;
+      _applyLyrics(chosen.isNotEmpty ? chosen : fallback);
     } catch (_) {
       _lyricsError = true;
       if (!_disposed) notifyListeners();
@@ -3299,6 +3119,65 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Fetches the missing lyric providers for [current], returning cached
+  /// values for any provider already in [cachedLrclib]/[cachedYtm].
+  /// Both providers run in parallel so a later toggle never waits on the
+  /// network. Failures degrade to empty/unknown.
+  Future<
+    ({List<LyricLine> lrclibLines, List<LyricLine> ytmLines, String? album})
+  >
+  _fetchLyricsProviders(
+    Track current,
+    List<LyricLine>? cachedLrclib,
+    List<LyricLine>? cachedYtm,
+    String lrclibKey,
+    String ytmKey,
+  ) async {
+    Future<List<LyricLine>> lrclibFuture;
+    Future<String?> albumFuture;
+    if (cachedLrclib != null) {
+      lrclibFuture = Future.value(cachedLrclib);
+      albumFuture = Future.value(null);
+    } else {
+      final pending = fetchLyricsAndAlbum(
+        current.artistNames(),
+        current.title,
+        current.album?.name ?? '',
+        current.durationSec,
+      );
+      lrclibFuture = pending
+          .then((r) => r.lines)
+          .catchError((_) => <LyricLine>[]);
+      albumFuture = pending.then((r) => r.album).catchError((_) => null);
+    }
+    final ytmFuture = cachedYtm != null
+        ? Future.value(cachedYtm)
+        : fetchYtmLyrics(current.videoId).catchError((_) => <LyricLine>[]);
+
+    final results = await Future.wait<Object?>([
+      lrclibFuture.then<Object?>((r) => r),
+      albumFuture.then<Object?>((r) => r),
+      ytmFuture.then<Object?>((r) => r),
+    ]);
+    return (
+      lrclibLines: results[0] is List<LyricLine>
+          ? results[0] as List<LyricLine>
+          : <LyricLine>[],
+      ytmLines: results[2] is List<LyricLine>
+          ? results[2] as List<LyricLine>
+          : <LyricLine>[],
+      album: results[1] as String?,
+    );
+  }
+
+  /// Applies [lines] as the current lyrics, with cache/error/loading state.
+  void _applyLyrics(List<LyricLine> lines) {
+    _lyrics = lines;
+    _lyricsError = false;
+    _lyricsLoading = false;
+    _safeNotify();
+  }
+
   /// Retries the current track's lyrics fetch after a failure.
   void retryLyrics() {
     final key = _player.state.current?.videoId;
@@ -3307,8 +3186,8 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Cover palette bands for the Now Playing backdrop (Kotlin
-  /// `rememberCoverPalette`); empty until the artwork loads.
+  /// Cover palette bands for the Now Playing backdrop; empty until the
+  /// artwork loads.
   List<Color> _coverPalette = [];
   List<Color> get coverPalette => _coverPalette;
   final Map<String, List<Color>> _paletteCache = {};
@@ -3590,7 +3469,7 @@ class AppState extends ChangeNotifier {
     // Paint locally known like-state first: queue copies from search,
     // radio or shelves often carry unknown ratings for liked songs, and
     // the network read below may fail while the answer is known locally.
-    final known = _ratingCache[key] ?? _likedRating(key);
+    final known = _rating.knownRating(key);
     if (known != null &&
         _player.state.current?.videoId == key &&
         _player.state.current!.rating == RatingStatus.unknown) {
@@ -3623,7 +3502,7 @@ class AppState extends ChangeNotifier {
               _trustNetworkRating(key, rating) &&
               _player.state.current?.videoId == key) {
             _player.updateTrackRating(key, rating);
-            _ratingCache[key] = rating;
+            _rating.setCachedRating(key, rating);
           }
         } catch (_) {}
       }
@@ -3647,7 +3526,7 @@ class AppState extends ChangeNotifier {
 
   /// Restores the persisted cookie session, if any.
   Future<void> loadAuth() async {
-    _loadSearchHistory();
+    loadSearchHistory();
     try {
       // The credentials live in the platform secret store; the legacy
       // plain-text file is migrated (and deleted) on the first run.
@@ -3665,11 +3544,14 @@ class AppState extends ChangeNotifier {
         return;
       }
       final savedToken = config.get('sessionToken');
+      final s = session;
       _tube.auth = AuthSession(
-        cookie: session.cookie,
-        sapisidHash: session.sapisidHash,
+        cookie: s.cookie,
+        sapisidHash: s.sapisidHash,
+        accessToken: s.accessToken,
         sessionToken: savedToken.isNotEmpty ? savedToken : null,
       );
+      _streamResolver.cookie = _tube.auth.cookie;
       _authLoaded = true;
       _safeNotify();
       unawaited(_refreshAccountAfterAuth());
@@ -3769,13 +3651,17 @@ class AppState extends ChangeNotifier {
       try {
         final token = await _tube.fetchSessionToken();
         if (token != null) {
+          final s = session;
           _tube.auth = AuthSession(
-            cookie: session.cookie,
-            sapisidHash: session.sapisidHash,
+            cookie: s.cookie,
+            sapisidHash: s.sapisidHash,
+            accessToken: s.accessToken,
             sessionToken: token,
           );
         }
       } catch (_) {}
+      await _saveAuth();
+      _streamResolver.cookie = _tube.auth.cookie;
       await _saveAuth();
       unawaited(_refreshAvatar());
       unawaited(loadLibrary());
@@ -3792,52 +3678,12 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Chromium-family profiles on this device, for the
-  /// one-click cookie import (see [loginFromBrowser]).
-  List<BrowserProfile> get browserProfiles => BrowserCookies.detectProfiles();
-
-  /// Signs in by importing the YouTube cookie straight from a
-  /// browser's own store (headless browser + DevTools protocol,
-  /// the same idea as `yt-dlp --cookies-from-browser`), instead
-  /// of the user copying a Cookie header out of DevTools.
-  ///
-  /// [profile] pins one browser/profile; without it the first
-  /// detected profile is used. Returns true on success; every
-  /// failure degrades to a [loginDetail] hint so the user can
-  /// fall back to pasting the cookie manually.
-  Future<bool> loginFromBrowser({BrowserProfile? profile}) async {
-    final detected = BrowserCookies.detectProfiles();
-    final source = profile ?? (detected.isEmpty ? null : detected.first);
-    if (source == null) {
-      _loginDetail =
-          'No Chromium-family browser profile found on '
-          'this device.';
-      _safeNotify();
-      return false;
-    }
-    _loginBusy = true;
-    _loginDetail = null;
-    _safeNotify();
-    try {
-      final header = await BrowserCookies.importYouTubeCookie(source);
-      if (header == null || header.isEmpty) {
-        _loginDetail =
-            'No signed-in YouTube session found in ${source.label}.\n'
-            'Log into music.youtube.com in that browser first.';
-        return false;
-      }
-      return await login(header);
-    } finally {
-      _loginBusy = false;
-      _safeNotify();
-    }
-  }
-
   /// Signs out everywhere: the session, the account display and the
   /// library rows.
   void logout() {
     _tube.auth = const AuthSession.anonymous();
     _tube.authProvider = null;
+    _streamResolver.cookie = null;
     _account = null;
     _accountAvatar = null;
     _clearLibraryLists();
@@ -3860,8 +3706,8 @@ class AppState extends ChangeNotifier {
   /// session's leftovers as its own.
   void _clearLibraryLists() {
     _liked = [];
-    _likedIds = {};
-    _ratingCache.clear();
+    _rating.setLikedIds({});
+    _rating.clearCachedRatings();
     _playlists = [];
     _activity = [];
     _discover = [];
@@ -3883,8 +3729,9 @@ class AppState extends ChangeNotifier {
     _tube.auth = const AuthSession.anonymous();
     config.remove('cookie');
     config.remove('sapisidHash');
+    _streamResolver.cookie = null;
     config.remove('sessionToken');
-    _ratingCache.clear();
+    _rating.clearCachedRatings();
     final current = _player.state.current;
     if (current != null) {
       _player.updateTrackRating(current.videoId, RatingStatus.unknown);
@@ -4046,8 +3893,7 @@ class AppState extends ChangeNotifier {
   /// creator rows where InnerTube only exposes wide banners.
   ///
   /// Prefers the channel thumbnail (true square avatar) and falls back
-  /// to InnerTube artist imagery (square preferred, largest otherwise),
-  /// mirroring Kotlin `resolveAuthorAvatar`.
+  /// to InnerTube artist imagery (square preferred, largest otherwise).
   Future<String?> artistAvatar(String channelId) async {
     if (channelId.isEmpty) return null;
     final cached = _artistAvatarCache[channelId];
@@ -4073,8 +3919,8 @@ class AppState extends ChangeNotifier {
     return url;
   }
 
-  /// Whether the InnerTube id is a real artist page (cached), mirroring
-  /// Kotlin `isArtistPage`: a full artist response must resolve.
+  /// Whether the InnerTube id is a real artist page (cached): a full
+  /// artist response must resolve.
   Future<bool> isArtistPage(String browseId) async {
     if (browseId.isEmpty || !browseId.startsWith('UC')) return false;
     final cached = _artistPageCache[browseId];
@@ -4107,19 +3953,6 @@ class AppState extends ChangeNotifier {
       return false;
     }
     return isArtistPage(browseId);
-  }
-
-  /// Primes the subscription state for [channelId].
-  Future<void> refreshSubscription(String channelId) async {
-    final api = _api;
-    try {
-      if (await api.isSubscribed(channelId)) {
-        _subscribed.add(channelId);
-      } else {
-        _subscribed.remove(channelId);
-      }
-      _safeNotify();
-    } catch (_) {}
   }
 }
 

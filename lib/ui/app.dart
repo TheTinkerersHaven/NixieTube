@@ -1,5 +1,5 @@
-// Application shell ported from Kotlin `App`: navigation rail, screen
-// body, mini player bar, Now Playing overlay, and playlist dialog.
+// Application shell: navigation rail, screen body, mini player bar,
+// Now Playing overlay, and playlist dialog.
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
@@ -17,6 +17,7 @@ import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
 import 'widgets/player_bar.dart';
 import 'widgets/playlist_dialog.dart';
+import '../sys/updater.dart' show UpdateInfo;
 
 /// Single-window shell with rail navigation and overlays.
 class AppShell extends StatelessWidget {
@@ -104,6 +105,7 @@ class AppShell extends StatelessWidget {
                               children: const [
                                 _SessionBanner(),
                                 _AudioBackendBanner(),
+                                _UpdateBanner(),
                               ],
                             ),
                           ),
@@ -209,11 +211,15 @@ class _SessionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = context.read<AppState>();
     final screen = context.select<AppState, Screen>((s) => s.screen);
     final expired = context.select<AppState, bool>(
       (s) => s.hasCookieSession && !s.loginValid,
     );
-    if (screen == Screen.settings || !expired) {
+    final dismissed = context.select<AppState, bool>(
+      (s) => s.sessionBannerDismissed,
+    );
+    if (screen == Screen.settings || !expired || dismissed) {
       return const SizedBox.shrink();
     }
     final scheme = Theme.of(context).colorScheme;
@@ -238,11 +244,20 @@ class _SessionBanner extends StatelessWidget {
             ),
           ),
           M3ETextButton(
-            onPressed: () => context.read<AppState>().go(Screen.settings),
+            onPressed: () => state.go(Screen.settings),
             child: Text(
               'Sign in',
               style: TextStyle(color: scheme.onErrorContainer),
             ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.close_rounded),
+            color: scheme.onErrorContainer,
+            iconSize: 20,
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Dismiss',
+            onPressed: () => state.dismissSessionBanner(),
           ),
         ],
       ),
@@ -284,6 +299,72 @@ class _AudioBackendBanner extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyMedium
                   ?.copyWith(color: scheme.onErrorContainer),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Persistent notice that a newer release is available on GitHub.
+///
+/// Shown once the startup update check completes; hidden while it is
+/// in flight and when nothing is available. Tapping "Settings" opens
+/// the App updates section where the new AppImage can be installed
+/// in place.
+class _UpdateBanner extends StatelessWidget {
+  const _UpdateBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+    final info = context.select<AppState, UpdateInfo?>(
+      (s) => s.updateInfo,
+    );
+    final checking = context.select<AppState, bool>((s) => s.updateChecking);
+    final checked = context.select<AppState, bool>((s) => s.updateChecked);
+    final dismissed = context.select<AppState, bool>(
+      (s) => s.updateBannerDismissed,
+    );
+    if (checking || !checked || info == null || dismissed) {
+      return const SizedBox.shrink();
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: scheme.primaryContainer,
+      child: Row(
+        children: [
+          Icon(
+            Icons.download_rounded,
+            size: 20,
+            color: scheme.onPrimaryContainer,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Version ${info.version} is available — '
+              'open Settings to install.',
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: scheme.onPrimaryContainer),
+            ),
+          ),
+          M3ETextButton(
+            onPressed: () => state.go(Screen.settings),
+            child: Text(
+              'Settings',
+              style: TextStyle(color: scheme.onPrimaryContainer),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.close_rounded),
+            color: scheme.onPrimaryContainer,
+            iconSize: 20,
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Dismiss',
+            onPressed: () => state.dismissUpdateBanner(),
           ),
         ],
       ),
@@ -442,12 +523,9 @@ class _ErrorWatcherState extends State<_ErrorWatcher> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           messenger.showSnackBar(
-            const SnackBar(
+            SnackBar(
               behavior: SnackBarBehavior.floating,
-              content: Text(
-                'Playback failed — check your network connection or '
-                'restart the app.',
-              ),
+              content: Text(error),
             ),
           );
         });

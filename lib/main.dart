@@ -1,8 +1,9 @@
 import 'dart:async' show unawaited;
 import 'dart:io' show Platform, exit;
 
-import 'package:material_ui/material_ui.dart';
+import 'package:logging/logging.dart';
 import 'package:dynamic_color/dynamic_color.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:provider/provider.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -67,13 +68,15 @@ void main(List<String> args) {
   // Configure adaptive image cache based on available memory.
   _configureImageCache();
   JustAudioMediaKit.ensureInitialized();
+  // Route stream_resolver diagnostics to stdout so yt-dlp fallback,
+  // cookie file writes, and exit codes are visible in the console.
+  Logger.root.level = Level.ALL;
+  Logger.root.onRecord.listen((rec) {
+    print('${rec.time} [${rec.level.name}] ${rec.loggerName}: ${rec.message}');
+  });
   final config = SysConfig();
   final tube = InnerTube();
-  // The resolver and the engine factory stay reachable so the player
-  // can restart its backend stack (fresh HTTP pool, visitor id and
-  // native handle) when a stream-URL family keeps dying — the
-  // in-process equivalent of the app restart that fixes it.
-  final streamResolver = StreamResolver();
+  final streamResolver = StreamResolver(cookie: tube.auth.cookie);
   final player = PlayerController(
     engine: JustAudioPlayerEngine(),
     tube: tube,
@@ -89,6 +92,7 @@ void main(List<String> args) {
     config: config,
     openUrl: (url) =>
         launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+    streamResolver: streamResolver,
   );
 
   // Desktop integrations (best-effort; failures never block the UI).
@@ -146,6 +150,7 @@ void main(List<String> args) {
 
   unawaited(player.restoreSession());
   unawaited(state.loadAuth());
+  unawaited(state.checkForUpdates());
   unawaited(state.loadHome());
   runApp(
     NixieTubeApp(state: state, mpris: mpris, discord: discord, lastfm: lastfm),
