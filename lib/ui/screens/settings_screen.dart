@@ -1,4 +1,4 @@
-// Settings screen ported from Kotlin `Settings.kt`: account cards,
+// Settings screen: account cards,
 // listening-history toggle, accessibility options, and desktop
 // integration toggles.
 //
@@ -12,22 +12,37 @@ import 'dart:io' show Platform;
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
-import 'package:silky_scroll/silky_scroll.dart';
 
-import '../../sys/browser_cookies.dart';
 import '../../sys/discord.dart';
 import '../../sys/lastfm.dart';
 import '../../sys/mpris.dart';
 import '../../sys/sys_config.dart';
+import '../../sys/updater.dart';
 import '../../sys/version.dart';
 import '../app_state.dart';
 import '../theme.dart';
+import '../widgets/screen_list.dart';
 import '../widgets/browser_login_dialog.dart';
 import '../widgets/lastfm_auth_actions.dart';
 
 /// Account, playback, accessibility and app settings.
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  final _accountKey = GlobalKey();
+  final _playbackKey = GlobalKey();
+  final _appearanceKey = GlobalKey();
+  final _accessibilityKey = GlobalKey();
+  final _integrationsKey = GlobalKey();
+  final _lastfmKey = GlobalKey();
+  final _updatesKey = GlobalKey();
+  final _debugKey = GlobalKey();
+  final _setupKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
@@ -47,137 +62,248 @@ class SettingsScreen extends StatelessWidget {
       (s) => s.config.underlineLinks,
     );
     final state = context.read<AppState>();
-    return SilkyListView(
-      scrollSpeed: 1.5,
-      silkyScrollDuration: const Duration(milliseconds: 700),
-      animationCurve: Curves.easeOutQuart,
-      padding: const EdgeInsets.fromLTRB(
-        screenPadding,
-        screenPadding,
-        screenPadding,
-        screenPadding + playerBarClearance,
-      ),
+    return screenList(
       children: [
         Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 16),
-        const _SectionTitle('Account'),
-        const SizedBox(height: 8),
-        _SettingsCard(child: const _AccountCard()),
-        const SizedBox(height: 24),
-        const _SectionTitle('Playback'),
-        const SizedBox(height: 8),
-        _SettingsCard(
-          child: _ToggleRow(
-            title: 'Report listening history',
-            subtitle:
-                'Send watchtime beacons so plays appear in your '
-                'YouTube history.',
-            value: reportPlayback,
-            onChanged: (v) {
-              state.config.setBool('reportPlayback', v);
-              state.refreshConfig();
-            },
-          ),
-        ),
-        const SizedBox(height: 24),
-        const _SectionTitle('Appearance'),
-        const SizedBox(height: 8),
-        _SettingsCard(child: const _ThemeCard()),
-        const SizedBox(height: 24),
-        const _SectionTitle('Accessibility'),
-        const SizedBox(height: 8),
-        _SettingsCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _ToggleRow(
-                title: 'High contrast',
-                subtitle:
-                    'Brighter text, stronger borders and more '
-                    'distinct surfaces.',
-                value: highContrast,
-                onChanged: (v) {
-                  state.config.highContrast = v;
-                  state.refreshConfig();
-                },
+              Container(
+                key: _accountKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Account',
+                      subtitle: 'Sign in to YouTube Music and manage your session.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(child: const _AccountCard()),
+                  ],
+                ),
               ),
-              const Divider(),
-              _ToggleRow(
-                title: 'Reduce motion',
-                subtitle:
-                    'Freezes the shimmer, crossfades and slide '
-                    'transitions.',
-                value: reducedMotion,
-                onChanged: (v) {
-                  state.config.reducedMotion = v;
-                  state.refreshConfig();
-                },
+              const SizedBox(height: 24),
+              Container(
+                key: _playbackKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Playback',
+                      subtitle: 'Listening history reporting.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(
+                      child: _ToggleRow(
+                        title: 'Report listening history',
+                        subtitle:
+                            'Send watchtime beacons so plays appear in your '
+                            'YouTube history.',
+                        value: reportPlayback,
+                        onChanged: (v) {
+                          state.config.setBool('reportPlayback', v);
+                          state.refreshConfig();
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const Divider(),
-              _ToggleRow(
-                title: 'Underline links',
-                subtitle:
-                    'Underlines tappable links in the info tab. '
-                    'Off keeps them plain primary-colored text.',
-                value: underlineLinks,
-                onChanged: (v) {
-                  state.config.underlineLinks = v;
-                  state.refreshConfig();
-                },
+              const SizedBox(height: 24),
+              Container(
+                key: _appearanceKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Appearance',
+                      subtitle: 'Color source, seed and manual overrides.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(child: const _ThemeCard()),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                key: _accessibilityKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Accessibility',
+                      subtitle: 'Contrast, motion and link styling.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _ToggleRow(
+                            title: 'High contrast',
+                            subtitle:
+                                'Brighter text, stronger borders and more '
+                                'distinct surfaces.',
+                            value: highContrast,
+                            onChanged: (v) {
+                              state.config.highContrast = v;
+                              state.refreshConfig();
+                            },
+                          ),
+                          const Divider(),
+                          _ToggleRow(
+                            title: 'Reduce motion',
+                            subtitle:
+                                'Freezes the shimmer, crossfades and slide '
+                                'transitions.',
+                            value: reducedMotion,
+                            onChanged: (v) {
+                              state.config.reducedMotion = v;
+                              state.refreshConfig();
+                            },
+                          ),
+                          const Divider(),
+                          _ToggleRow(
+                            title: 'Underline links',
+                            subtitle:
+                                'Underlines tappable links in the info tab. '
+                                'Off keeps them plain primary-colored text.',
+                            value: underlineLinks,
+                            onChanged: (v) {
+                              state.config.underlineLinks = v;
+                              state.refreshConfig();
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                key: _integrationsKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Desktop integrations',
+                      subtitle: 'MPRIS media keys and Discord Rich Presence.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(child: const _IntegrationsCard()),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                key: _lastfmKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Last.fm scrobbling',
+                      subtitle: 'Scrobble plays and manage credentials.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(child: const _LastFmCard()),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                key: _updatesKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'App updates',
+                      subtitle: 'Check for and install new releases.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(child: const _AppUpdatesCard()),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                key: _debugKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Debug',
+                      subtitle: 'Cache and diagnostic actions.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(
+                      child: _DebugCard(
+                        onClearArtwork: () {
+                          state.clearArtworkCache();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Artwork cache cleared.')),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                key: _setupKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionTitle(
+                      'Setup',
+                      subtitle: 'Run the first-run wizard again.',
+                    ),
+                    const SizedBox(height: 8),
+                    _SettingsCard(child: const _OnboardingCard()),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                '${_shortVersion(appVersionLabel)} - build ${_buildNumber(appVersionLabel)}',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
+              Text(
+                'Made with ♥  by TheTinkerersHaven :3',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ],
-          ),
-        ),
-        const SizedBox(height: 24),
-        const _SectionTitle('Desktop integrations'),
-        const SizedBox(height: 8),
-        _SettingsCard(child: const _IntegrationsCard()),
-        const SizedBox(height: 24),
-        const _SectionTitle('Last.fm scrobbling'),
-        const SizedBox(height: 8),
-        _SettingsCard(child: const _LastFmCard()),
-        const SizedBox(height: 24),
-        const _SectionTitle('Debug'),
-        const SizedBox(height: 8),
-        _SettingsCard(
-          child: _DebugCard(
-            onClearArtwork: () {
-              state.clearArtworkCache();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Artwork cache cleared.')),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 24),
-        const _SectionTitle('Setup'),
-        const SizedBox(height: 8),
-        _SettingsCard(child: const _OnboardingCard()),
-        const SizedBox(height: 24),
-        Text(
-          '${appVersionLabel.split('+')[0]} - build ${appVersionLabel.split('+')[1]}',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-        Text(
-          'Made with ♥  by TheTinkerersHaven :3',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-      ],
-    );
+          );
   }
 }
 
-/// A section heading in the settings list.
+/// A section heading in the settings list, with an optional
+/// one-line description so the purpose of the section is clear
+/// before reading its controls.
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
+  const _SectionTitle(this.text, {this.subtitle});
 
   final String text;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
-    return Text(text, style: Theme.of(context).textTheme.titleLarge);
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(text, style: Theme.of(context).textTheme.titleLarge),
+        if (subtitle != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            subtitle!,
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ],
+    );
   }
 }
 
@@ -764,40 +890,14 @@ class _AccountCardState extends State<_AccountCard> {
     super.dispose();
   }
 
-  /// Profile picker shared by the guided and instant flows. Null
-  /// when several profiles exist and the dialog is dismissed.
-  Future<BrowserProfile?> _pickProfile(List<BrowserProfile> profiles) async {
-    if (profiles.length == 1) return profiles.first;
-    if (!context.mounted) return null;
-    return showDialog<BrowserProfile>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Choose a browser profile'),
-        children: [
-          for (final p in profiles)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, p),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                child: Text('${p.label} — ${p.cookiesDb}'),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   /// Runs the embedded login window, then signs in with the fresh
   /// session it returns (if any).
   Future<void> _loginWithBrowserWindow() async {
     final state = context.read<AppState>();
-    final header = await showBrowserLoginDialog(context);
-    if (header == null || header.isEmpty || !context.mounted) return;
+    final cookie = await showBrowserLoginDialog(context);
+    if (cookie == null || cookie.isEmpty || !context.mounted) return;
     try {
-      await state.login(header);
+      await state.login(cookie);
     } catch (_) {
       // login() reports known failures via loginDetail; never let a
       // transport error escape the button handler.
@@ -808,15 +908,6 @@ class _AccountCardState extends State<_AccountCard> {
   /// when the embedded window misbehaves; import afterwards below.
   Future<void> _openSystemBrowser() async {
     await context.read<AppState>().openUrl('https://music.youtube.com');
-  }
-
-  /// Runs the one-click import. With several browsers/profiles
-  /// detected, asks which one before reading its cookie store.
-  Future<void> _importFromBrowser(List<BrowserProfile> profiles) async {
-    final state = context.read<AppState>();
-    final profile = await _pickProfile(profiles);
-    if (profile == null || !context.mounted) return;
-    await state.loginFromBrowser(profile: profile);
   }
 
   @override
@@ -883,60 +974,45 @@ class _AccountCardState extends State<_AccountCard> {
         ],
         if (!connected) ...[
           const SizedBox(height: 12),
+          Text(
+            'Method 1 — Built-in browser',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Opens a login window right here — sign in with Google '
+            'and the session is picked up when you confirm.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
           M3EFilledButton.icon(
             onPressed: loginBusy ? null : _loginWithBrowserWindow,
             icon: const Icon(Icons.login_rounded),
             label: Text(loginBusy ? 'Verifying…' : 'Log in with browser'),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
+          const Divider(),
+          const SizedBox(height: 4),
           Text(
-            'Opens a login window right here — sign in with Google '
-            'and the session is picked up when you confirm. '
-            'Prefer your own browser? Open it below, sign in, '
-            'then import.',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            'Method 2 — Manual import',
+            style: Theme.of(context).textTheme.titleSmall,
           ),
-          const SizedBox(height: 8),
-          M3ETextButton.icon(
+          const SizedBox(height: 6),
+          M3EButton.icon(
+            style: M3EButtonStyle.outlined,
             onPressed: loginBusy ? null : _openSystemBrowser,
             icon: const Icon(Icons.open_in_new_rounded),
-            label: const Text('Open YouTube Music instead'),
+            label: const Text('Open YouTube Music in your browser'),
           ),
-          const SizedBox(height: 12),
-          if (state.browserProfiles.isNotEmpty) ...[
-            M3EFilledButton.icon(
-              onPressed: loginBusy
-                  ? null
-                  : () => _importFromBrowser(state.browserProfiles),
-              icon: const Icon(Icons.download_rounded),
-              label: Text(
-                loginBusy ? 'Reading cookies…' : "I've signed in — import now",
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Reads the fresh session from your system '
-              'browser directly — no DevTools needed.',
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ] else ...[
-            Text(
-              'No Chromium-family browser profile found on this '
-              'device — use the manual paste below.',
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ],
-          const SizedBox(height: 12),
-          const Text('…or paste it manually:'),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '1. In your browser, open music.youtube.com while logged in.\n'
             '2. Open DevTools (F12) → Network tab, then play any song.\n'
             '3. Click any youtubei/v1/ request → Headers → view source → '
             'copy the whole Cookie value.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
           TextField(
@@ -1031,7 +1107,7 @@ class _AuthStatus extends StatelessWidget {
   }
 }
 
-/// Last.fm scrobbling card (ported from Kotlin `LastFmCard`): enable toggle,
+/// Last.fm scrobbling card: enable toggle,
 /// API key/secret fields, browser-approval login, and sign-out.
 class _LastFmCard extends StatefulWidget {
   const _LastFmCard();
@@ -1042,9 +1118,6 @@ class _LastFmCard extends StatefulWidget {
 
 class _LastFmCardState extends State<_LastFmCard> {
   late bool _enabled;
-  bool _busy = false;
-  bool _failed = false;
-  String? _token;
 
   @override
   void initState() {
@@ -1084,14 +1157,6 @@ class _LastFmCardState extends State<_LastFmCard> {
           ),
         ),
         const SizedBox(height: 12),
-        if (_failed) ...[
-          Text(
-            'Sign-in failed or was denied. Check the key/secret and '
-            'try again.',
-            style: TextStyle(color: scheme.error),
-          ),
-          const SizedBox(height: 8),
-        ],
         if (signedIn)
           Align(
             alignment: Alignment.centerRight,
@@ -1104,18 +1169,7 @@ class _LastFmCardState extends State<_LastFmCard> {
             ),
           )
         else
-          LastFmAuthActions(
-            token: _token,
-            busy: _busy,
-            onStart: () => setState(() {
-              _failed = false;
-              _busy = true;
-            }),
-            onBusyChange: (b) => setState(() => _busy = b),
-            onFailed: () => setState(() => _failed = true),
-            onToken: (t) => setState(() => _token = t),
-            onSignedIn: () => setState(() => _token = null),
-          ),
+          const LastFmAuthActions(),
       ],
     );
   }
@@ -1192,4 +1246,155 @@ class _LastFmKeysDialogState extends State<_LastFmKeysDialog> {
       ],
     );
   }
+}
+
+/// App updates card: current version, a manual check button, and an
+/// install button when a newer release is available on GitHub.
+class _AppUpdatesCard extends StatefulWidget {
+  const _AppUpdatesCard();
+
+  @override
+  State<_AppUpdatesCard> createState() => _AppUpdatesCardState();
+}
+
+enum _UpdateStatus { idle, checking, available, upToDate, applying, applied }
+
+class _AppUpdatesCardState extends State<_AppUpdatesCard> {
+  final Updater _updater = Updater();
+  _UpdateStatus _status = _UpdateStatus.idle;
+  UpdateInfo? _update;
+
+  /// Current short version (e.g. "0.4.1").
+  String get _currentVersion => appVersion.split('+').first;
+
+  Future<void> _checkForUpdates() async {
+    setState(() {
+      _status = _UpdateStatus.checking;
+      _update = null;
+    });
+    try {
+      final info = await _updater.checkForUpdates();
+      if (!mounted) return;
+      if (info == null) {
+        setState(() {
+          _status = _UpdateStatus.upToDate;
+        });
+      } else {
+        setState(() {
+          _status = _UpdateStatus.available;
+          _update = info;
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _status = _UpdateStatus.idle;
+      });
+    }
+  }
+
+  Future<void> _installUpdate() async {
+    if (_update == null) return;
+    setState(() {
+      _status = _UpdateStatus.applying;
+    });
+    try {
+      await _updater.applyUpdate(_update!);
+      if (!mounted) return;
+      setState(() {
+        _status = _UpdateStatus.applied;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _status = _UpdateStatus.idle;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Current version',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _currentVersion,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: M3EOutlinedButton.icon(
+                onPressed: _status == _UpdateStatus.checking ||
+                        _status == _UpdateStatus.applying
+                    ? null
+                    : _checkForUpdates,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Check for updates'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        switch (_status) {
+          _UpdateStatus.checking => const LinearProgressIndicator(),
+          _UpdateStatus.upToDate => Text(
+              'No updates available — you are on the latest version.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          _UpdateStatus.available => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Version ${_update!.version} is available.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: M3EFilledButton.icon(
+                    onPressed: _installUpdate,
+                    icon: const Icon(Icons.download_rounded),
+                    label: const Text('Install update'),
+                  ),
+                ),
+              ],
+            ),
+          _UpdateStatus.applying => const LinearProgressIndicator(),
+          _UpdateStatus.applied => Text(
+              'Update installed. Restart NixieTube to use the new version.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: scheme.primary,
+              ),
+            ),
+          _UpdateStatus.idle => const SizedBox.shrink(),
+        },
+      ],
+    );
+  }
+}
+
+/// The short version from a label like "0.4.1+123" or just "0.3.1".
+String _shortVersion(String label) {
+  final parts = label.split('+');
+  return parts.first;
+}
+
+/// The build number from a label like "0.4.1+123", or "unknown" when absent.
+String _buildNumber(String label) {
+  final parts = label.split('+');
+  return parts.length > 1 ? parts[1] : 'unknown';
 }

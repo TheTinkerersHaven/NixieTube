@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -24,7 +25,6 @@ import 'package:nixietube/ui/screens/now_playing_screen.dart';
 import 'package:nixietube/ui/screens/settings_screen.dart';
 import 'package:nixietube/ui/theme.dart';
 import 'package:nixietube/ui/widgets/palette_backdrop.dart';
-
 
 /// Boots the real [AppState] with temp dirs and a fake engine,
 /// then pumps [child] under a MaterialApp with the same providers
@@ -275,7 +275,9 @@ void main() {
           body: Builder(
             builder: (ctx) {
               // ignore: avoid_print
-              print('MATERIALAPP theme primary: ${Theme.of(ctx).colorScheme.primary}');
+              print(
+                'MATERIALAPP theme primary: ${Theme.of(ctx).colorScheme.primary}',
+              );
               return ChangeNotifierProvider.value(
                 value: state,
                 child: const NowPlayingScreen(),

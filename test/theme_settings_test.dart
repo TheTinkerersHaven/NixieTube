@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -21,7 +22,6 @@ import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/settings_screen.dart';
 import 'package:nixietube/ui/theme.dart';
-
 
 /// Boots the real [AppState] with temp dirs and a fake engine,
 /// then pumps the settings screen with the same providers the
