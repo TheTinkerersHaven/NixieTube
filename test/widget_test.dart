@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:skeletonizer/skeletonizer.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -17,7 +18,6 @@ import 'package:nixietube/sys/lastfm.dart';
 import 'package:nixietube/sys/mpris.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
-
 
 void main() {
   testWidgets('boots the app shell', (tester) async {
@@ -90,9 +90,7 @@ void main() {
     addTearDown(discord.dispose);
     final lastfm = LastFmService(config: state.config);
     addTearDown(lastfm.dispose);
-    const advice =
-        'Playback failed — check your network connection or '
-        'restart the app.';
+    const advice = 'No playable stream';
     await tester.pumpWidget(
       NixieTubeApp(
         state: state,

@@ -1,5 +1,4 @@
-// Mini player bar ported from Kotlin `PlayerBar`: cover, title, transport,
-// error, time row and seek slider. Tapping expands to Now Playing.
+// Mini player bar: cover, title, transport, error, time row and seek slider. Tapping expands to Now Playing.
 
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
@@ -9,9 +8,10 @@ import 'package:provider/provider.dart';
 import '../../core/models/models.dart';
 import '../../core/player/player_state.dart';
 import '../app_state.dart';
+import '../format.dart';
+import 'seek_slider.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
-import 'seek_slider.dart';
 import 'volume_slider.dart';
 
 /// Bottom mini player bar; tap to expand Now Playing.
@@ -51,7 +51,6 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
     final playing = context.select<AppState, bool>(
       (s) => s.playerState.playing,
     );
-    final error = context.select<AppState, String?>((s) => s.playerState.error);
     final state = context.read<AppState>();
     final scheme = Theme.of(context).colorScheme;
     // Floating bottom bar: detached card with margins, rounding,
@@ -228,20 +227,6 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                   ),
                   // Volume pop-out removed; volume control lives inline
                   // in the transport row (see below).
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          error,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: scheme.error),
-                        ),
-                      ),
-                    ),
                   const SizedBox(height: 4),
                   // Own layer: the 2Hz label change must not re-record
                   // the card, its shadow and the texts above it.
