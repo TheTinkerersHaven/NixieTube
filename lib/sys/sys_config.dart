@@ -1,4 +1,4 @@
-// Simple properties-file config, mirroring Kotlin `SysConfig`.
+// Simple properties-file config.
 //
 // Keys live in two places:
 //
@@ -353,7 +353,7 @@ class SysConfig {
     _persist();
   }
 
-  /// Typed accessors mirroring Kotlin `SysConfig`. Getters read with
+  /// Typed accessors. Getters read with
   /// per-key defaults; setters write through to disk. Groups below
   /// follow the Settings screen sections.
   ///

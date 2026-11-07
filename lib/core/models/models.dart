@@ -1,4 +1,4 @@
-// Domain models ported from Kotlin `core/innertube/.../Models.kt`.
+// Domain models of the InnerTube API.
 //
 // Pure data, no Flutter imports — reusable under any frontend.
 
@@ -508,6 +508,7 @@ class BrowseItem extends ShelfItem {
     }
     return best ?? bestArtwork;
   }
+
   final ReleaseKind? kind;
   final String? browseParams;
 
@@ -603,6 +604,7 @@ class AlbumDetail {
     if (item != null && item.thumbnails.isNotEmpty) return item.bestArtwork;
     return null;
   }
+
   final List<Track> tracks;
   final ReleaseKind? kind;
   final String year;
@@ -651,6 +653,7 @@ class ArtistDetail {
     }
     return best ?? bestArtwork;
   }
+
   final List<Track> topSongs;
   final List<BrowseItem> albums;
   final List<BrowseItem> singlesAndEps;
@@ -730,6 +733,7 @@ class PlaylistDetail {
     if (item != null && item.thumbnails.isNotEmpty) return item.bestArtwork;
     return null;
   }
+
   final List<Track> tracks;
   final ArtistRef? author;
 }

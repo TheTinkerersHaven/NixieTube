@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -23,7 +24,6 @@ import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/settings_screen.dart';
 import 'package:nixietube/ui/theme.dart';
-
 
 /// Records every activity pushed, so the test can assert what Discord
 /// would actually be sent.
@@ -172,13 +172,25 @@ void main() {
 
     await _openDialog(tester);
     final inDialog = find.byType(Dialog);
-    expect(find.descendant(of: inDialog, matching: find.text('Song Title')), findsWidgets);
-    expect(find.descendant(of: inDialog, matching: find.text('Song Artist')), findsWidgets);
-    expect(find.descendant(of: inDialog, matching: find.text('Song Album')), findsWidgets);
+    expect(
+      find.descendant(of: inDialog, matching: find.text('Song Title')),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(of: inDialog, matching: find.text('Song Artist')),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(of: inDialog, matching: find.text('Song Album')),
+      findsWidgets,
+    );
 
     // Pick "Song Artist": the mode changes, the activity is re-pushed
     // and the choice is written to disk.
-    config.set('discord.statusText', discordStatusTextKey(DiscordStatusText.artists));
+    config.set(
+      'discord.statusText',
+      discordStatusTextKey(DiscordStatusText.artists),
+    );
     discord.setStatusText(DiscordStatusText.artists);
     await tester.pumpAndSettle();
 
@@ -236,7 +248,10 @@ void main() {
     final rpc = harness.rpc;
     final config = harness.state.config;
     await _openDialog(tester);
-    config.set('discord.statusText', discordStatusTextKey(DiscordStatusText.album));
+    config.set(
+      'discord.statusText',
+      discordStatusTextKey(DiscordStatusText.album),
+    );
     discord.setStatusText(DiscordStatusText.album);
     await tester.pumpAndSettle();
 

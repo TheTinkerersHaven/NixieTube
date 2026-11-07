@@ -1,6 +1,5 @@
-// XDG-aware config/cache directories, mirroring the Kotlin client's
-// hard-coded `~/.config/nixietube` + `~/.cache/nixietube` layout so both
-// frontends share on-disk state.
+// XDG-aware config/cache directories (`~/.config/nixietube` and
+// `~/.cache/nixietube`).
 import 'dart:io' show Directory, Platform;
 
 /// Application config dir (`~/.config/nixietube`), created on access.

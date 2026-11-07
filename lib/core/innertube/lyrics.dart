@@ -25,8 +25,7 @@ Duration lrclibRetryDelay = const Duration(milliseconds: 800);
 /// "no such lyrics" answer — is final.
 bool _retryable(int status) => status == 429 || status >= 500;
 
-/// Shared HTTP client, mirroring the Kotlin client's single
-/// lifetime client: keeps connections warm across lookups
+/// Shared HTTP client: keeps connections warm across lookups
 /// instead of handshaking per track change.
 final Dio _sharedClient = newHttpClient();
 
@@ -342,12 +341,16 @@ Future<({List<LyricLine> lines, String? album, bool ok})> fetchLyricsAndAlbum(
     if (best != null) {
       return (lines: best.lines, album: best.album ?? fallbackAlbum, ok: true);
     }
-    return (lines: fallback?.lines ?? <LyricLine>[], album: fallbackAlbum, ok: true);
+    return (
+      lines: fallback?.lines ?? <LyricLine>[],
+      album: fallbackAlbum,
+      ok: true,
+    );
   } catch (_) {
     rethrow;
   } finally {
-    // Injected clients belong to the caller; the shared
-    // one lives for the app's lifetime (like Kotlin's).
+    // Injected clients belong to the caller; the shared one lives
+    // for the app's lifetime.
     if (dio != null) client.close();
   }
 }
@@ -509,8 +512,8 @@ Future<List<LyricLine>> fetchYtmLyrics(String videoId, {Dio? dio}) async {
   } catch (_) {
     rethrow;
   } finally {
-    // Injected clients belong to the caller; the shared
-    // one lives for the app's lifetime (like Kotlin's).
+    // Injected clients belong to the caller; the shared one lives
+    // for the app's lifetime.
     if (dio != null) client.close();
   }
 }

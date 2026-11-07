@@ -236,9 +236,8 @@ Future<Uint8List> _compressBytes(Uint8List bytes) async {
 }
 
 /// Cover palette for tinted backdrops: average colors of a
-/// 5x5 grid over the cover (row-major: TL→BR). Port of
-/// Kotlin `coverBands`, extended from 3 horizontal bands
-/// to 25 points so the wash can follow the whole artwork.
+/// 5x5 grid over the cover (row-major: TL→BR): 25 points, so the
+/// wash can follow the whole artwork.
 /// Null when the image is empty.
 ///
 /// The sampling window is inset from the edges: border and vignette

@@ -139,7 +139,6 @@ class _FakeBus extends DBusClient {
   }
 }
 
-
 Track _track(String id) => Track(videoId: id, title: 'T$id', durationSec: 200);
 
 PlayerState _playing() => PlayerState(

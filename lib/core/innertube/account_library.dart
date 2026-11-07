@@ -53,12 +53,6 @@ class AccountLibrary {
   /// itself. Null until the playlist was read.
   int? get likedCount => tube?.likedCount;
 
-  /// The ids of the account's liked songs.
-  Future<Set<String>> likedVideoIds({int max = 2000}) async {
-    final tracks = await likedVideos(max: max);
-    return {for (final t in tracks) t.videoId};
-  }
-
   /// Tracks of one playlist, in playlist order.
   Future<List<Track>> playlistTracks(String playlistId, {int max = 5000}) =>
       _tube.playlistTracks(playlistId, max: max);
@@ -100,9 +94,6 @@ class AccountLibrary {
 
   /// The signed-in account's channel id.
   Future<String?> ownChannelId() => _tube.ownChannelId();
-
-  /// Whether the account subscribes to [channelId].
-  Future<bool> isSubscribed(String channelId) => _tube.isSubscribed(channelId);
 
   /// Subscribes to a channel.
   Future<bool> subscribe(String channelId) => _tube.subscribeTo(channelId);

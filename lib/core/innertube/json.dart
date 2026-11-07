@@ -1,5 +1,4 @@
-// JSON navigation helpers for InnerTube responses, ported from the
-// `internal` helpers at the bottom of Kotlin `InnerTube.kt`.
+// JSON navigation helpers for InnerTube responses.
 //
 // Responses are decoded with `jsonDecode` into `Map<String, dynamic>` /
 // `List<dynamic>` / primitives; every helper is null-tolerant.

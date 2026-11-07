@@ -80,35 +80,22 @@ class PlaybackReporter {
     }
   }
 
-  /// Sends one watchtime beacon for [videoId], logging failures to the
-  /// watchtime log file (successes stay silent).
-  Future<void> sendWatchtime(
-    String videoId,
-    String cpn,
-    double startSec,
-    double currentSec,
-    String state,
-    double durationSec, [
-    String? playlistId,
-  ]) async {
+  /// Sends one watchtime beacon, logging failures to the watchtime log
+  /// file (successes stay silent).
+  Future<void> sendWatchtime(WatchtimeBeacon beacon) async {
     // Re-check the cookie session's validity (cached for 5
     // min) so an expired LOGIN_INFO surfaces in the UI.
     await refreshLoginValidity();
 
     bool ok = false;
     try {
-      ok = await tube.reportWatchtime(
-        videoId,
-        cpn,
-        startSec,
-        currentSec,
-        state,
-        durationSec,
-        playlistId,
-      );
+      ok = await tube.reportWatchtime(beacon);
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('watchtime: EXCEPTION $state $videoId ${e.runtimeType}');
+        debugPrint(
+          'watchtime: EXCEPTION ${beacon.state.wireName} ${beacon.videoId} '
+          '${e.runtimeType}',
+        );
       }
       return;
     }
@@ -120,8 +107,8 @@ class PlaybackReporter {
         final tag = cookiePresent ? 'COOKIE' : 'ANONYMOUS';
         final tokenTag = tokenPresent ? 'TOKEN_YES' : 'TOKEN_NO';
         debugPrint(
-          'watchtime: FAILED $state $videoId cmt=$currentSec auth=$tag '
-          '$tokenTag',
+          'watchtime: FAILED ${beacon.state.wireName} ${beacon.videoId} '
+          'cmt=${beacon.currentSec} auth=$tag $tokenTag',
         );
       }
     }
@@ -135,108 +122,127 @@ class PlaybackReporter {
     final prevVid = _lastReportedVideoId;
     final prevPlay = _previousPlaying;
     final prevStop = _previousStopped;
-    final progMs = _lastProgressMs;
-    final prevPosMs = _lastReportedPositionMs;
     final prevCpn = _lastWatchCpn;
-    final prevSegStartSec = _lastWatchSegmentStartSec;
-    final prevDurSec = _lastWatchDurationSec;
-    final prevPlaylistId = _lastWatchPlaylistId;
     try {
       final vid = s.current?.videoId;
-      final posSec = s.positionMs / 1000.0;
-      final durSec = s.durationMs / 1000.0;
-      final playlistId = s.current?.playlistId;
       if (vid != null && vid != prevVid) {
-        if (prevVid != null && prevCpn != null && !s.stopped) {
-          // Report where the previous track actually stopped, not the
-          // new track's ~0 position.
-          await sendWatchtime(
-            prevVid,
-            prevCpn,
-            prevSegStartSec,
-            prevPosMs / 1000.0,
-            'paused',
-            prevDurSec,
-            prevPlaylistId,
-          );
-        }
-        final cpn = newWatchCpn();
-        _lastReportedVideoId = vid;
-        _lastWatchCpn = cpn;
-        _lastWatchSegmentStartSec = 0.0;
-        _lastWatchDurationSec = durSec;
-        _lastWatchPlaylistId = playlistId;
-        _lastReportedPositionMs = s.positionMs;
-        await sendWatchtime(
-          vid,
-          cpn,
-          0.0,
-          posSec,
-          'playing',
-          durSec,
-          playlistId,
-        );
+        await _reportTrackSwitch(s, vid);
       } else if (vid != null && vid == prevVid && prevCpn != null) {
-        if (s.playing && !prevPlay) {
-          _lastWatchSegmentStartSec = prevPosMs / 1000.0;
-          _lastReportedPositionMs = s.positionMs;
-          await sendWatchtime(
-            vid,
-            prevCpn,
-            prevSegStartSec,
-            posSec,
-            'playing',
-            durSec,
-            playlistId,
-          );
-        } else if (!s.playing && prevPlay && !s.stopped) {
-          _lastReportedPositionMs = s.positionMs;
-          await sendWatchtime(
-            vid,
-            prevCpn,
-            prevSegStartSec,
-            posSec,
-            'paused',
-            durSec,
-            playlistId,
-          );
-          _lastWatchSegmentStartSec = posSec;
-        } else if (s.stopped && !prevStop) {
-          _lastReportedPositionMs = s.positionMs;
-          await sendWatchtime(
-            vid,
-            prevCpn,
-            prevSegStartSec,
-            posSec,
-            'paused',
-            durSec,
-            playlistId,
-          );
-          _lastWatchSegmentStartSec = posSec;
-        } else if (s.playing) {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          if (now - progMs >= _reportHeartbeatMs) {
-            _lastProgressMs = now;
-            _lastReportedPositionMs = s.positionMs;
-            await sendWatchtime(
-              vid,
-              prevCpn,
-              prevSegStartSec,
-              posSec,
-              'playing',
-              durSec,
-              playlistId,
-            );
-            _lastWatchSegmentStartSec = posSec;
-          } else {
-            _lastReportedPositionMs = s.positionMs;
-          }
-        } else {
-          _lastReportedPositionMs = s.positionMs;
-        }
+        await _reportSameTrack(s, vid, prevCpn, prevPlay, prevStop);
       }
       _previousPlaying = s.playing;
       _previousStopped = s.stopped;
     } catch (_) {}
+  }
+
+  /// Reports the end of the previous track and the start of the new one.
+  Future<void> _reportTrackSwitch(PlayerState s, String vid) async {
+    final posSec = s.positionMs / 1000.0;
+    final durSec = s.durationMs / 1000.0;
+    final playlistId = s.current?.playlistId;
+    final prevVid = _lastReportedVideoId;
+    final prevCpn = _lastWatchCpn;
+    if (prevVid != null && prevCpn != null && !s.stopped) {
+      // Report where the previous track actually stopped, not the
+      // new track's ~0 position.
+      await sendWatchtime(
+        WatchtimeBeacon(
+          videoId: prevVid,
+          cpn: prevCpn,
+          startSec: _lastWatchSegmentStartSec,
+          currentSec: _lastReportedPositionMs / 1000.0,
+          state: WatchtimeState.paused,
+          durationSec: _lastWatchDurationSec,
+          playlistId: _lastWatchPlaylistId,
+        ),
+      );
+    }
+    final cpn = newWatchCpn();
+    _lastReportedVideoId = vid;
+    _lastWatchCpn = cpn;
+    _lastWatchSegmentStartSec = 0.0;
+    _lastWatchDurationSec = durSec;
+    _lastWatchPlaylistId = playlistId;
+    _lastReportedPositionMs = s.positionMs;
+    await sendWatchtime(
+      WatchtimeBeacon(
+        videoId: vid,
+        cpn: cpn,
+        startSec: 0.0,
+        currentSec: posSec,
+        state: WatchtimeState.playing,
+        durationSec: durSec,
+        playlistId: playlistId,
+      ),
+    );
+  }
+
+  /// Reports the play/pause/stop transition or heartbeat of the track
+  /// that keeps playing.
+  Future<void> _reportSameTrack(
+    PlayerState s,
+    String vid,
+    String cpn,
+    bool prevPlay,
+    bool prevStop,
+  ) async {
+    final posSec = s.positionMs / 1000.0;
+    final durSec = s.durationMs / 1000.0;
+    final playlistId = s.current?.playlistId;
+    if (s.playing && !prevPlay) {
+      _lastWatchSegmentStartSec = _lastReportedPositionMs / 1000.0;
+      _lastReportedPositionMs = s.positionMs;
+      await sendWatchtime(
+        WatchtimeBeacon(
+          videoId: vid,
+          cpn: cpn,
+          startSec: _lastWatchSegmentStartSec,
+          currentSec: posSec,
+          state: WatchtimeState.playing,
+          durationSec: durSec,
+          playlistId: playlistId,
+        ),
+      );
+      return;
+    }
+    if ((!s.playing && prevPlay && !s.stopped) || (s.stopped && !prevStop)) {
+      _lastReportedPositionMs = s.positionMs;
+      await sendWatchtime(
+        WatchtimeBeacon(
+          videoId: vid,
+          cpn: cpn,
+          startSec: _lastWatchSegmentStartSec,
+          currentSec: posSec,
+          state: WatchtimeState.paused,
+          durationSec: durSec,
+          playlistId: playlistId,
+        ),
+      );
+      _lastWatchSegmentStartSec = posSec;
+      return;
+    }
+    if (!s.playing) {
+      _lastReportedPositionMs = s.positionMs;
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastProgressMs < _reportHeartbeatMs) {
+      _lastReportedPositionMs = s.positionMs;
+      return;
+    }
+    _lastProgressMs = now;
+    _lastReportedPositionMs = s.positionMs;
+    await sendWatchtime(
+      WatchtimeBeacon(
+        videoId: vid,
+        cpn: cpn,
+        startSec: _lastWatchSegmentStartSec,
+        currentSec: posSec,
+        state: WatchtimeState.playing,
+        durationSec: durSec,
+        playlistId: playlistId,
+      ),
+    );
+    _lastWatchSegmentStartSec = posSec;
   }
 }

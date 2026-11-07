@@ -1,4 +1,4 @@
-// InnerTube response parsers, ported from Kotlin `InnerTube.kt`.
+// InnerTube response parsers.
 //
 // Pure functions over decoded JSON (`json.dart` navigation). Network calls
 // stay in `inner_tube.dart`; search ranking that needs extra fetches calls
@@ -11,7 +11,6 @@ import 'json.dart';
 import 'metadata.dart' show canonical;
 
 /// Lowercases, maps every non-alphanumeric run to a space, trims.
-/// (Kotlin `canonicalMetadata`; identical to `metadata.canonical`.)
 String canonicalMetadata(String value) => canonical(value);
 
 int? intOrNull(dynamic node) => node is int ? node : null;
@@ -249,7 +248,12 @@ bool isBylineNoise(String value) {
     'lyric video',
   };
   if (plain.contains(v)) return true;
-  if (v == 'public' || v == 'unlisted' || v == 'public playlist' || v == 'unlisted playlist') return true;
+  if (v == 'public' ||
+      v == 'unlisted' ||
+      v == 'public playlist' ||
+      v == 'unlisted playlist') {
+    return true;
+  }
   if (_typeLabels.any((t) => canonicalMetadata(t) == v)) return true;
   if (RegExp(r'(19|20)\d{2}').hasMatch(v) && v.length == 4) return true;
   if (RegExp(r'^\d{1,3}:\d{2}(:\d{2})?$').hasMatch(v)) return true;
@@ -288,13 +292,13 @@ ArtistRef? channelRefFromRuns(List<dynamic> runLists) {
       if (id != null && id.startsWith('UC')) {
         final name = (str(nav(run, const ['text'])) ?? '').trim();
         final lower = name.toLowerCase();
-         if (name.isNotEmpty &&
-             lower != 'public' &&
-             lower != 'unlisted' &&
-             lower != 'public playlist' &&
-             lower != 'unlisted playlist') {
-           return ArtistRef(name, browseId: id);
-         }
+        if (name.isNotEmpty &&
+            lower != 'public' &&
+            lower != 'unlisted' &&
+            lower != 'public playlist' &&
+            lower != 'unlisted playlist') {
+          return ArtistRef(name, browseId: id);
+        }
       }
     }
   }
@@ -358,8 +362,34 @@ String? firstVideoId(dynamic runs) {
 
 /// Parses a `musicResponsiveListItemRenderer` row into a track.
 Track? parseListItem(dynamic li) {
+  final cols = _listItemColumns(li);
+  if (cols.isEmpty) return null;
+  final titleRuns = cols[0];
+  final title = runsText(titleRuns);
+  final identity = _listItemIdentity(li, titleRuns);
+  if (identity == null) return null;
+  final credits = _readRowCredits(cols, title);
+  final artists = _distinctArtists(credits.artists);
+  return Track(
+    videoId: identity.videoId,
+    title: title,
+    artists: artists,
+    album: credits.album,
+    durationSec: credits.duration,
+    thumbnails: parseThumbnails(li),
+    playlistId: identity.playlistId,
+    radioPlaylistId: 'RDAMVM${identity.videoId}',
+    artistId: _firstChannelId(artists),
+    views: credits.views,
+    rating: parseLikeRating(li),
+    explicit: parseExplicit(li),
+  );
+}
+
+/// The text runs of every flex column of a list row.
+List<List> _listItemColumns(dynamic li) {
   final flex = nav(li, const ['flexColumns']);
-  if (flex is! List) return null;
+  if (flex is! List) return const [];
   final cols = <List>[];
   for (final col in flex) {
     final runs = nav(col, const [
@@ -369,19 +399,25 @@ Track? parseListItem(dynamic li) {
     ]);
     if (runs is List) cols.add(runs);
   }
-  if (cols.isEmpty) return null;
-  final titleRuns = cols[0];
-  final title = runsText(titleRuns);
-  String? videoId = firstVideoId(titleRuns);
-  String? playlistId;
-  if (videoId == null) {
-    final watch = nav(li, const ['navigationEndpoint', 'watchEndpoint']);
-    videoId = str(nav(watch, const ['videoId']));
-    playlistId = str(nav(watch, const ['playlistId']));
-  }
-  if (videoId == null) return null;
-  final radioId = 'RDAMVM$videoId';
+  return cols;
+}
 
+/// The video id of a list row, and the playlist it belongs to.
+({String videoId, String? playlistId})? _listItemIdentity(
+  dynamic li,
+  List titleRuns,
+) {
+  final fromTitle = firstVideoId(titleRuns);
+  if (fromTitle != null) return (videoId: fromTitle, playlistId: null);
+  final watch = nav(li, const ['navigationEndpoint', 'watchEndpoint']);
+  final videoId = str(nav(watch, const ['videoId']));
+  if (videoId == null) return null;
+  return (videoId: videoId, playlistId: str(nav(watch, const ['playlistId'])));
+}
+
+/// The credits, duration and views carried by a list row.
+({List<ArtistRef> artists, AlbumRef? album, int duration, String views})
+_readRowCredits(List<List> cols, String title) {
   final artists = <ArtistRef>[];
   final plainGroups = <String>[];
   final plainGroup = StringBuffer();
@@ -395,28 +431,7 @@ Track? parseListItem(dynamic li) {
     plainGroup.clear();
   }
 
-  // Pre-scan: which bullet-separated segments carry artist/album endpoints?
-  final segmentHasArtist = <bool>[false];
-  final segmentHasRelease = <bool>[false];
-  for (final col in cols.skip(1)) {
-    for (final run in col) {
-      final text = (str(nav(run, const ['text'])) ?? '').trim();
-      if (text == '•' || text == '·') {
-        segmentHasArtist.add(false);
-        segmentHasRelease.add(false);
-        continue;
-      }
-      final bid = str(
-        nav(run, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
-      );
-      if (bid != null && bid.startsWith('UC')) {
-        segmentHasArtist[segmentHasArtist.length - 1] = true;
-      }
-      if (bid != null && bid.startsWith('MPRE')) {
-        segmentHasRelease[segmentHasRelease.length - 1] = true;
-      }
-    }
-  }
+  final segments = _creditSegmentFlags(cols);
   var segmentIdx = 0;
 
   for (final col in cols.skip(1)) {
@@ -452,21 +467,11 @@ Track? parseListItem(dynamic li) {
       } else if (browseId == null &&
           !isBylineNoise(text) &&
           !_skipWordsRe.hasMatch(text)) {
-        final inArtistZone =
-            segmentIdx < segmentHasArtist.length &&
-            segmentHasArtist[segmentIdx] &&
-            !(segmentIdx < segmentHasRelease.length &&
-                segmentHasRelease[segmentIdx]);
         final credit = text
             .replaceAll(_creditStripRe, '')
             .trim()
             .replaceAll(RegExp(r'[,;:]+$'), '');
-        final isArtistCredit =
-            inArtistZone &&
-            credit.isNotEmpty &&
-            !isBylineNoise(credit) &&
-            !isCreditConjunction(credit);
-        if (isArtistCredit) {
+        if (_isArtistCredit(credit, segmentIdx, segments)) {
           artists.add(ArtistRef(credit));
         } else {
           // Runs before the first bullet form one artist credit; runs after
@@ -481,41 +486,79 @@ Track? parseListItem(dynamic li) {
   if (artists.isEmpty) {
     if (plainGroups.isNotEmpty) artists.add(ArtistRef(plainGroups.first));
     if (album == null) {
-      for (final g in plainGroups.skip(1)) {
-        if (canonicalMetadata(g) != canonicalMetadata(title)) {
-          album = AlbumRef(g, kind: detectReleaseKind(g));
+      for (final group in plainGroups.skip(1)) {
+        if (canonicalMetadata(group) != canonicalMetadata(title)) {
+          album = AlbumRef(group, kind: detectReleaseKind(group));
           break;
         }
       }
     }
   }
-  final rating = parseLikeRating(li);
-  final seen = <String>{};
-  final distinctArtists = <ArtistRef>[];
-  for (final a in artists) {
-    if (seen.add(a.name)) distinctArtists.add(a);
-  }
-  String? artistId;
-  for (final a in distinctArtists) {
-    if (a.browseId != null && a.browseId!.startsWith('UC')) {
-      artistId = a.browseId;
-      break;
+  return (artists: artists, album: album, duration: duration, views: views);
+}
+
+/// Which bullet-separated credit segments carry artist or album links.
+({List<bool> hasArtist, List<bool> hasRelease}) _creditSegmentFlags(
+  List<List> cols,
+) {
+  final hasArtist = <bool>[false];
+  final hasRelease = <bool>[false];
+  for (final col in cols.skip(1)) {
+    for (final run in col) {
+      final text = (str(nav(run, const ['text'])) ?? '').trim();
+      if (text == '•' || text == '·') {
+        hasArtist.add(false);
+        hasRelease.add(false);
+        continue;
+      }
+      final browseId = str(
+        nav(run, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
+      );
+      if (browseId != null && browseId.startsWith('UC')) {
+        hasArtist[hasArtist.length - 1] = true;
+      }
+      if (browseId != null && browseId.startsWith('MPRE')) {
+        hasRelease[hasRelease.length - 1] = true;
+      }
     }
   }
-  return Track(
-    videoId: videoId,
-    title: title,
-    artists: distinctArtists,
-    album: album,
-    durationSec: duration,
-    thumbnails: parseThumbnails(li),
-    playlistId: playlistId,
-    radioPlaylistId: radioId,
-    artistId: artistId,
-    views: views,
-    rating: rating,
-    explicit: parseExplicit(li),
-  );
+  return (hasArtist: hasArtist, hasRelease: hasRelease);
+}
+
+/// Whether [credit] in segment [segmentIdx] names an artist.
+bool _isArtistCredit(
+  String credit,
+  int segmentIdx,
+  ({List<bool> hasArtist, List<bool> hasRelease}) segments,
+) {
+  final inArtistZone =
+      segmentIdx < segments.hasArtist.length &&
+      segments.hasArtist[segmentIdx] &&
+      !(segmentIdx < segments.hasRelease.length &&
+          segments.hasRelease[segmentIdx]);
+  return inArtistZone &&
+      credit.isNotEmpty &&
+      !isBylineNoise(credit) &&
+      !isCreditConjunction(credit);
+}
+
+/// The artists of a row, without repeated names.
+List<ArtistRef> _distinctArtists(List<ArtistRef> artists) {
+  final seen = <String>{};
+  final distinct = <ArtistRef>[];
+  for (final artist in artists) {
+    if (seen.add(artist.name)) distinct.add(artist);
+  }
+  return distinct;
+}
+
+/// The channel id of the first linked artist.
+String? _firstChannelId(List<ArtistRef> artists) {
+  for (final artist in artists) {
+    final browseId = artist.browseId;
+    if (browseId != null && browseId.startsWith('UC')) return browseId;
+  }
+  return null;
 }
 
 /// True when an item renderer carries the explicit badge: a `badges`
@@ -1355,6 +1398,77 @@ AlbumDetail? buildAlbum(dynamic res, String browseId) {
 }
 
 /// Builds an artist detail from a `browse` response.
+/// The browse items of an artist carousel shelf.
+List<BrowseItem> _carouselItems(dynamic shelf) {
+  final out = <BrowseItem>[];
+  final contents = nav(shelf, const ['contents']);
+  if (contents is! List) return out;
+  for (final element in contents) {
+    final item = nav(element, const ['musicTwoRowItemRenderer']);
+    if (item == null) continue;
+    final endpoint = nav(item, const ['navigationEndpoint', 'browseEndpoint']);
+    final id = str(nav(endpoint, const ['browseId']));
+    if (id == null) continue;
+    final subtitle = runsText(nav(item, const ['subtitle', 'runs']));
+    out.add(
+      BrowseItem(
+        title: runsText(nav(item, const ['title', 'runs'])),
+        subtitle: subtitle,
+        browseId: id,
+        thumbnails: parseThumbnails(item),
+        kind: detectReleaseKind(subtitle),
+        browseParams: str(nav(endpoint, const ['params'])),
+      ),
+    );
+  }
+  return out;
+}
+
+/// The list an artist carousel belongs to, by its title and its items.
+List<BrowseItem> _carouselDestination(
+  String title,
+  List<BrowseItem> items, {
+  required List<BrowseItem> albums,
+  required List<BrowseItem> singlesAndEps,
+  required List<BrowseItem> relatedPlaylists,
+  required List<BrowseItem> similarArtists,
+}) {
+  final tokens = canonicalMetadata(title)
+      .split(' ')
+      .where((token) => token.isNotEmpty)
+      .toSet();
+  if (tokens.contains('album') || tokens.contains('albums')) return albums;
+  if (tokens.contains('single') ||
+      tokens.contains('singles') ||
+      tokens.contains('ep') ||
+      tokens.contains('eps')) {
+    return singlesAndEps;
+  }
+  if (tokens.contains('playlist') ||
+      tokens.contains('playlists') ||
+      tokens.contains('featured')) {
+    return relatedPlaylists;
+  }
+  if (tokens.contains('fan') ||
+      tokens.contains('fans') ||
+      tokens.contains('similar')) {
+    return similarArtists;
+  }
+  if (items.any((item) => item.browseId.startsWith('UC'))) {
+    return similarArtists;
+  }
+  if (items.any((item) => item.browseId.startsWith('VL'))) {
+    return relatedPlaylists;
+  }
+  return albums;
+}
+
+/// The browse items of a list, without repeated ids.
+List<BrowseItem> _distinctById(List<BrowseItem> items) {
+  final seen = <String>{};
+  return items.where((item) => seen.add(item.browseId)).toList();
+}
+
 ArtistDetail? buildArtist(dynamic res) {
   final header =
       findFirst(res, 'musicImmersiveHeaderRenderer') ??
@@ -1429,34 +1543,6 @@ ArtistDetail? buildArtist(dynamic res) {
   final relatedPlaylists = <BrowseItem>[];
   final similarArtists = <BrowseItem>[];
 
-  List<BrowseItem> carouselItems(dynamic shelf) {
-    final out = <BrowseItem>[];
-    final contents = nav(shelf, const ['contents']);
-    if (contents is! List) return out;
-    for (final element in contents) {
-      final item = nav(element, const ['musicTwoRowItemRenderer']);
-      if (item == null) continue;
-      final endpoint = nav(item, const [
-        'navigationEndpoint',
-        'browseEndpoint',
-      ]);
-      final id = str(nav(endpoint, const ['browseId']));
-      if (id == null) continue;
-      final subtitle = runsText(nav(item, const ['subtitle', 'runs']));
-      out.add(
-        BrowseItem(
-          title: runsText(nav(item, const ['title', 'runs'])),
-          subtitle: subtitle,
-          browseId: id,
-          thumbnails: parseThumbnails(item),
-          kind: detectReleaseKind(subtitle),
-          browseParams: str(nav(endpoint, const ['params'])),
-        ),
-      );
-    }
-    return out;
-  }
-
   for (final shelf in findAll(res, 'musicCarouselShelfRenderer')) {
     final title = runsText(
       nav(shelf, const [
@@ -1466,41 +1552,16 @@ ArtistDetail? buildArtist(dynamic res) {
         'runs',
       ]),
     );
-    final items = carouselItems(shelf);
+    final items = _carouselItems(shelf);
     if (items.isEmpty) continue;
-    final tokens = canonicalMetadata(title)
-        .split(' ')
-        .where((t) => t.isNotEmpty)
-        .toSet();
-    List<BrowseItem> destination;
-    if (tokens.contains('album') || tokens.contains('albums')) {
-      destination = albums;
-    } else if (tokens.contains('single') ||
-        tokens.contains('singles') ||
-        tokens.contains('ep') ||
-        tokens.contains('eps')) {
-      destination = singlesAndEps;
-    } else if (tokens.contains('playlist') ||
-        tokens.contains('playlists') ||
-        tokens.contains('featured')) {
-      destination = relatedPlaylists;
-    } else if (tokens.contains('fan') ||
-        tokens.contains('fans') ||
-        tokens.contains('similar')) {
-      destination = similarArtists;
-    } else if (items.any((it) => it.browseId.startsWith('UC'))) {
-      destination = similarArtists;
-    } else if (items.any((it) => it.browseId.startsWith('VL'))) {
-      destination = relatedPlaylists;
-    } else {
-      destination = albums;
-    }
-    destination.addAll(items);
-  }
-
-  List<BrowseItem> distinctById(List<BrowseItem> items) {
-    final seen = <String>{};
-    return items.where((it) => seen.add(it.browseId)).toList();
+    _carouselDestination(
+      title,
+      items,
+      albums: albums,
+      singlesAndEps: singlesAndEps,
+      relatedPlaylists: relatedPlaylists,
+      similarArtists: similarArtists,
+    ).addAll(items);
   }
 
   return ArtistDetail(
@@ -1508,10 +1569,10 @@ ArtistDetail? buildArtist(dynamic res) {
     description: runsText(nav(header, const ['description', 'runs'])),
     thumbnails: parseThumbnails(header),
     topSongs: topSongs,
-    albums: distinctById(albums),
-    singlesAndEps: distinctById(singlesAndEps),
-    relatedPlaylists: distinctById(relatedPlaylists),
-    similarArtists: distinctById(similarArtists),
+    albums: _distinctById(albums),
+    singlesAndEps: _distinctById(singlesAndEps),
+    relatedPlaylists: _distinctById(relatedPlaylists),
+    similarArtists: _distinctById(similarArtists),
     songsPlaylistId: songsPlaylistId,
     songsPlaylistParams: songsPlaylistParams,
     subscribers: subscribers,

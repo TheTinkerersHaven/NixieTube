@@ -48,7 +48,7 @@ void main() {
       final dir = await Directory.systemTemp.createTemp('nt-props-unicode');
       addTearDown(() => dir.delete(recursive: true));
       final file = File('${dir.path}/auth.properties');
-      // Java Properties escapes = as \u003d, exactly as Kotlin writes it.
+      // Java Properties escapes = as \u003d.
       await file.writeAsString(
         'cookie=LOGIN_INFO=abc\\u003d123;sid=x\n'
         'sapisidHash=1_abc\n'
@@ -83,5 +83,4 @@ void main() {
       expect(props['a'], 'hello\nworld\t!\\done=end');
     });
   });
-
 }

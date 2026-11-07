@@ -440,7 +440,10 @@ void main() {
     });
 
     test('keeps musical versions and ordinary parentheses', () {
-      expect(cleanInfoTitle('Song (Remastered 2011)'), 'Song (Remastered 2011)');
+      expect(
+        cleanInfoTitle('Song (Remastered 2011)'),
+        'Song (Remastered 2011)',
+      );
       expect(cleanInfoTitle('Song (Live)'), 'Song (Live)');
       expect(cleanInfoTitle('Song (feat. X)'), 'Song (feat. X)');
       expect(cleanInfoTitle('Song'), 'Song');
@@ -461,7 +464,7 @@ void main() {
             200,
             jsonEncode({
               'track': {'name': 'Engravings', 'playcount': '100'},
-            })
+            }),
           );
         },
       );
@@ -507,7 +510,7 @@ void main() {
                       ],
                     },
                   },
-                })
+                }),
               );
             case 'track.getInfo':
               if (r.uri.queryParameters['mbid'] == 'mb-1') {
@@ -515,12 +518,15 @@ void main() {
                   200,
                   jsonEncode({
                     'track': {'name': 'Engravings', 'listeners': '5'},
-                  })
+                  }),
                 );
               }
               return (
                 200,
-                jsonEncode({'error': '6', 'message': 'The track you requested could not be found'}),
+                jsonEncode({
+                  'error': '6',
+                  'message': 'The track you requested could not be found',
+                }),
               );
             default:
               fail('unexpected call ${r.uri}');
@@ -557,12 +563,15 @@ void main() {
                       ],
                     },
                   },
-                })
+                }),
               );
             case 'track.getInfo':
               return (
                 200,
-                jsonEncode({'error': '6', 'message': 'The track you requested could not be found'}),
+                jsonEncode({
+                  'error': '6',
+                  'message': 'The track you requested could not be found',
+                }),
               );
             default:
               fail('unexpected call ${r.uri}');
@@ -596,20 +605,21 @@ void main() {
                       ],
                     },
                   },
-                })
+                }),
               );
             case 'track.getInfo':
-              return (
-                200,
-                jsonEncode({'error': '6', 'message': 'not found'}),
-              );
+              return (200, jsonEncode({'error': '6', 'message': 'not found'}));
             default:
               fail('unexpected call ${r.uri}');
           }
         },
       );
       expect(
-        await service.trackInfo('Ethan Bortnick', 'Engravings', durationSec: 148),
+        await service.trackInfo(
+          'Ethan Bortnick',
+          'Engravings',
+          durationSec: 148,
+        ),
         isNull,
       );
     });
@@ -630,23 +640,23 @@ void main() {
                   'not a map',
                 ],
               },
-            })
+            }),
           );
         },
       );
       expect(await service.artistTags('Some Artist'), ['pop', 'indie pop']);
     });
 
-    test('returns empty when the artist is unknown or the call fails',
-        () async {
-      startService(
-        handler: (r) async => (
-          200,
-          jsonEncode({'error': '6', 'message': 'not found'}),
-        ),
-      );
-      expect(await service.artistTags('Unknown Artist'), isEmpty);
-    });
+    test(
+      'returns empty when the artist is unknown or the call fails',
+      () async {
+        startService(
+          handler: (r) async =>
+              (200, jsonEncode({'error': '6', 'message': 'not found'})),
+        );
+        expect(await service.artistTags('Unknown Artist'), isEmpty);
+      },
+    );
 
     test('returns empty for a blank artist', () async {
       startService();

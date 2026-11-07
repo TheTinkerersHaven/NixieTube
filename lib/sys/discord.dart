@@ -1,5 +1,4 @@
-// Discord Rich Presence over the local RPC socket, ported from the Kotlin
-// client's payload (same presence fields, same artwork rules).
+// Discord Rich Presence over the local RPC socket.
 //
 // Discord renders the status line from the activity's `name`, and fills it
 // in with the *application* name when we do not send one — so what the
@@ -57,7 +56,7 @@ String discordStatusTextKey(DiscordStatusText mode) => switch (mode) {
   DiscordStatusText.album => 'album',
 };
 
-/// Square 540px YTM artwork for Discord (mirrors the Kotlin artwork rule):
+/// Square 540px YTM artwork for Discord:
 /// any googleusercontent `=w-h` thumbnail is rewritten to
 /// `=w540-h540-l90-rj`, forcing YouTube's image server to center-crop
 /// non-square (4:3 / 16:9) video thumbnails into a square cover. Anything
@@ -429,7 +428,8 @@ class DiscordPresence extends ChangeNotifier {
     } else {
       _pausedAt ??= DateTime.now();
     }
-    final pausedTooLong = !s.playing &&
+    final pausedTooLong =
+        !s.playing &&
         track != null &&
         _pausedAt != null &&
         DateTime.now().difference(_pausedAt!) >= discordPauseHideAfter;

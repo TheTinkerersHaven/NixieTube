@@ -1,5 +1,5 @@
-// Last.fm scrobbling over the ws.audioscrobbler.com API, ported from Kotlin
-// `LastFm.kt`: session auth (request token approved in the browser),
+// Last.fm scrobbling over the ws.audioscrobbler.com API: session auth
+// (request token approved in the browser),
 // MD5-signed calls, now-playing updates on track start, and scrobbles once
 // the standard playback threshold is reached (half the track or 4 minutes,
 // tracks over 30 seconds). Credentials live in [SysConfig]; nothing is sent
@@ -64,8 +64,8 @@ String lastfmArtistName(Track track) {
 }
 
 /// Matches a "feat. X" / "ft. X" / "featuring X" / "w/ X" credit clause,
-/// optionally wrapped in `()`/`[]`, anywhere in a title. Mirrors the Kotlin
-/// `FEATURE_SEGMENT_RE` used for feature-credit stripping.
+/// optionally wrapped in `()`/`[]`, anywhere in a title. Used for
+/// feature-credit stripping.
 final _featureCreditRe = RegExp(
   r'''\s*[\(\[]?(?:feat\.?|ft\.?|featuring|w/)\s+[^)\]]+[\)\]]?''',
   caseSensitive: false,
@@ -165,19 +165,25 @@ class LastFmService extends ChangeNotifier {
         'autocorrect': '1',
       }, root: 'track');
       if (direct != null) return direct;
-      final best = await _searchBestTrack(artist, clean,
-          durationSec: durationSec);
+      final best = await _searchBestTrack(
+        artist,
+        clean,
+        durationSec: durationSec,
+      );
       if (best == null) return null;
       final mbid = best['mbid'];
       if (mbid is String && mbid.isNotEmpty) {
-        return await _callPublic(
-            'track.getInfo', {'mbid': mbid, 'autocorrect': '1'},
-            root: 'track');
+        return await _callPublic('track.getInfo', {
+          'mbid': mbid,
+          'autocorrect': '1',
+        }, root: 'track');
       }
       final candArtist = best['artist'];
       final candTitle = best['name'];
-      if (candArtist is String && candArtist.trim().isNotEmpty &&
-          candTitle is String && candTitle.trim().isNotEmpty) {
+      if (candArtist is String &&
+          candArtist.trim().isNotEmpty &&
+          candTitle is String &&
+          candTitle.trim().isNotEmpty) {
         return await _callPublic('track.getInfo', {
           'artist': candArtist,
           'track': candTitle,
@@ -262,8 +268,7 @@ class LastFmService extends ChangeNotifier {
     final data = res.data is String ? jsonDecode(res.data as String) : res.data;
     if (data is! Map) return null;
     final matches = data['results'];
-    final trackMatches =
-        matches is Map ? matches['trackmatches'] : null;
+    final trackMatches = matches is Map ? matches['trackmatches'] : null;
     var list = const [];
     if (trackMatches is Map) {
       final t = trackMatches['track'];
@@ -278,7 +283,8 @@ class LastFmService extends ChangeNotifier {
       if (score > bestScore) {
         bestScore = score;
         best = Map<String, dynamic>.from(e);
-        bestVerified = _artistMatch(e, artist) || _durationAgrees(e, durationSec);
+        bestVerified =
+            _artistMatch(e, artist) || _durationAgrees(e, durationSec);
       }
     }
     // A title-only match without an artist or duration signal is exactly
@@ -434,12 +440,12 @@ class LastFmService extends ChangeNotifier {
     try {
       final el = await _signedCall(
         _trackParams(
-          'track.updateNowPlaying',
-          artist,
-          track,
-          null,
-          album,
-          durationSec,
+          method: 'track.updateNowPlaying',
+          artist: artist,
+          track: track,
+          timestampSec: null,
+          album: album,
+          durationSec: durationSec,
         ),
         _secret,
       );
@@ -461,12 +467,12 @@ class LastFmService extends ChangeNotifier {
     try {
       final el = await _signedCall(
         _trackParams(
-          'track.scrobble',
-          artist,
-          track,
-          timestampSec,
-          album,
-          durationSec,
+          method: 'track.scrobble',
+          artist: artist,
+          track: track,
+          timestampSec: timestampSec,
+          album: album,
+          durationSec: durationSec,
         ),
         _secret,
       );
@@ -484,14 +490,14 @@ class LastFmService extends ChangeNotifier {
   }
 
   /// Track params shared by now-playing and scrobble calls.
-  Map<String, String> _trackParams(
-    String method,
-    String artist,
-    String track,
-    int? timestampSec,
-    String? album,
-    int durationSec,
-  ) {
+  Map<String, String> _trackParams({
+    required String method,
+    required String artist,
+    required String track,
+    required int? timestampSec,
+    required String? album,
+    required int durationSec,
+  }) {
     return {
       'method': method,
       'api_key': _apiKey,

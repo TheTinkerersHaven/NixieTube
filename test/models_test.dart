@@ -1,5 +1,5 @@
-// Pure-Dart model tests mirroring the Kotlin suites:
-// thumbnail squareness/upscaling, rating parsing, artwork preference.
+// Pure-Dart model tests: thumbnail squareness/upscaling, rating
+// parsing, artwork preference.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/models/models.dart';

@@ -1,4 +1,4 @@
-// Playback queue state, ported from Kotlin `PlayerState`/`RepeatMode`.
+// Playback queue state.
 //
 // Immutable snapshots; the controller owns mutation and emits copies.
 

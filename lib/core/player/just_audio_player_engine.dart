@@ -3,7 +3,7 @@
 // Linux/Windows support comes from `just_audio_media_kit` (registered via
 // `JustAudioMediaKit.ensureInitialized()` in main), which drives the
 // bundled native backend. Control-plane details (retries, prefetch,
-// session) live in [PlayerController], exactly like the Kotlin split.
+// session) live in [PlayerController].
 
 import 'dart:async';
 

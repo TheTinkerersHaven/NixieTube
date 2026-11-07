@@ -116,13 +116,14 @@ void main() {
         tube.authProvider = () async => const AuthSession(accessToken: 'tok');
 
         final ok = await tube.reportWatchtime(
-          'deadbeef',
-          'test-cpn-16char',
-          0.0,
-          5.0,
-          'playing',
-          60.0,
-          null,
+          const WatchtimeBeacon(
+            videoId: 'deadbeef',
+            cpn: 'test-cpn-16char',
+            startSec: 0.0,
+            currentSec: 5.0,
+            state: WatchtimeState.playing,
+            durationSec: 60.0,
+          ),
         );
         tube.close();
 
@@ -206,32 +207,35 @@ void main() {
       );
 
       await tube.reportWatchtime(
-        'vid1',
-        'cpn-1',
-        0.0,
-        1.0,
-        'playing',
-        120.0,
-        null,
+        const WatchtimeBeacon(
+          videoId: 'vid1',
+          cpn: 'cpn-1',
+          startSec: 0.0,
+          currentSec: 1.0,
+          state: WatchtimeState.playing,
+          durationSec: 120.0,
+        ),
       );
       // Two more heartbeats.
       await tube.reportWatchtime(
-        'vid1',
-        'cpn-1',
-        5.0,
-        10.0,
-        'playing',
-        120.0,
-        null,
+        const WatchtimeBeacon(
+          videoId: 'vid1',
+          cpn: 'cpn-1',
+          startSec: 5.0,
+          currentSec: 10.0,
+          state: WatchtimeState.playing,
+          durationSec: 120.0,
+        ),
       );
       await tube.reportWatchtime(
-        'vid1',
-        'cpn-1',
-        10.0,
-        20.0,
-        'playing',
-        120.0,
-        null,
+        const WatchtimeBeacon(
+          videoId: 'vid1',
+          cpn: 'cpn-1',
+          startSec: 10.0,
+          currentSec: 20.0,
+          state: WatchtimeState.playing,
+          durationSec: 120.0,
+        ),
       );
 
       tube.close();
@@ -280,8 +284,26 @@ void main() {
         dio: client,
       );
 
-      await tube.reportWatchtime('v', 'c-1', 0.0, 2.0, 'playing', 30.0, null);
-      await tube.reportWatchtime('v', 'c-1', 2.0, 5.0, 'paused', 30.0, null);
+      await tube.reportWatchtime(
+        const WatchtimeBeacon(
+          videoId: 'v',
+          cpn: 'c-1',
+          startSec: 0.0,
+          currentSec: 2.0,
+          state: WatchtimeState.playing,
+          durationSec: 30.0,
+        ),
+      );
+      await tube.reportWatchtime(
+        const WatchtimeBeacon(
+          videoId: 'v',
+          cpn: 'c-1',
+          startSec: 2.0,
+          currentSec: 5.0,
+          state: WatchtimeState.paused,
+          durationSec: 30.0,
+        ),
+      );
 
       tube.close();
       // First call (playing) and second (paused → final=1).
@@ -315,13 +337,14 @@ void main() {
         final tube = InnerTube(dio: client);
         // No cookie → fetchSessionToken returns null → no beacon candidates.
         final ok = await tube.reportWatchtime(
-          'v',
-          'c-2',
-          0.0,
-          1.0,
-          'playing',
-          30.0,
-          null,
+          const WatchtimeBeacon(
+            videoId: 'v',
+            cpn: 'c-2',
+            startSec: 0.0,
+            currentSec: 1.0,
+            state: WatchtimeState.playing,
+            durationSec: 30.0,
+          ),
         );
         tube.close();
 

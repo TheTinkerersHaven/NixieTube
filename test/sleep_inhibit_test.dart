@@ -15,7 +15,6 @@ import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/sys/sleep_inhibit.dart';
 
-
 class _FakeLock implements SleepInhibitHandle {
   var released = false;
 

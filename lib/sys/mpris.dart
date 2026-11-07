@@ -1,5 +1,5 @@
-// MPRIS D-Bus media-key integration, ported from Kotlin `Mpris.kt`
-// (Linux only). Exposes the player as `org.mpris.MediaPlayer2.nixietube`
+// MPRIS D-Bus media-key integration (Linux only). Exposes the player as
+// `org.mpris.MediaPlayer2.nixietube`
 // with diffed PropertiesChanged updates and Seeked signals.
 
 import 'dart:async';
