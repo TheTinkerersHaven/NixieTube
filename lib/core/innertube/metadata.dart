@@ -1,5 +1,5 @@
-// Pure metadata helpers ported from the Kotlin client's companion logic
-// (artist fixup, album inference, durations, music/region filters).
+// Pure metadata helpers: artist fixup, album inference, durations,
+// music/region filters.
 //
 // No networking here — pure helpers the InnerTube client calls.
 
@@ -258,8 +258,7 @@ ReleaseKind? albumKindFromTags(
 int isoDuration(String? raw) {
   final v = (raw ?? '').trim();
   if (v.isEmpty) return 0;
-  // Unanchored find, like Kotlin: trailing garbage after a valid prefix
-  // still parses.
+  // Unanchored find: trailing garbage after a valid prefix still parses.
   final m = RegExp(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?').firstMatch(v);
   if (m == null) return 0;
   final h = int.tryParse(m.group(1) ?? '') ?? 0;
@@ -298,7 +297,7 @@ bool keepTrack(Map video, String region) {
 }
 
 /// System region for region-restriction filtering: the default locale's
-/// country, else US (mirrors Kotlin `Locale.getDefault().country`).
+/// country, else US.
 String systemRegion() {
   final locale = Platform.localeName; // e.g. "it_IT"
   final country = locale.split('_').skip(1).firstOrNull;

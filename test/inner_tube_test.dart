@@ -116,6 +116,25 @@ void main() {
       expect(_header(seen[0], 'cookie'), isNull);
       tube.close();
     });
+
+    test('cookie requests carry SAPISIDHASH and X-Origin', () async {
+      final seen = <Map<String, dynamic>>[];
+      final client = mockDio((options) async {
+        seen.add(Map.of(options.headers));
+        return _envelope(<String, dynamic>{});
+      });
+      final tube = InnerTube(
+        auth: const AuthSession(
+          cookie: 'SID=x; SAPISID=y',
+          sapisidHash: '1_primary',
+        ),
+        dio: client,
+      );
+      await tube.post('browse', {'browseId': 'FEmusic_library_landing'});
+      expect(_header(seen.single, 'authorization'), 'SAPISIDHASH 1_primary');
+      expect(_header(seen.single, 'x-goog-authuser'), '0');
+      tube.close();
+    });
   });
 
   group('explore feed', () {
@@ -368,10 +387,7 @@ void main() {
       final client = mockDio((options) async {
         expect(options.uri.path, '/youtubei/v1/player');
         calls++;
-        return playerEnvelope({
-          'videoId': 'vid1',
-          'viewCount': '123456',
-        });
+        return playerEnvelope({'videoId': 'vid1', 'viewCount': '123456'});
       });
       final tube = InnerTube(dio: client);
       expect(await tube.viewCount('vid1'), 123456);
@@ -392,8 +408,7 @@ void main() {
       tube.close();
     });
 
-    test('returns zero on error responses and transport failures',
-        () async {
+    test('returns zero on error responses and transport failures', () async {
       final client = mockDio((options) async {
         throw const HttpException('down');
       });

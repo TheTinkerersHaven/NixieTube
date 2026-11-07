@@ -129,7 +129,7 @@ void main() {
         'contentDetails': <String, dynamic>{},
       };
       expect(keepTrack(vlog, 'US'), isFalse);
-      // Category 10 short-circuits before region checks, like Kotlin.
+      // Category 10 short-circuits before the region checks.
       final blocked = {
         'snippet': {'categoryId': '10'},
         'topicDetails': <String, dynamic>{},

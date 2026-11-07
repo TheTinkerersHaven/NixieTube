@@ -1,5 +1,4 @@
-// Minimal YouTube Music InnerTube client over the public WEB_REMIX client,
-// ported from Kotlin `InnerTube`.
+// Minimal YouTube Music InnerTube client over the public WEB_REMIX client.
 //
 // Anonymous by default; [AuthSession] headers (cookie + `SAPISIDHASH`)
 // unlock library, likes and playlists, with an async [authProvider] hook
@@ -51,6 +50,58 @@ const _beaconCbrVer = '153.0.0.0';
 /// Fixed plausible offset between cmt and the rt beacon param.
 const _beaconRtOffsetSec = 25.529;
 
+/// The playback state a watchtime beacon reports.
+enum WatchtimeState {
+  /// The track is playing.
+  playing('playing'),
+
+  /// The track is paused or stopped.
+  paused('paused');
+
+  const WatchtimeState(this.wireName);
+
+  /// The state name the beacon URL carries.
+  final String wireName;
+}
+
+/// One watchtime beacon: the track it reports and the playback state
+/// it was in.
+class WatchtimeBeacon {
+  const WatchtimeBeacon({
+    required this.videoId,
+    required this.cpn,
+    required this.startSec,
+    required this.currentSec,
+    required this.state,
+    required this.durationSec,
+    this.playlistId,
+  });
+
+  /// The reported track.
+  final String videoId;
+
+  /// The client playback nonce of the playback.
+  final String cpn;
+
+  /// The position the reported segment started at, in seconds.
+  final double startSec;
+
+  /// The position the report was taken at, in seconds.
+  final double currentSec;
+
+  /// The playback state at the reported position.
+  final WatchtimeState state;
+
+  /// The track length in seconds.
+  final double durationSec;
+
+  /// The playlist the track played from, when known.
+  final String? playlistId;
+
+  /// True when the beacon opens a new playback.
+  bool get startsPlayback => state == WatchtimeState.playing && startSec == 0.0;
+}
+
 /// Per-playback watchtime session tokens from the InnerTube player
 /// response.
 ///
@@ -59,6 +110,18 @@ const _beaconRtOffsetSec = 25.529;
 /// that track's heartbeats, never shared across plays. Verified against
 /// the real YTM web client: beacons built from these tokens land in
 /// `FEmusic_history`; hand-built URLs without them 204 but never record.
+/// The identity/session tail carried by every stats/* beacon.
+class _BeaconTail {
+  const _BeaconTail({
+    required this.ctx,
+    required this.videoId,
+    this.playlistId,
+  });
+  final WatchtimeContext ctx;
+  final String videoId;
+  final String? playlistId;
+}
+
 class WatchtimeContext {
   const WatchtimeContext({
     required this.ei,
@@ -480,18 +543,18 @@ class InnerTube {
     return '1.$y$m$d.01.00';
   }
 
-  static Map<String, dynamic> _contextBlock() => {
+  Map<String, dynamic> _contextBlock() => {
     'context': {
       'client': {
         'clientName': 'WEB_REMIX',
         'clientVersion': clientVersion(),
         'hl': 'en',
       },
-      'user': <String, dynamic>{},
+      'user': <String, dynamic>{if (!auth.isAnonymous) 'isSignedIn': true},
     },
   };
 
-  static Map<String, dynamic> _bodyWith(Map<String, dynamic> extra) => {
+  Map<String, dynamic> _bodyWith(Map<String, dynamic> extra) => {
     'context': _contextBlock()['context'],
     ...extra,
   };
@@ -509,7 +572,7 @@ class InnerTube {
   }
 
   /// Posts to an InnerTube endpoint with cookie/Bearer/anonymous auth
-  /// fallback, mirroring Kotlin `post`.
+  /// fallback.
   ///
   /// Identical concurrent requests are coalesced so a burst of the same
   /// call shares one in-flight request.
@@ -619,15 +682,23 @@ class InnerTube {
       'Content-Type': 'application/json',
       'User-Agent': _userAgent,
       'Origin': _origin,
+      'X-Youtube-Client-Name': '67',
+      'X-Youtube-Client-Version': clientVersion(),
+      'X-Goog-AuthUser': '0',
+      'Referer': 'https://music.youtube.com/',
     };
+    if (!session.isAnonymous) {
+      headers['X-Youtube-Bootstrap-Logged-In'] = 'true';
+    }
     if (session.accessToken != null) {
       headers['Authorization'] = 'Bearer ${session.accessToken}';
       headers['X-Goog-Request-Time'] =
           (DateTime.now().millisecondsSinceEpoch ~/ 1000).toString();
     } else {
       if (session.cookie != null) headers['Cookie'] = session.cookie!;
-      if (session.sapisidHash != null) {
-        headers['Authorization'] = 'SAPISIDHASH ${session.sapisidHash}';
+      final sapisid = session.sapisidHash;
+      if (sapisid != null && sapisid.isNotEmpty) {
+        headers['Authorization'] = 'SAPISIDHASH $sapisid';
       }
     }
     final res = await _dio
@@ -839,43 +910,72 @@ class InnerTube {
       'contents',
     ]);
     if (sections is! List) return {};
+
+    final raw = _collectSearchShelves(sections);
+    final groups = _groupSearchItems(raw);
+    if (canonicalMetadata(query).isNotEmpty) {
+      await _completeSearchMatches(query, groups);
+    }
+    return _searchResultSections(groups);
+  }
+
+  /// Collects the raw shelves of a search response.
+  ///
+  /// Shelves sit at the top level or inside an `itemSectionRenderer`;
+  /// both are collected, and the loose song rows are kept apart.
+  Map<String, List<ShelfItem>> _collectSearchShelves(List<dynamic> sections) {
     final raw = <String, List<ShelfItem>>{};
     final directSongs = <SongItem>[];
     for (final section in sections) {
       if (section is! Map) continue;
-      // Shelves may sit at top level or inside itemSectionRenderer.
-      final candidates = <Map>[section];
-      final inner = nav(section, const ['itemSectionRenderer', 'contents']);
-      if (inner is List) {
-        for (final it in inner) {
-          if (it is Map) candidates.add(it);
-        }
-      }
-      for (final c in candidates) {
-        if (c.containsKey('musicShelfRenderer') ||
-            c.containsKey('musicCardShelfRenderer')) {
-          parseSearchShelf(c, raw);
+      for (final candidate in _searchCandidates(section)) {
+        if (candidate.containsKey('musicShelfRenderer') ||
+            candidate.containsKey('musicCardShelfRenderer')) {
+          parseSearchShelf(candidate, raw);
           continue;
         }
-        final li = c['musicResponsiveListItemRenderer'];
-        if (li != null) {
-          final song = parseListItem(li);
-          if (song != null) {
-            directSongs.add(SongItem(song));
-          } else {
-            final b = parseBrowseItem(li);
-            if (b != null) {
-              raw.putIfAbsent('Browse', () => []).add(b);
-            }
-          }
-        }
+        _collectSearchRow(candidate, raw, directSongs);
       }
     }
     if (directSongs.isNotEmpty) {
       raw.putIfAbsent('Songs', () => []).addAll(directSongs);
     }
+    return raw;
+  }
 
-    // Normalize locale/shelf-specific sections into stable categories.
+  /// The renderers of one search section, unwrapping the item section.
+  List<Map> _searchCandidates(Map section) {
+    final candidates = <Map>[section];
+    final inner = nav(section, const ['itemSectionRenderer', 'contents']);
+    if (inner is List) {
+      for (final item in inner) {
+        if (item is Map) candidates.add(item);
+      }
+    }
+    return candidates;
+  }
+
+  /// Parses one loose search row into a song or a browse item.
+  void _collectSearchRow(
+    Map candidate,
+    Map<String, List<ShelfItem>> raw,
+    List<SongItem> directSongs,
+  ) {
+    final renderer = candidate['musicResponsiveListItemRenderer'];
+    if (renderer == null) return;
+    final song = parseListItem(renderer);
+    if (song != null) {
+      directSongs.add(SongItem(song));
+      return;
+    }
+    final browse = parseBrowseItem(renderer);
+    if (browse != null) {
+      raw.putIfAbsent('Browse', () => []).add(browse);
+    }
+  }
+
+  /// Groups the raw shelves into the stable result categories.
+  _SearchGroups _groupSearchItems(Map<String, List<ShelfItem>> raw) {
     final songs = <String, SongItem>{};
     final releases = <String, BrowseItem>{};
     final artists = <String, BrowseItem>{};
@@ -892,160 +992,195 @@ class InnerTube {
         }
       }
     }
+    return _SearchGroups(songs: songs, releases: releases, artists: artists);
+  }
+
+  /// Completes the result set for a query that names a recording.
+  ///
+  /// Fills in the tracks of a matching single/EP, pulls the named
+  /// recording from the artist's catalog when the results lack it, and
+  /// ranks everything by text match.
+  Future<void> _completeSearchMatches(
+    String query,
+    _SearchGroups groups,
+  ) async {
     final queryCanon = canonicalMetadata(query);
-    final dominantIds = artists.values.map((a) => a.browseId).toSet();
-    final dominantNames = artists.values
-        .map((a) => canonicalMetadata(a.title))
-        .where((n) => n.isNotEmpty)
-        .toSet();
+    final dominantNames = groups.dominantArtistNames;
+    final isDominantRelease = groups.isDominantRelease;
 
-    bool isDominantRelease(BrowseItem b) {
-      if (dominantNames.isEmpty) return false;
-      final subtitle = ' ${canonicalMetadata(b.subtitle)} ';
-      return dominantNames.any((n) => subtitle.contains(' $n '));
+    await _addMatchingReleaseTracks(queryCanon, groups, isDominantRelease);
+    await _addArtistTrackMatches(queryCanon, groups);
+    _rankSearchGroups(query, groups, dominantNames, isDominantRelease);
+  }
+
+  /// Adds the tracks of a release whose title matches the query.
+  ///
+  /// A single/EP sometimes arrives with no dedicated song row; when the
+  /// query names such a release exactly, its title tracks come first.
+  Future<void> _addMatchingReleaseTracks(
+    String queryCanon,
+    _SearchGroups groups,
+    bool Function(BrowseItem) isDominantRelease,
+  ) async {
+    final candidates =
+        groups.releases.values
+            .where(
+              (it) =>
+                  (it.kind == ReleaseKind.single ||
+                      it.kind == ReleaseKind.ep) &&
+                  canonicalMetadata(it.title) == queryCanon,
+            )
+            .toList()
+          ..sort(
+            (a, b) =>
+                (isDominantRelease(b) ? 1 : 0) - (isDominantRelease(a) ? 1 : 0),
+          );
+    final added = <Track>[];
+    for (final release in candidates.take(2)) {
+      try {
+        final detail = await album(release.browseId);
+        if (detail != null) added.addAll(detail.tracks);
+      } catch (_) {}
+    }
+    final fresh = added
+        .where(
+          (t) =>
+              canonicalMetadata(t.title) == queryCanon &&
+              !groups.songs.containsKey(t.videoId),
+        )
+        .toList();
+    if (fresh.isEmpty) return;
+    final distinct = <String, SongItem>{
+      for (final t in fresh) t.videoId: SongItem(t),
+    };
+    for (final entry in groups.songs.entries) {
+      distinct.putIfAbsent(entry.key, () => entry.value);
+    }
+    groups.songs
+      ..clear()
+      ..addAll(distinct);
+  }
+
+  /// Pulls the named recording from the artist's catalog.
+  ///
+  /// "Title artist" queries sometimes return the artist's other songs but
+  /// not the named recording itself (e.g. "kid again ivycomb" lists
+  /// ivycomb tracks without "Kid Again"). When no song matches both the
+  /// title and an artist word, the queried artist's top songs are fetched
+  /// (one extra request) and any title match is merged in.
+  Future<void> _addArtistTrackMatches(
+    String queryCanon,
+    _SearchGroups groups,
+  ) async {
+    final queryTokens = _wordSet(queryCanon);
+    bool namesTitleAndArtist(SongItem song) {
+      final titleWords = _wordSet(song.track.title);
+      if (titleWords.isEmpty || !titleWords.every(queryTokens.contains)) {
+        return false;
+      }
+      final artistWords = song.track.artists.expand((a) => _wordSet(a.name));
+      return artistWords.any(queryTokens.contains);
     }
 
-    if (queryCanon.isNotEmpty) {
-      // A single/EP sometimes arrives with no dedicated song row. When the
-      // query names such a release exactly, surface its title tracks first.
-      final cands =
-          releases.values
-              .where(
-                (it) =>
-                    (it.kind == ReleaseKind.single ||
-                        it.kind == ReleaseKind.ep) &&
-                    canonicalMetadata(it.title) == queryCanon,
-              )
-              .toList()
-            ..sort(
-              (a, b) =>
-                  (isDominantRelease(b) ? 1 : 0) -
-                  (isDominantRelease(a) ? 1 : 0),
-            );
-      final added = <Track>[];
-      for (final release in cands.take(2)) {
-        try {
-          final detail = await album(release.browseId);
-          if (detail != null) added.addAll(detail.tracks);
-        } catch (_) {}
+    if (groups.songs.values.any(namesTitleAndArtist)) return;
+    final targets = groups.artists.values
+        .where((artist) {
+          final nameWords = _wordSet(artist.title);
+          return nameWords.isNotEmpty && nameWords.every(queryTokens.contains);
+        })
+        .take(1);
+    for (final target in targets) {
+      final hits = await _artistTitleMatches(target, queryTokens, groups);
+      if (hits.isEmpty) continue;
+      final merged = <String, SongItem>{
+        for (final track in hits) track.videoId: SongItem(track),
+      };
+      for (final entry in groups.songs.entries) {
+        merged.putIfAbsent(entry.key, () => entry.value);
       }
-      final fresh = added
-          .where(
-            (t) =>
-                canonicalMetadata(t.title) == queryCanon &&
-                !songs.containsKey(t.videoId),
-          )
-          .toList();
-      final distinct = <String, SongItem>{};
-      for (final t in fresh) {
-        distinct.putIfAbsent(t.videoId, () => SongItem(t));
-      }
-      if (distinct.isNotEmpty) {
-        for (final e in songs.entries) {
-          distinct.putIfAbsent(e.key, () => e.value);
-        }
-        songs
-          ..clear()
-          ..addAll(distinct);
-      }
-      // "Title artist" queries sometimes return the artist's other
-      // songs but not the named recording itself (e.g. "kid again
-      // ivycomb" lists ivycomb tracks without "Kid Again"). When no
-      // song matches both the title and an artist word, pull the
-      // queried artist's top songs (one extra fetch) and merge any
-      // title match in.
-      final queryTokens = queryCanon
-          .split(' ')
-          .where((t) => t.isNotEmpty)
-          .toSet();
-      Set<String> wordSet(String v) =>
-          canonicalMetadata(v).split(' ').where((t) => t.isNotEmpty).toSet();
-      bool namesTitleAndArtist(SongItem s) {
-        final titleWords = wordSet(s.track.title);
-        if (titleWords.isEmpty || !titleWords.every(queryTokens.contains)) {
-          return false;
-        }
-        final artistWords = s.track.artists.expand((a) => wordSet(a.name));
-        return artistWords.any(queryTokens.contains);
-      }
-
-      if (songs.values.every((s) => !namesTitleAndArtist(s))) {
-        final targets = artists.values
-            .where((a) {
-              final nameWords = wordSet(a.title);
-              return nameWords.isNotEmpty &&
-                  nameWords.every(queryTokens.contains);
-            })
-            .take(1);
-        for (final target in targets) {
-          ArtistDetail? detail;
-          try {
-            detail = await artist(target.browseId);
-          } catch (_) {}
-          if (detail == null) continue;
-          bool titleMatches(Track t) {
-            final titleWords = wordSet(t.title);
-            return titleWords.isNotEmpty &&
-                titleWords.every(queryTokens.contains) &&
-                !songs.containsKey(t.videoId);
-          }
-
-          var hits = detail.topSongs.where(titleMatches).toList();
-          // Top songs only skim the catalog: older cuts (e.g. a "Kid
-          // Again" buried past the latest singles) surface through the
-          // artist's full songs playlist instead.
-          if (hits.isEmpty && detail.songsPlaylistId != null) {
-            try {
-              final full = await playlist(
-                detail.songsPlaylistId!,
-                params: detail.songsPlaylistParams,
-              );
-              hits = (full?.tracks ?? []).where(titleMatches).toList();
-            } catch (_) {}
-          }
-          if (hits.isEmpty) continue;
-          final merged = <String, SongItem>{
-            for (final t in hits) t.videoId: SongItem(t),
-          };
-          for (final e in songs.entries) {
-            merged.putIfAbsent(e.key, () => e.value);
-          }
-          songs
-            ..clear()
-            ..addAll(merged);
-        }
-      }
-      // Best text match first (exact titles, then title+artist token
-      // overlap so "title artist" queries surface the right
-      // recording), ties keeping YouTube's order.
-      final ranked = rankSearchSongs(
-        songs.values,
-        query,
-        dominantIds: dominantIds,
-        dominantNames: dominantNames,
-      );
-      songs.clear();
-      for (final s in ranked) {
-        songs[s.track.videoId] = s;
-      }
-      // Same preference inside releases.
-      if (dominantNames.isNotEmpty) {
-        final own = releases.values.where(isDominantRelease).toList();
-        final other = releases.values
-            .where((r) => !isDominantRelease(r))
-            .toList();
-        releases.clear();
-        for (final r in [...own, ...other]) {
-          releases[r.browseId] = r;
-        }
-      }
+      groups.songs
+        ..clear()
+        ..addAll(merged);
     }
+  }
+
+  /// The tracks of [target] whose title matches the query tokens.
+  Future<List<Track>> _artistTitleMatches(
+    BrowseItem target,
+    Set<String> queryTokens,
+    _SearchGroups groups,
+  ) async {
+    bool titleMatches(Track track) {
+      final titleWords = _wordSet(track.title);
+      return titleWords.isNotEmpty &&
+          titleWords.every(queryTokens.contains) &&
+          !groups.songs.containsKey(track.videoId);
+    }
+
+    ArtistDetail? detail;
+    try {
+      detail = await artist(target.browseId);
+    } catch (_) {}
+    if (detail == null) return const [];
+
+    var hits = detail.topSongs.where(titleMatches).toList();
+    // Top songs only skim the catalog: older cuts (e.g. a "Kid Again"
+    // buried past the latest singles) surface through the artist's full
+    // songs playlist instead.
+    if (hits.isEmpty && detail.songsPlaylistId != null) {
+      try {
+        final full = await playlist(
+          detail.songsPlaylistId!,
+          params: detail.songsPlaylistParams,
+        );
+        hits = (full?.tracks ?? []).where(titleMatches).toList();
+      } catch (_) {}
+    }
+    return hits;
+  }
+
+  /// Ranks the songs by text match and the releases by artist match.
+  void _rankSearchGroups(
+    String query,
+    _SearchGroups groups,
+    Set<String> dominantNames,
+    bool Function(BrowseItem) isDominantRelease,
+  ) {
+    // Best text match first (exact titles, then title+artist token
+    // overlap so "title artist" queries surface the right recording),
+    // ties keeping YouTube's order.
+    final ranked = rankSearchSongs(
+      groups.songs.values,
+      query,
+      dominantIds: groups.dominantArtistIds,
+      dominantNames: dominantNames,
+    );
+    groups.songs.clear();
+    for (final song in ranked) {
+      groups.songs[song.track.videoId] = song;
+    }
+    // Same preference inside releases.
+    if (dominantNames.isEmpty) return;
+    final own = groups.releases.values.where(isDominantRelease).toList();
+    final other = groups.releases.values
+        .where((release) => !isDominantRelease(release))
+        .toList();
+    groups.releases.clear();
+    for (final release in [...own, ...other]) {
+      groups.releases[release.browseId] = release;
+    }
+  }
+
+  /// The stable result sections of a completed search.
+  Map<String, List<ShelfItem>> _searchResultSections(_SearchGroups groups) {
     final out = <String, List<ShelfItem>>{};
-    if (songs.isNotEmpty) out['Songs'] = songs.values.toList();
-    if (releases.isNotEmpty) {
-      out['Albums/EP/Singles'] = releases.values.toList();
+    if (groups.songs.isNotEmpty) out['Songs'] = groups.songs.values.toList();
+    if (groups.releases.isNotEmpty) {
+      out['Albums/EP/Singles'] = groups.releases.values.toList();
     }
-    if (artists.isNotEmpty) out['Artists'] = artists.values.toList();
+    if (groups.artists.isNotEmpty) {
+      out['Artists'] = groups.artists.values.toList();
+    }
     return out;
   }
 
@@ -1643,102 +1778,87 @@ class InnerTube {
       if (_isErrorResponse(res)) return const [];
       final out = <AccountPlaylist>[];
       for (final node in findAll(res, 'musicTwoRowItemRenderer')) {
-        final title = runsText(nav(node, const ['title', 'runs']));
-        if (title.isEmpty || title == 'New playlist') continue;
-        final browseId =
-            str(
-              nav(node, const [
-                'navigationEndpoint',
-                'browseEndpoint',
-                'browseId',
-              ]),
-            ) ??
-            '';
-        // Only the account's own playlists (`VL` + `PL…`) are
-        // editable; the rest are YouTube's own rows.
-        if (!browseId.startsWith('VLPL')) continue;
-        final id = browseId.substring(2);
-        var count = 0;
-        final subtitle = runsText(nav(node, const ['subtitle', 'runs']));
-        final m = RegExp(r'(\d+)\s+(?:track|song)s?').firstMatch(subtitle);
-        if (m != null) count = int.tryParse(m.group(1)!) ?? 0;
-        String? art;
-        final thumbs = nav(node, const [
-          'thumbnailRenderer',
-          'musicThumbnailRenderer',
-          'thumbnail',
-          'thumbnails',
-        ]);
-        if (thumbs is List && thumbs.isNotEmpty) {
-          art = str((thumbs.last as Map?)?['url']);
-        }
-        // The owner is the first subtitle run, which links to the
-        // owner's channel.
-        var owner = '';
-        var ownerId = '';
-        final runs = nav(node, const ['subtitle', 'runs']);
-        if (runs is List && runs.isNotEmpty) {
-          for (final r in runs) {
-            final text = (str(nav(r, const ['text'])) ?? '').trim();
-            final lower = text.toLowerCase();
-            if (lower == 'public' ||
-                lower == 'unlisted' ||
-                lower == 'public playlist' ||
-                lower == 'unlisted playlist' ||
-                (lower.contains('playlist') &&
-                    (lower.startsWith('public') ||
-                        lower.startsWith('unlisted')))) {
-              continue;
-            }
-            final id =
-                str(
-                  nav(r, const [
-                    'navigationEndpoint',
-                    'browseEndpoint',
-                    'browseId',
-                  ]),
-                ) ??
-                '';
-            if (id.startsWith('UC')) {
-              owner = text;
-              ownerId = id;
-              break;
-            }
-            if (owner.isEmpty) {
-              owner = text;
-              ownerId = id;
-            }
-          }
-          if (owner.isEmpty) {
-            final first = runs.first;
-            owner = str(nav(first, const ['text'])) ?? '';
-            ownerId =
-                str(
-                  nav(first, const [
-                    'navigationEndpoint',
-                    'browseEndpoint',
-                    'browseId',
-                  ]),
-                ) ??
-                '';
-          }
-        }
-        out.add(
-          AccountPlaylist(
-            id: id,
-            title: title,
-            itemCount: count,
-            art: art,
-            arts: art == null ? const [] : [art],
-            owner: owner,
-            ownerId: ownerId,
-          ),
-        );
+        final pl = _parseLibraryPlaylistNode(node);
+        if (pl != null) out.add(pl);
       }
       return out;
     } catch (_) {
       return const [];
     }
+  }
+
+  /// Parses one account playlist row into an [AccountPlaylist], or null
+  /// when the row is not an editable playlist ("New playlist", YouTube's
+  /// own rows, or a missing id).
+  AccountPlaylist? _parseLibraryPlaylistNode(dynamic node) {
+    final title = runsText(nav(node, const ['title', 'runs']));
+    if (title.isEmpty || title == 'New playlist') return null;
+    final browseId =
+        str(
+          nav(node, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
+        ) ??
+        '';
+    // Only the account's own playlists (`VL` + `PL…`) are
+    // editable; the rest are YouTube's own rows.
+    if (!browseId.startsWith('VLPL')) return null;
+    final id = browseId.substring(2);
+    var count = 0;
+    final subtitle = runsText(nav(node, const ['subtitle', 'runs']));
+    final m = RegExp(r'(\d+)\s+(?:track|song)s?').firstMatch(subtitle);
+    if (m != null) count = int.tryParse(m.group(1)!) ?? 0;
+    String? art;
+    final thumbs = nav(node, const [
+      'thumbnailRenderer',
+      'musicThumbnailRenderer',
+      'thumbnail',
+      'thumbnails',
+    ]);
+    if (thumbs is List && thumbs.isNotEmpty) {
+      art = str((thumbs.last as Map?)?['url']);
+    }
+    // The owner is the first subtitle run linking to the owner's channel.
+    final owner = _ownerOfSubtitleRuns(nav(node, const ['subtitle', 'runs']));
+    return AccountPlaylist(
+      id: id,
+      title: title,
+      itemCount: count,
+      art: art,
+      arts: art == null ? const [] : [art],
+      owner: owner.$1,
+      ownerId: owner.$2,
+    );
+  }
+
+  /// The channel owner of subtitle runs, or ('', '').
+  (String, String) _ownerOfSubtitleRuns(dynamic runs) {
+    if (runs is! List || runs.isEmpty) return ('', '');
+    for (final r in runs) {
+      final owner = _ownerOfOneRun(r);
+      if (owner.$1.isNotEmpty) return owner;
+    }
+    final first = runs.first;
+    return _ownerOfOneRun(first);
+  }
+
+  /// The channel owner of one subtitle run, or ('', '').
+  (String, String) _ownerOfOneRun(dynamic r) {
+    final text = (str(nav(r, const ['text'])) ?? '').trim();
+    final lower = text.toLowerCase();
+    if (lower == 'public' ||
+        lower == 'unlisted' ||
+        lower == 'public playlist' ||
+        lower == 'unlisted playlist' ||
+        (lower.contains('playlist') &&
+            (lower.startsWith('public') || lower.startsWith('unlisted')))) {
+      return ('', '');
+    }
+    final id =
+        str(
+          nav(r, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
+        ) ??
+        '';
+    if (!id.startsWith('UC')) return (text, id);
+    return (text, id);
   }
 
   /// Followed artists (channels the account subscribes to) from the
@@ -1953,23 +2073,6 @@ class InnerTube {
     }
   }
 
-  /// Whether the account currently subscribes to [channelId], read
-  /// from the channel page's subscribe button.
-  Future<bool> isSubscribed(String channelId) async {
-    if (channelId.trim().isEmpty) return false;
-    try {
-      final res = await post('browse', _bodyWith({'browseId': channelId}));
-      if (_isErrorResponse(res)) return false;
-      for (final node in findAll(res, 'subscribeButtonRenderer')) {
-        final subscribed = nav(node, const ['subscribed']);
-        if (subscribed == true) return true;
-      }
-      return false;
-    } catch (_) {
-      return false;
-    }
-  }
-
   /// The signed-in channel's own id, read from the account menu's
   /// "Your channel" entry.
   Future<String?> ownChannelId() async {
@@ -2137,148 +2240,144 @@ class InnerTube {
     } catch (_) {
       res = null;
     }
-    if (res != null && result.rating == RatingStatus.unknown) {
-      final overlay = str(
-        nav(res, const [
-          'playerOverlays',
-          'playerOverlayRenderer',
-          'actions',
-          0,
-          'likeButtonRenderer',
-          'likeStatus',
-        ]),
-      );
-      final overlayRating = overlay == null
-          ? RatingStatus.unknown
-          : RatingStatus.fromValue(overlay);
-      var panelRating = RatingStatus.unknown;
-      for (final p in panelsOf(res)) {
-        if (p.videoId == track.videoId) {
-          panelRating = p.rating;
-          break;
-        }
-      }
-      final fetched = overlayRating != RatingStatus.unknown
-          ? overlayRating
-          : panelRating;
+    final panels = res == null
+        ? const <Track>[]
+        : panelsOf(res).where((p) => p.videoId == track.videoId).toList();
+    final panel = panels.isEmpty ? null : panels.first;
+
+    if (result.rating == RatingStatus.unknown) {
+      final fetched = _fetchedRating(res, panel);
       if (fetched != RatingStatus.unknown) {
         result = result.copyWith(rating: fetched);
       }
     }
-    Track? panel;
-    if (res != null) {
-      for (final p in panelsOf(res)) {
-        if (p.videoId == track.videoId) {
-          panel = p;
-          break;
-        }
-      }
-    }
     if (panel != null) {
-      final p = panel;
-      final replaceGenericArtist =
-          result.artists.isEmpty ||
-          result.artistNames().trim().toLowerCase() == 'release';
-      final existingKeys = result.artists
-          .map((a) => canonicalMetadata(a.name))
-          .toSet();
-      final panelAddsArtist = p.artists.any(
-        (a) => !existingKeys.contains(canonicalMetadata(a.name)),
-      );
-      final panelAddsIdentity = p.artists.any((incoming) {
-        final key = canonicalMetadata(incoming.name);
-        return result.artists.any(
-          (existing) =>
-              canonicalMetadata(existing.name) == key &&
-              (existing.browseId == null || existing.browseId!.isEmpty) &&
-              incoming.browseId != null &&
-              incoming.browseId!.isNotEmpty,
-        );
-      });
-      final panelHasMoreArtists = p.artists.length > result.artists.length;
-      final currentAlbum = result.album;
-      final panelAlbum = p.album;
-      final knownArtists = [...result.artists, ...p.artists];
-      final currentAlbumIsUnlinkedArtist =
-          currentAlbum != null &&
-          (currentAlbum.browseId == null || currentAlbum.browseId!.isEmpty) &&
-          currentAlbum.kind == null &&
-          knownArtists.any(
-            (a) =>
-                canonicalMetadata(a.name) ==
-                canonicalMetadata(currentAlbum.name),
-          );
-      AlbumRef? preferredAlbum;
-      if (currentAlbumIsUnlinkedArtist && panelAlbum == null) {
-        preferredAlbum = null;
-      } else if (panelAlbum == null) {
-        preferredAlbum = currentAlbum;
-      } else if (currentAlbum == null) {
-        preferredAlbum = panelAlbum;
-      } else if (currentAlbum.name.trim().toLowerCase() == 'release') {
-        preferredAlbum = panelAlbum;
-      } else if (currentAlbumIsUnlinkedArtist) {
-        preferredAlbum = panelAlbum;
-      } else if ((currentAlbum.browseId == null ||
-              currentAlbum.browseId!.isEmpty) &&
-          panelAlbum.browseId != null &&
-          panelAlbum.browseId!.isNotEmpty) {
-        preferredAlbum = panelAlbum;
-      } else if (currentAlbum.kind == null && panelAlbum.kind != null) {
-        preferredAlbum = panelAlbum;
-      } else {
-        preferredAlbum = currentAlbum;
-      }
-      final panelAddsValue =
-          replaceGenericArtist ||
-          panelHasMoreArtists ||
-          panelAddsArtist ||
-          panelAddsIdentity;
-      final seenUrls = <String>{};
-      final thumbs = <Thumbnail>[];
-      for (final t in [...result.thumbnails, ...p.thumbnails]) {
-        if (seenUrls.add(t.url)) thumbs.add(t);
-      }
-      result = result.copyWith(
-        title: preferredTrackTitle(result.title, p.title),
-        artists: (p.artists.isNotEmpty && panelAddsValue)
-            ? p.artists
-            : result.artists,
-        album: preferredAlbum,
-        thumbnails: thumbs,
-        // Panel badge/duration fill what's missing: list sources often
-        // lack both (search rows carry no length, no badges).
-        // OR, never overwrite — a missing badge means "not marked",
-        // not "clean", and catalog durations beat panel ones.
-        explicit: result.explicit || p.explicit,
-        durationSec: result.durationSec > 0
-            ? result.durationSec
-            : p.durationSec,
-      );
+      result = _applyPanel(result, panel);
       // Remember the resolved square cover so lists can show it too.
       final sqCover = _largestSquareThumb(result.thumbnails);
       if (sqCover != null) noteSquareCover(result.videoId, sqCover);
     }
-    final ref = result.album;
-    final refId = ref?.browseId;
-    if (ref != null &&
-        refId != null &&
-        (ref.kind == null || ref.year.isEmpty)) {
-      AlbumDetail? detail = _albumDetailsCache[refId];
-      detail ??= await album(refId).catchError((_) => null);
-      if (detail != null) {
-        _albumDetailsCache[refId] = detail;
-        result = result.copyWith(
-          album: AlbumRef(
-            detail.title.isEmpty ? ref.name : detail.title,
-            browseId: refId,
-            kind: detail.kind ?? ref.kind,
-            year: detail.year.isNotEmpty ? detail.year : ref.year,
-          ),
-        );
-      }
+    return _fillAlbumDetails(result);
+  }
+
+  /// The rating a watch-next response carries for the track.
+  RatingStatus _fetchedRating(dynamic res, Track? panel) {
+    if (res == null) return RatingStatus.unknown;
+    final overlay = str(
+      nav(res, const [
+        'playerOverlays',
+        'playerOverlayRenderer',
+        'actions',
+        0,
+        'likeButtonRenderer',
+        'likeStatus',
+      ]),
+    );
+    final overlayRating = overlay == null
+        ? RatingStatus.unknown
+        : RatingStatus.fromValue(overlay);
+    if (overlayRating != RatingStatus.unknown) return overlayRating;
+    return panel?.rating ?? RatingStatus.unknown;
+  }
+
+  /// The track as the watch-next panel describes it.
+  Track _applyPanel(Track track, Track panel) {
+    final replaceGenericArtist =
+        track.artists.isEmpty ||
+        track.artistNames().trim().toLowerCase() == 'release';
+    final existingKeys = track.artists
+        .map((artist) => canonicalMetadata(artist.name))
+        .toSet();
+    final panelAddsArtist = panel.artists.any(
+      (artist) => !existingKeys.contains(canonicalMetadata(artist.name)),
+    );
+    final panelAddsIdentity = panel.artists.any((incoming) {
+      final key = canonicalMetadata(incoming.name);
+      return track.artists.any(
+        (existing) =>
+            canonicalMetadata(existing.name) == key &&
+            (existing.browseId == null || existing.browseId!.isEmpty) &&
+            incoming.browseId != null &&
+            incoming.browseId!.isNotEmpty,
+      );
+    });
+    final panelHasMoreArtists = panel.artists.length > track.artists.length;
+    final panelAddsValue =
+        replaceGenericArtist ||
+        panelHasMoreArtists ||
+        panelAddsArtist ||
+        panelAddsIdentity;
+    final seenUrls = <String>{};
+    final thumbnails = <Thumbnail>[];
+    for (final thumb in [...track.thumbnails, ...panel.thumbnails]) {
+      if (seenUrls.add(thumb.url)) thumbnails.add(thumb);
     }
-    return result;
+    return track.copyWith(
+      title: preferredTrackTitle(track.title, panel.title),
+      artists: (panel.artists.isNotEmpty && panelAddsValue)
+          ? panel.artists
+          : track.artists,
+      album: _preferredAlbum(track, panel),
+      thumbnails: thumbnails,
+      // Panel badge/duration fill what's missing: list sources often
+      // lack both (search rows carry no length, no badges).
+      // OR, never overwrite — a missing badge means "not marked",
+      // not "clean", and catalog durations beat panel ones.
+      explicit: track.explicit || panel.explicit,
+      durationSec: track.durationSec > 0
+          ? track.durationSec
+          : panel.durationSec,
+    );
+  }
+
+  /// The album reference that describes the track best.
+  ///
+  /// The panel wins over a placeholder ("Release") or an unlinked album
+  /// that only repeats an artist name; otherwise the catalog reference
+  /// stays.
+  AlbumRef? _preferredAlbum(Track track, Track panel) {
+    final current = track.album;
+    final fromPanel = panel.album;
+    final currentIsUnlinkedArtist =
+        current != null &&
+        (current.browseId == null || current.browseId!.isEmpty) &&
+        current.kind == null &&
+        [...track.artists, ...panel.artists].any(
+          (artist) =>
+              canonicalMetadata(artist.name) == canonicalMetadata(current.name),
+        );
+    if (currentIsUnlinkedArtist && fromPanel == null) return null;
+    if (fromPanel == null) return current;
+    if (current == null) return fromPanel;
+    if (current.name.trim().toLowerCase() == 'release') return fromPanel;
+    if (currentIsUnlinkedArtist) return fromPanel;
+    if ((current.browseId == null || current.browseId!.isEmpty) &&
+        fromPanel.browseId != null &&
+        fromPanel.browseId!.isNotEmpty) {
+      return fromPanel;
+    }
+    if (current.kind == null && fromPanel.kind != null) return fromPanel;
+    return current;
+  }
+
+  /// The track with the album kind and year filled in.
+  Future<Track> _fillAlbumDetails(Track track) async {
+    final ref = track.album;
+    final refId = ref?.browseId;
+    if (ref == null || refId == null) return track;
+    if (ref.kind != null && ref.year.isNotEmpty) return track;
+    AlbumDetail? detail = _albumDetailsCache[refId];
+    detail ??= await album(refId).catchError((_) => null);
+    if (detail == null) return track;
+    _albumDetailsCache[refId] = detail;
+    return track.copyWith(
+      album: AlbumRef(
+        detail.title.isEmpty ? ref.name : detail.title,
+        browseId: refId,
+        kind: detail.kind ?? ref.kind,
+        year: detail.year.isNotEmpty ? detail.year : ref.year,
+      ),
+    );
   }
 
   /// Enriches many tracks concurrently while preserving order; failures
@@ -2558,118 +2657,60 @@ class InnerTube {
   /// End-to-end verified: this sequence lands in `FEmusic_history` within
   /// ~2 minutes; the previous hand-built URLs (form-encoded token, no
   /// session params) never did.
-  Future<bool> reportWatchtime(
-    String videoId,
-    String cpn,
-    double startSec,
-    double currentSec,
-    String state,
-    double durationSec, [
-    String? playlistId,
-  ]) async {
+  /// Sends the watchtime beacon sequence for [beacon]: the opening
+  /// `stats/playback` record for new tracks, the `stats/watchtime`
+  /// heartbeat, and the structured `feedback` playerEvent. Returns true
+  /// when at least one beacon accepted the request.
+  Future<bool> reportWatchtime(WatchtimeBeacon beacon) async {
+    final videoId = beacon.videoId;
+    final cpn = beacon.cpn;
+    final startSec = beacon.startSec;
+    final currentSec = beacon.currentSec;
+    final state = beacon.state.wireName;
     if (videoId.trim().isEmpty || cpn.trim().isEmpty) return false;
-    // The XSRF token is the auth that makes beacons record history.
-    // Refresh it lazily on first use after launch/login.
-    var token = auth.sessionToken;
-    if (token == null || token.isEmpty) {
-      try {
-        token = await fetchSessionToken();
-      } catch (_) {
-        token = null;
-      }
-      if (token != null && token.isNotEmpty) {
-        final s = auth;
-        auth = AuthSession(
-          cookie: s.cookie,
-          sapisidHash: s.sapisidHash,
-          accessToken: s.accessToken,
-          sessionToken: token,
-        );
-      }
-    }
     final referer = 'https://music.youtube.com/watch?v=$videoId';
+    final token = await _resolveXsrfToken();
     // Per-playback session tokens: fetched once per cpn, reused for the
     // track's heartbeats. A later heartbeat retries the fetch when the
     // first attempt failed transiently.
-    var ctx = _watchtimeContexts[cpn];
-    if (ctx == null) {
-      try {
-        ctx = await watchtimeContext(videoId);
-      } catch (_) {
-        ctx = null;
-      }
+    final ctx = await _resolveWatchtimeContext(videoId, cpn);
+    final (:lactMs, :rtn, :rti) = _beaconTiming(cpn);
+
+    var beaconOk = false;
+    if (state == 'playing' && startSec == 0.0) {
+      // stats/playback creates the watch record that stats/watchtime
+      // then updates. Fires only for new tracks so we don't spam
+      // playback-record creation on every heartbeat.
       if (ctx != null) {
-        if (_watchtimeContexts.length > _watchtimeContextCacheSize) {
-          final old = _watchtimeContexts.keys.isNotEmpty
-              ? _watchtimeContexts.keys.first
-              : null;
-          if (old != null) {
-            _watchtimeContexts.remove(old);
-            _watchtimeStartMs.remove(old);
-            _watchtimeLastRtn.remove(old);
-          }
+        final ptracking = ctx.ptrackingUrl;
+        if (ptracking != null && ptracking.isNotEmpty) {
+          try {
+            await getBeacon(ptracking, referer);
+          } catch (_) {}
         }
-        _watchtimeContexts[cpn] = ctx;
-      }
-    }
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final startMs = _watchtimeStartMs.putIfAbsent(cpn, () => nowMs);
-    var lactMs = nowMs - startMs;
-    if (lactMs < 0) lactMs = 0;
-    final rtn =
-        (_watchtimeLastRtn[cpn] ?? _watchtimeInitialRtn) + _watchtimeRtnStep;
-    final rti = rtn - 10;
-    _watchtimeLastRtn[cpn] = rtn;
-    // stats/playback creates the watch record that stats/watchtime
-    // then updates. Fires only for new tracks (startSec == 0.0) so we
-    // don't spam playback-record creation on every heartbeat.
-    if (state == 'playing' && startSec == 0.0 && ctx != null) {
-      final ptracking = ctx.ptrackingUrl;
-      if (ptracking != null && ptracking.isNotEmpty) {
         try {
-          await getBeacon(ptracking, referer);
+          await postBeacon(_playbackUrl(ctx, beacon, lactMs), referer, token);
+        } catch (_) {}
+        try {
+          final code = await postBeacon(
+            _watchtimeUrl(ctx, beacon, lactMs, rtn, rti),
+            referer,
+            token,
+          );
+          beaconOk = code >= 200 && code < 300;
         } catch (_) {}
       }
-      try {
-        await postBeacon(
-          _playbackUrl(
-            ctx,
-            videoId,
-            cpn,
-            currentSec,
-            durationSec,
-            playlistId,
-            lactMs,
-          ),
-          referer,
-          token,
-        );
-      } catch (_) {}
-    }
-    var beaconOk = false;
-    if (ctx != null) {
+    } else if (ctx != null) {
       try {
         final code = await postBeacon(
-          _watchtimeUrl(
-            ctx,
-            videoId,
-            cpn,
-            startSec,
-            currentSec,
-            state,
-            durationSec,
-            playlistId,
-            lactMs,
-            rtn,
-            rti,
-            state == 'paused',
-          ),
+          _watchtimeUrl(ctx, beacon, lactMs, rtn, rti),
           referer,
           token,
         );
         beaconOk = code >= 200 && code < 300;
       } catch (_) {}
     }
+
     // The stats/watchtime beacon returns 204 (blind ack) for all
     // well-formed requests, so always also fire a feedback playerEvent:
     // the InnerTube POST returns a structured response, giving us a
@@ -2691,20 +2732,89 @@ class InnerTube {
     return beaconOk || fb;
   }
 
+  /// The XSRF token that makes beacons record history: cached session
+  /// token, fetched lazily on first use after launch/login.
+  Future<String?> _resolveXsrfToken() async {
+    var token = auth.sessionToken;
+    if (token == null || token.isEmpty) {
+      try {
+        token = await fetchSessionToken();
+      } catch (_) {
+        token = null;
+      }
+      if (token != null && token.isNotEmpty) {
+        final s = auth;
+        auth = AuthSession(
+          cookie: s.cookie,
+          sapisidHash: s.sapisidHash,
+          accessToken: s.accessToken,
+          sessionToken: token,
+        );
+      }
+    }
+    return token;
+  }
+
+  /// Per-playback session tokens: fetched once per cpn, reused for the
+  /// track's heartbeats. A later heartbeat retries the fetch when the
+  /// first attempt failed transiently.
+  Future<WatchtimeContext?> _resolveWatchtimeContext(
+    String videoId,
+    String cpn,
+  ) async {
+    var ctx = _watchtimeContexts[cpn];
+    if (ctx == null) {
+      try {
+        ctx = await watchtimeContext(videoId);
+      } catch (_) {
+        ctx = null;
+      }
+      if (ctx != null) {
+        if (_watchtimeContexts.length > _watchtimeContextCacheSize) {
+          final old = _watchtimeContexts.keys.isNotEmpty
+              ? _watchtimeContexts.keys.first
+              : null;
+          if (old != null) {
+            _watchtimeContexts.remove(old);
+            _watchtimeStartMs.remove(old);
+            _watchtimeLastRtn.remove(old);
+          }
+        }
+        _watchtimeContexts[cpn] = ctx;
+      }
+    }
+    return ctx;
+  }
+
+  /// The timing counters of one watchtime beacon: lactMs, rtn, rti.
+  ///
+  /// rtn chains the previous per-cpn value; rti = rtn - 10.
+  ({int lactMs, int rti, int rtn}) _beaconTiming(String cpn) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final startMs = _watchtimeStartMs.putIfAbsent(cpn, () => nowMs);
+    var lactMs = nowMs - startMs;
+    if (lactMs < 0) lactMs = 0;
+    final rtn =
+        (_watchtimeLastRtn[cpn] ?? _watchtimeInitialRtn) + _watchtimeRtnStep;
+    final rti = rtn - 10;
+    _watchtimeLastRtn[cpn] = rtn;
+    return (lactMs: lactMs, rtn: rtn, rti: rti);
+  }
+
   /// Formats seconds for beacon params, clamping negatives to zero.
   String _fmtSec(double v) => (v < 0 ? 0.0 : v).toStringAsFixed(3);
 
   /// Builds a `stats/playback` URL in the real web client's shape.
   String _playbackUrl(
     WatchtimeContext ctx,
-    String videoId,
-    String cpn,
-    double currentSec,
-    double durationSec,
-    String? playlistId,
+    WatchtimeBeacon beacon,
     int lactMs,
   ) {
-    final len = durationSec > 0.0 ? durationSec : ctx.lenSec;
+    final len = beacon.durationSec > 0.0 ? beacon.durationSec : ctx.lenSec;
+    final videoId = beacon.videoId;
+    final cpn = beacon.cpn;
+    final currentSec = beacon.currentSec;
+    final playlistId = beacon.playlistId;
     final out = StringBuffer()
       ..write('https://music.youtube.com/api/stats/playback')
       ..write('?ns=yt&el=detailpage&cpn=$cpn')
@@ -2718,26 +2828,28 @@ class InnerTube {
       ..write('&cplayer=UNIPLAYER&cos=X11&cplatform=DESKTOP')
       ..write('&hl=en_US&cr=US&uga=m18')
       ..write('&len=${_fmtSec(len)}');
-    _appendBeaconTail(out, ctx, videoId, playlistId);
+    _appendBeaconTail(
+      out,
+      (_BeaconTail(ctx: ctx, videoId: videoId, playlistId: playlistId)),
+    );
     return out.toString();
   }
 
   /// Builds a `stats/watchtime` URL in the real web client's shape.
   String _watchtimeUrl(
     WatchtimeContext ctx,
-    String videoId,
-    String cpn,
-    double startSec,
-    double currentSec,
-    String state,
-    double durationSec,
-    String? playlistId,
+    WatchtimeBeacon beacon,
     int lactMs,
     int rtn,
     int rti,
-    bool finalBeacon,
   ) {
-    final len = durationSec > 0.0 ? durationSec : ctx.lenSec;
+    final len = beacon.durationSec > 0.0 ? beacon.durationSec : ctx.lenSec;
+    final videoId = beacon.videoId;
+    final cpn = beacon.cpn;
+    final startSec = beacon.startSec;
+    final currentSec = beacon.currentSec;
+    final state = beacon.state.wireName;
+    final playlistId = beacon.playlistId;
     final out = StringBuffer()
       ..write('https://music.youtube.com/api/stats/watchtime')
       ..write('?ns=yt&el=detailpage&cpn=$cpn')
@@ -2755,35 +2867,33 @@ class InnerTube {
       ..write('&rtn=$rtn&afmt=251&idpj=-8&ldpj=-16&rti=$rti')
       ..write('&st=${_fmtSec(startSec)}&et=${_fmtSec(currentSec)}')
       ..write('&muted=0&vis=10');
-    _appendBeaconTail(out, ctx, videoId, playlistId);
+    _appendBeaconTail(
+      out,
+      (_BeaconTail(ctx: ctx, videoId: videoId, playlistId: playlistId)),
+    );
     // final=1 on pause signals end-of-session so YT finalises the watch record.
-    if (finalBeacon) out.write('&final=1');
+    if (beacon.state == WatchtimeState.paused) out.write('&final=1');
     return out.toString();
   }
 
   /// Appends the identity/session tail (`docid`, `ei`, `plid`, `referrer`,
   /// `of`, `vm`).
-  void _appendBeaconTail(
-    StringBuffer out,
-    WatchtimeContext ctx,
-    String videoId,
-    String? playlistId,
-  ) {
-    out.write('&docid=$videoId');
-    out.write('&ei=${ctx.ei}');
-    out.write('&plid=${ctx.plid}');
-    if (playlistId != null && playlistId.isNotEmpty) {
+  void _appendBeaconTail(StringBuffer out, _BeaconTail tail) {
+    out.write('&docid=${tail.videoId}');
+    out.write('&ei=${tail.ctx.ei}');
+    out.write('&plid=${tail.ctx.plid}');
+    if (tail.playlistId != null && tail.playlistId!.isNotEmpty) {
       out.write(
-        '&referrer=${Uri.encodeComponent('https://music.youtube.com/playlist?list=$playlistId')}',
+        '&referrer=${Uri.encodeComponent('https://music.youtube.com/playlist?list=${tail.playlistId}')}',
       );
-      out.write('&list=$playlistId');
+      out.write('&list=${tail.playlistId}');
     } else {
       out.write(
-        '&referrer=${Uri.encodeComponent('https://music.youtube.com/watch?v=$videoId')}',
+        '&referrer=${Uri.encodeComponent('https://music.youtube.com/watch?v=${tail.videoId}')}',
       );
     }
-    out.write('&of=${ctx.of}');
-    out.write('&vm=${ctx.vm}');
+    out.write('&of=${tail.ctx.of}');
+    out.write('&vm=${tail.ctx.vm}');
   }
 
   /// Authenticated beacons for stats/* endpoints. The YTM web client sends
@@ -2842,23 +2952,7 @@ class InnerTube {
           final safeToken = sessionToken
               .replaceAll('\\', '\\\\')
               .replaceAll('"', '\\"');
-          final headers = <String, String>{
-            'User-Agent': _beaconUa,
-            'Origin': _origin,
-            'Referer': referer,
-            'Content-Type': 'application/json',
-          };
-          final cookie = candidate.cookie;
-          if (cookie != null && cookie.isNotEmpty) {
-            headers['Cookie'] = cookie;
-          }
-          final sapisid = candidate.sapisidHash;
-          final bearer = candidate.accessToken;
-          if (sapisid != null && sapisid.isNotEmpty) {
-            headers['Authorization'] = 'SAPISIDHASH $sapisid';
-          } else if (bearer != null && bearer.isNotEmpty) {
-            headers['Authorization'] = 'Bearer $bearer';
-          }
+          final headers = _beaconHeaders(referer, candidate, json: true);
           final res = await _dio
               .postUri<String>(
                 Uri.parse(url),
@@ -2886,10 +2980,25 @@ class InnerTube {
     String referer,
     AuthSession candidate,
   ) async {
+    final headers = _beaconHeaders(referer, candidate);
+    final res = await _dio
+        .getUri<String>(Uri.parse(url), options: Options(headers: headers))
+        .timeout(const Duration(seconds: 30));
+    return res.statusCode ?? -1;
+  }
+
+  /// Headers for a stats beacon, choosing the cookie authorization when
+  /// available and falling back to a Bearer token.
+  Map<String, String> _beaconHeaders(
+    String referer,
+    AuthSession candidate, {
+    bool json = false,
+  }) {
     final headers = <String, String>{
       'User-Agent': _beaconUa,
       'Origin': _origin,
       'Referer': referer,
+      if (json) 'Content-Type': 'application/json',
     };
     final cookie = candidate.cookie;
     if (cookie != null && cookie.isNotEmpty) headers['Cookie'] = cookie;
@@ -2900,10 +3009,7 @@ class InnerTube {
     } else if (bearer != null && bearer.isNotEmpty) {
       headers['Authorization'] = 'Bearer $bearer';
     }
-    final res = await _dio
-        .getUri<String>(Uri.parse(url), options: Options(headers: headers))
-        .timeout(const Duration(seconds: 30));
-    return res.statusCode ?? -1;
+    return headers;
   }
 
   /// Authenticated GET pixel (ptracking). Best-effort: ignores status.
@@ -2933,22 +3039,7 @@ class InnerTube {
     }
     for (final candidate in candidates) {
       try {
-        final headers = <String, String>{
-          'User-Agent': _beaconUa,
-          'Origin': _origin,
-          'Referer': referer,
-        };
-        final cookie = candidate.cookie;
-        if (cookie != null && cookie.isNotEmpty) {
-          headers['Cookie'] = cookie;
-        }
-        final sapisid = candidate.sapisidHash;
-        final bearer = candidate.accessToken;
-        if (sapisid != null && sapisid.isNotEmpty) {
-          headers['Authorization'] = 'SAPISIDHASH $sapisid';
-        } else if (bearer != null && bearer.isNotEmpty) {
-          headers['Authorization'] = 'Bearer $bearer';
-        }
+        final headers = _beaconHeaders(referer, candidate);
         await _dio
             .getUri<String>(Uri.parse(url), options: Options(headers: headers))
             .timeout(const Duration(seconds: 30));
@@ -2986,8 +3077,7 @@ class InnerTube {
 
   /// True when the current session can actually read the library
   /// (stronger than account_menu, which is finicky about auth shape).
-  /// Logs diagnostics to /tmp/nixietube-auth-debug.log, mirroring
-  /// Kotlin `AuthDebug`.
+  /// Logs diagnostics to /tmp/nixietube-auth-debug.log.
   Future<bool> verifyLogin() async {
     try {
       final res = await post(
@@ -3045,3 +3135,47 @@ class InnerTube {
     }
   }
 }
+
+/// The grouped result categories of a search, before they are turned
+/// into the stable response sections.
+class _SearchGroups {
+  _SearchGroups({
+    required this.songs,
+    required this.releases,
+    required this.artists,
+  });
+
+  /// The songs, keyed by video id.
+  final Map<String, SongItem> songs;
+
+  /// The releases, keyed by browse id.
+  final Map<String, BrowseItem> releases;
+
+  /// The artists, keyed by browse id.
+  final Map<String, BrowseItem> artists;
+
+  /// The browse ids of the artists in the result.
+  Set<String> get dominantArtistIds =>
+      artists.values.map((artist) => artist.browseId).toSet();
+
+  /// The canonical names of the artists in the result.
+  Set<String> get dominantArtistNames => artists.values
+      .map((artist) => canonicalMetadata(artist.title))
+      .where((name) => name.isNotEmpty)
+      .toSet();
+
+  /// Whether [release] belongs to one of the artists in the result.
+  bool isDominantRelease(BrowseItem release) {
+    final names = dominantArtistNames;
+    if (names.isEmpty) return false;
+    final subtitle = ' ${canonicalMetadata(release.subtitle)} ';
+    return names.any((name) => subtitle.contains(' $name '));
+  }
+}
+
+/// The canonical words of [value], for token-based text matching.
+Set<String> _wordSet(String value) =>
+    canonicalMetadata(value)
+        .split(' ')
+        .where((word) => word.isNotEmpty)
+        .toSet();
