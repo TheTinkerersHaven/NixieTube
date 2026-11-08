@@ -13,8 +13,9 @@ import 'dart:async';
 import 'dart:io' show File, Platform;
 
 import 'paths.dart' show cacheDir;
+import 'log.dart';
 
-import 'package:flutter/foundation.dart' show ValueListenable, debugPrint;
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:material_ui/material_ui.dart' show Color, ColorScheme;
 import 'package:nativeapi/nativeapi.dart'
     show
@@ -79,6 +80,8 @@ class TrayMenuKey {
 /// driven by player states. Construct, then [start]; [dispose]
 /// tears everything down. All native calls are best-effort so the
 /// tray can never break startup.
+const _log = TaggedLog('tray');
+
 class TrayService {
   TrayService({
     required PlayerController controller,
@@ -125,7 +128,7 @@ class TrayService {
     _lastIconBg = scheme.primary;
     _lastIconFg = scheme.onPrimary;
     _lastIconPlaying = playing;
-    debugPrint(
+    _log.d(
       '[tray] rendering icon primary=#${scheme.primary.toARGB32().toRadixString(16).padLeft(8, '0')} playing=$playing',
     );
     try {

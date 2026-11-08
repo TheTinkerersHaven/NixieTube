@@ -201,6 +201,7 @@ class DiscordPresence extends ChangeNotifier {
     this.retryInterval = discordRetryInterval,
     this.reconnectInterval = discordReconnectInterval,
     this.maxRetryInterval = discordRetryMaxInterval,
+    this.pauseHideAfter = discordPauseHideAfter,
   }) {
     _appId = appId;
     _enabled = enabled;
@@ -263,6 +264,9 @@ class DiscordPresence extends ChangeNotifier {
   /// Ceiling the retry delay backs off to.
   final Duration maxRetryInterval;
 
+  /// How long a track may stay paused before its presence is withdrawn.
+  Duration pauseHideAfter;
+
   Duration get _retryFloor => _linkedOnce ? reconnectInterval : retryInterval;
 
   String get status => _status;
@@ -306,6 +310,18 @@ class DiscordPresence extends ChangeNotifier {
       if (last != null) unawaited(update(last));
     }
     notifyListeners();
+  }
+
+  /// Updates how long a paused track stays on Discord before being
+  /// withdrawn. Re-evaluates the current presence so a change takes
+  /// effect immediately.
+  void setPauseHideMinutes(int minutes) {
+    final value = Duration(minutes: minutes);
+    if (pauseHideAfter == value) return;
+    pauseHideAfter = value;
+    notifyListeners();
+    final last = _last;
+    if (_enabled && last != null) unawaited(update(last));
   }
 
   /// Switches the status-line mode (persisted by the caller). The dedup
@@ -432,7 +448,7 @@ class DiscordPresence extends ChangeNotifier {
         !s.playing &&
         track != null &&
         _pausedAt != null &&
-        DateTime.now().difference(_pausedAt!) >= discordPauseHideAfter;
+        DateTime.now().difference(_pausedAt!) >= pauseHideAfter;
     final key = pausedTooLong
         ? '${track.videoId}:hidden'
         : '${track?.videoId}:${s.playing}:${track?.rating.index}';
@@ -526,7 +542,13 @@ class DiscordPresence extends ChangeNotifier {
     if (_connected) return;
     final last = _last;
     if (last == null) return;
-    _forgetPresence();
+    // Preserve pause timing across reconnects: a flaky link must not
+    // reset the 15-minute hide clock. Only the push bookkeeping is
+    // forgotten so the fresh link re-renders the activity.
+    _dedup = '';
+    _pushedPosMs = 0;
+    _pushedPlaying = false;
+    _pushedAt = DateTime.now();
     await update(last);
   }
 
@@ -544,6 +566,9 @@ class DiscordPresence extends ChangeNotifier {
     _initFuture = null;
     _setStatus(_enabled ? 'idle' : 'disabled');
     if (wasInitialized) {
+      try {
+        if (_rpc.isConnected) await _rpc.clearActivity();
+      } catch (_) {}
       try {
         await _rpc.disconnect();
       } catch (_) {}

@@ -153,15 +153,18 @@ void main() {
     );
     await tester.pump();
 
-    // The settings list is lazy: scroll the button into view before
-    // tapping it (a built widget can still sit below the fold).
+    // The settings list is built eagerly but can still sit below the
+    // fold: scroll the button into view before tapping it.
     final button = find.text('Run the setup again');
     for (var i = 0; i < 20; i++) {
       if (button.evaluate().isNotEmpty) {
         final rect = tester.getRect(button);
         if (rect.bottom < tester.view.physicalSize.height - 8) break;
       }
-      await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+      await tester.drag(
+        find.byType(Scrollable).first,
+        const Offset(0, -400),
+      );
       await tester.pump();
     }
     expect(find.text('First-run setup'), findsOneWidget);

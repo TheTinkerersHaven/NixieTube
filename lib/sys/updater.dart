@@ -12,12 +12,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:logging/logging.dart';
 
 import '../sys/version.dart';
 import 'http_client.dart';
+import 'log.dart';
 
-final _log = Logger('nixietube.updater');
+const _log = TaggedLog('updater');
 
 const _githubOwner = 'TheTinkerersHaven';
 const _githubRepo = 'NixieTube';
@@ -65,7 +65,7 @@ class Updater {
       ).timeout(const Duration(seconds: 15));
 
       if (res.statusCode != 200) {
-        _log.warning(
+        _log.w(
           'Update check HTTP ${res.statusCode}: ${res.statusMessage}',
         );
         return null;
@@ -104,7 +104,7 @@ class Updater {
         body: json['body'] as String? ?? '',
       );
     } catch (e) {
-      _log.warning('Update check failed: $e');
+      _log.w('Update check failed: $e');
       return null;
     }
   }
@@ -136,11 +136,11 @@ class Updater {
   Future<String?> applyUpdate(UpdateInfo info) async {
     final executable = File(Platform.executable);
     if (!executable.existsSync()) {
-      _log.warning('Running executable not found: ${Platform.executable}');
+      _log.w('Running executable not found: ${Platform.executable}');
       return null;
     }
     if (!executable.path.endsWith('.AppImage')) {
-      _log.warning(
+      _log.w(
         'Not running from an AppImage: ${Platform.executable}',
       );
       return null;
@@ -156,7 +156,7 @@ class Updater {
         info.downloadUrl,
         newFile.path,
         onReceiveProgress: (received, total) {
-          _log.info('Update download: $received / $total');
+          _log.i('Update download: $received / $total');
         },
       ).timeout(const Duration(minutes: 10));
 
@@ -168,10 +168,10 @@ class Updater {
       // Atomic replace on the same filesystem. The running process
       // keeps the old inode; the next launch uses the new one.
       await newFile.rename(executable.path);
-      _log.info('Update applied: ${executable.path}');
+      _log.i('Update applied: ${executable.path}');
       return executable.path;
     } catch (e) {
-      _log.warning('Apply update failed: $e');
+      _log.w('Apply update failed: $e');
       try {
         if (await newFile.exists()) await newFile.delete();
       } catch (_) {}

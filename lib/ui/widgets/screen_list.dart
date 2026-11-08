@@ -30,6 +30,31 @@ Widget screenList({
   );
 }
 
+/// A page body for short, fixed content, scrolling with the same feel.
+///
+/// Unlike [screenList], the whole column is built at once, so a section
+/// can be scrolled to by its key even before it has been on screen.
+Widget screenColumn({
+  required List<Widget> children,
+  double bottomClearance = playerBarClearance,
+}) {
+  return SilkySingleChildScrollView(
+    scrollSpeed: 1.5,
+    silkyScrollDuration: const Duration(milliseconds: 700),
+    animationCurve: Curves.easeOutQuart,
+    padding: EdgeInsets.fromLTRB(
+      screenPadding,
+      screenPadding,
+      screenPadding,
+      screenPadding + bottomClearance,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    ),
+  );
+}
+
 /// A page body built lazily, scrolling with the app-wide feel.
 ///
 /// [topPadding] replaces the default top inset for bodies that start

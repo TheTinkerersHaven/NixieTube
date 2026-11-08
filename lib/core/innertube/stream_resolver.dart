@@ -13,13 +13,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:logging/logging.dart';
 
 import '../../sys/http_client.dart';
+import '../../sys/log.dart';
 import 'json.dart';
 
-/// Logger for stream resolution diagnostics.
-final _log = Logger('nixietube.stream_resolver');
+/// Stream resolution diagnostics.
+const _log = TaggedLog('stream');
 
 const _visionosUserAgent =
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 '
@@ -252,7 +252,7 @@ class StreamResolver {
       final status = str(nav(res, const ['playabilityStatus', 'status']));
       if (status == 'OK') break;
       if (_ytDlpFallbackStatuses.contains(status)) {
-        _log.info(
+        _log.i(
           'VISIONOS returned $status for $videoId — falling back to yt-dlp',
         );
         return null;
@@ -273,7 +273,7 @@ class StreamResolver {
   /// age-restricted content authenticates with the viewer's session.
   Future<ResolvedStream?> _resolveYtDlp(String videoId) async {
     if (!await _ytDlpAvailable()) {
-      _log.warning('yt-dlp binary not available on PATH');
+      _log.w('yt-dlp binary not available on PATH');
       return null;
     }
     try {
@@ -292,16 +292,16 @@ class StreamResolver {
         await file.writeAsString(netscape);
         cookieFile = file.path;
         args.addAll(['--cookies', cookieFile]);
-        _log.fine('Wrote yt-dlp cookie file at $cookieFile');
+        _log.d('Wrote yt-dlp cookie file at $cookieFile');
       }
-      _log.fine('Running yt-dlp for $videoId with ${cookieFile != null ? 'cookies' : 'no cookies'}');
+      _log.d('Running yt-dlp for $videoId with ${cookieFile != null ? 'cookies' : 'no cookies'}');
       final result = await Process.run(
         'yt-dlp',
         [...args, 'https://www.youtube.com/watch?v=$videoId'],
         runInShell: true,
       ).timeout(const Duration(seconds: 30));
       if (result.exitCode != 0 || result.stdout.isEmpty) {
-        _log.warning(
+        _log.w(
           'yt-dlp failed for $videoId: exitCode=${result.exitCode} '
           'stderr=${result.stderr}',
         );
@@ -309,17 +309,17 @@ class StreamResolver {
       }
       final url = result.stdout.trim().split('\n').first.trim();
       if (url.isEmpty || !url.startsWith('http')) {
-        _log.warning('yt-dlp returned non-URL output for $videoId');
+        _log.w('yt-dlp returned non-URL output for $videoId');
         return null;
       }
-      _log.info('Resolved stream for $videoId via yt-dlp: ${url.length} chars');
+      _log.i('Resolved stream for $videoId via yt-dlp: ${url.length} chars');
       return ResolvedStream(
         url: url,
         bitrate: 0, // yt-dlp doesn't expose bitrate via --get-url
         durationSec: 0,
       );
     } catch (error) {
-      _log.warning('yt-dlp exception for $videoId: $error');
+      _log.w('yt-dlp exception for $videoId: $error');
       return null;
     } finally {
       try {

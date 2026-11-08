@@ -128,10 +128,21 @@ void main() {
     await tester.pump();
     await reveal(tester, find.text('Last.fm scrobbling'));
 
-    // Section header + card body present, disabled by default.
+    // Section header + card body present, disabled by default. The
+    // Discord card also carries a "Status:" line, so scope to this card.
     expect(find.text('Last.fm scrobbling'), findsOneWidget);
     expect(find.text('Scrobble plays'), findsOneWidget);
-    expect(find.textContaining('Status: disabled'), findsOneWidget);
+    final lastfmCard = find.ancestor(
+      of: find.text('Scrobble plays'),
+      matching: find.byType(Card),
+    );
+    expect(
+      find.descendant(
+        of: lastfmCard,
+        matching: find.textContaining('Status: disabled'),
+      ),
+      findsOneWidget,
+    );
 
     // Toggle scrobbling on.
     final switchFinder = find.descendant(

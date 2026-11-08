@@ -18,8 +18,7 @@ import 'package:material_ui/material_ui.dart'
         ScaffoldMessenger,
         SnackBar,
         Text,
-        ValueNotifier,
-        debugPrint;
+        ValueNotifier;
 import 'package:dio/dio.dart';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -40,6 +39,7 @@ import '../core/player/player_state.dart';
 import '../sys/cache_store.dart';
 import '../sys/updater.dart';
 import '../sys/sys_config.dart';
+import '../sys/log.dart';
 import '../core/innertube/stream_resolver.dart';
 import 'state/navigation_state.dart'
     show Screen, NavigationState, sameNavigationName;
@@ -316,6 +316,8 @@ class _TrackMeta {
 }
 
 /// Central UI state holder (ChangeNotifier).
+const _log = TaggedLog('app');
+
 class AppState extends ChangeNotifier {
   AppState({
     required InnerTube tube,
@@ -421,7 +423,11 @@ class AppState extends ChangeNotifier {
   UpdateInfo? _updateInfo;
   bool _updateChecking = false;
   bool _updateChecked = false;
+  bool _updateApplying = false;
+  bool _updateApplied = false;
+  bool _updateFailed = false;
   bool _dismissedUpdateBanner = false;
+  bool _focusAppUpdates = false;
 
   /// True when the native audio backend failed the startup probe.
   bool get audioBackendUnavailable => _audioBackendError != null;
@@ -434,6 +440,20 @@ class AppState extends ChangeNotifier {
 
   /// True when the startup update check has completed (available or not).
   bool get updateChecked => _updateChecked;
+
+  /// True while a downloaded update is being written over the AppImage.
+  bool get updateApplying => _updateApplying;
+
+  /// True once the update was installed; it takes effect on the next launch.
+  bool get updateApplied => _updateApplied;
+
+  /// True when the install attempt could not replace the AppImage (for
+  /// example when running from a plain `flutter run` build).
+  bool get updateFailed => _updateFailed;
+
+  /// True when the update banner asked Settings to show the App updates
+  /// section; the screen scrolls there and clears the flag.
+  bool get focusAppUpdates => _focusAppUpdates;
 
   /// Whether the user dismissed the update-available banner this session.
   bool get updateBannerDismissed => _dismissedUpdateBanner;
@@ -453,38 +473,61 @@ class AppState extends ChangeNotifier {
     _safeNotify();
   }
 
-  /// Checks GitHub for a newer release once at startup. Best-effort:
-  /// a failure is logged and the banner never shows. Call after the
-  /// state is mounted (e.g. from `main` before `runApp`).
-  Future<void> checkForUpdates() async {
-    if (_updateChecked) return;
+  /// Checks GitHub for a newer release once at startup, or again when
+  /// [force] is set from the settings card. Best-effort: a failure is
+  /// logged and leaves the state up to date.
+  Future<void> checkForUpdates({bool force = false}) async {
+    if (_updateChecking) return;
+    if (_updateChecked && !force) return;
     _updateChecking = true;
-    _safeNotify();
-    try {
-      final info = await _updater.checkForUpdates();
-      if (!_disposed) {
-        _updateInfo = info;
-        _updateChecked = true;
-        _updateChecking = false;
-        _safeNotify();
-      }
-    } catch (_) {
-      if (!_disposed) {
-        _updateChecked = true;
-        _updateChecking = false;
-        _safeNotify();
-      }
+    if (force) {
+      _updateApplied = false;
+      _updateFailed = false;
     }
+    _safeNotify();
+    UpdateInfo? info;
+    try {
+      info = await _updater.checkForUpdates();
+    } catch (_) {}
+    if (_disposed) return;
+    _updateInfo = info;
+    _updateChecked = true;
+    _updateChecking = false;
+    _safeNotify();
   }
 
   /// Applies a downloaded update: replaces the running AppImage
   /// atomically so the new version takes effect on the next launch.
   /// Best-effort and never throws.
   Future<void> applyUpdate() async {
-    if (_updateInfo == null) return;
+    final info = _updateInfo;
+    if (info == null || _updateApplying) return;
+    _updateApplying = true;
+    _updateFailed = false;
+    _safeNotify();
+    String? path;
     try {
-      await _updater.applyUpdate(_updateInfo!);
+      path = await _updater.applyUpdate(info);
     } catch (_) {}
+    if (_disposed) return;
+    _updateApplying = false;
+    _updateApplied = path != null;
+    _updateFailed = path == null;
+    _safeNotify();
+  }
+
+  /// Opens Settings with the App updates section in view, reusing the
+  /// startup check instead of asking the user to scan again.
+  void openAppUpdates() {
+    _focusAppUpdates = true;
+    go(Screen.settings);
+  }
+
+  /// Clears the Settings focus request once the screen scrolled to it.
+  void clearAppUpdatesFocus() {
+    if (!_focusAppUpdates) return;
+    _focusAppUpdates = false;
+    _safeNotify();
   }
 
   /// Dismisses the update-available banner for the rest of this session.
@@ -2630,9 +2673,9 @@ class AppState extends ChangeNotifier {
     try {
       innerOk = await _tube.rate(videoId, rating);
     } catch (_) {}
-    debugPrint('[rate] $videoId -> $rating innerTube=$innerOk');
+    _log.i('[rate] $videoId -> $rating innerTube=$innerOk');
     if (!innerOk) {
-      debugPrint('[rate] $videoId FAILED');
+      _log.w('[rate] $videoId FAILED');
       // Revert the optimistic change.
       _applyRating(videoId, previous);
       if (wasLiked) {
@@ -2740,7 +2783,7 @@ class AppState extends ChangeNotifier {
     if (tracks.isEmpty) return;
     unawaited(
       _requestTrackRatings(tracks, (statuses) {
-        debugPrint(
+        _log.d(
           '[rating] detail stamp: ${tracks.length} tracks -> ${statuses.length} known',
         );
         if (statuses.isEmpty || gen != _detailGen) return;
@@ -3497,7 +3540,7 @@ class AppState extends ChangeNotifier {
       if (ratingsAvailable) {
         try {
           final rating = await _tube.rating(key);
-          debugPrint('[rating] current $key -> $rating');
+          _log.d('[rating] current $key -> $rating');
           if (rating != RatingStatus.unknown &&
               _trustNetworkRating(key, rating) &&
               _player.state.current?.videoId == key) {

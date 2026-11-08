@@ -309,24 +309,31 @@ class _AudioBackendBanner extends StatelessWidget {
 /// Persistent notice that a newer release is available on GitHub.
 ///
 /// Shown once the startup update check completes; hidden while it is
-/// in flight and when nothing is available. Tapping "Settings" opens
-/// the App updates section where the new AppImage can be installed
-/// in place.
+/// in flight, when nothing is available, and once an install is under
+/// way. Tapping "Install" opens Settings scrolled to the App updates
+/// section, which already shows the version found at startup.
 class _UpdateBanner extends StatelessWidget {
   const _UpdateBanner();
 
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
-    final info = context.select<AppState, UpdateInfo?>(
-      (s) => s.updateInfo,
-    );
+    final info = context.select<AppState, UpdateInfo?>((s) => s.updateInfo);
     final checking = context.select<AppState, bool>((s) => s.updateChecking);
     final checked = context.select<AppState, bool>((s) => s.updateChecked);
+    final applying = context.select<AppState, bool>((s) => s.updateApplying);
+    final applied = context.select<AppState, bool>((s) => s.updateApplied);
+    final screen = context.select<AppState, Screen>((s) => s.screen);
     final dismissed = context.select<AppState, bool>(
       (s) => s.updateBannerDismissed,
     );
-    if (checking || !checked || info == null || dismissed) {
+    if (checking ||
+        applying ||
+        applied ||
+        !checked ||
+        info == null ||
+        screen == Screen.settings ||
+        dismissed) {
       return const SizedBox.shrink();
     }
     final scheme = Theme.of(context).colorScheme;
@@ -344,16 +351,15 @@ class _UpdateBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Version ${info.version} is available — '
-              'open Settings to install.',
+              'Version ${info.version} is available.',
               style: Theme.of(context).textTheme.bodyMedium
                   ?.copyWith(color: scheme.onPrimaryContainer),
             ),
           ),
           M3ETextButton(
-            onPressed: () => state.go(Screen.settings),
+            onPressed: () => state.openAppUpdates(),
             child: Text(
-              'Settings',
+              'Install',
               style: TextStyle(color: scheme.onPrimaryContainer),
             ),
           ),
@@ -523,10 +529,7 @@ class _ErrorWatcherState extends State<_ErrorWatcher> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           messenger.showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              content: Text(error),
-            ),
+            SnackBar(behavior: SnackBarBehavior.floating, content: Text(error)),
           );
         });
       }

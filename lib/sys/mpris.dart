@@ -3,16 +3,18 @@
 // with diffed PropertiesChanged updates and Seeked signals.
 
 import 'dart:async';
-import 'dart:io' show File, FileMode;
+import 'dart:io' show File;
 
 import 'package:dbus/dbus.dart';
+import 'log.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/artwork/artwork_store.dart';
 import '../core/models/models.dart';
-import 'paths.dart' show cacheDir;
 import '../core/player/player_controller.dart';
 import '../core/player/player_state.dart';
+
+const _log = TaggedLog('mpris');
 
 const mprisBusName = 'org.mpris.MediaPlayer2.nixietube';
 const mprisObjectPath = '/org/mpris/MediaPlayer2';
@@ -371,20 +373,6 @@ class _MprisObject extends DBusObject {
   }
 }
 
-void _mprisLog(String line) {
-  if (!kDebugMode) return;
-  try {
-    final file = File('${cacheDir().path}/mpris.log');
-    if (file.existsSync() && file.lengthSync() > 1024 * 1024) {
-      file.writeAsStringSync('');
-    }
-    file.writeAsStringSync(
-      '${DateTime.now().toIso8601String()} $line\n',
-      mode: FileMode.append,
-    );
-  } catch (_) {}
-}
-
 /// Builds the session-bus client for one connect attempt. Injectable so
 /// tests exercise the retry loop without touching a live session bus.
 typedef MprisClientFactory = DBusClient Function();
@@ -518,7 +506,7 @@ class MprisService extends ChangeNotifier {
       await client.ping().timeout(_mprisPingTimeout);
     } catch (e) {
       alive = false;
-      _mprisLog('liveness ping failed: $e');
+      _log.w('liveness ping failed: $e');
     } finally {
       _busy = false;
     }
@@ -582,7 +570,7 @@ class MprisService extends ChangeNotifier {
       try {
         await client?.close();
       } catch (_) {}
-      _mprisLog('connect failed: $e');
+      _log.w('connect failed: $e');
       _fail('$e');
       return false;
     } finally {
@@ -659,7 +647,7 @@ class MprisService extends ChangeNotifier {
         changedProperties: _decodeProps(props),
       );
     } catch (e) {
-      _mprisLog('full push failed: $e');
+      _log.w('full push failed: $e');
     }
   }
 
@@ -691,7 +679,7 @@ class MprisService extends ChangeNotifier {
         changedProperties: changed,
       );
     } catch (e) {
-      _mprisLog('diff push failed: $e');
+      _log.w('diff push failed: $e');
     }
   }
 

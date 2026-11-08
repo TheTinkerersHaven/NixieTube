@@ -1,7 +1,6 @@
 import 'dart:async' show unawaited;
 import 'dart:io' show Platform, exit;
 
-import 'package:logging/logging.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
@@ -17,6 +16,7 @@ import 'core/player/just_audio_player_engine.dart';
 import 'core/player/player_controller.dart';
 import 'sys/discord.dart';
 import 'sys/lastfm.dart';
+import 'sys/log.dart';
 import 'sys/mpris.dart';
 import 'sys/sleep_inhibit.dart';
 import 'sys/sys_config.dart';
@@ -68,12 +68,9 @@ void main(List<String> args) {
   // Configure adaptive image cache based on available memory.
   _configureImageCache();
   JustAudioMediaKit.ensureInitialized();
-  // Route stream_resolver diagnostics to stdout so yt-dlp fallback,
-  // cookie file writes, and exit codes are visible in the console.
-  Logger.root.level = Level.ALL;
-  Logger.root.onRecord.listen((rec) {
-    print('${rec.time} [${rec.level.name}] ${rec.loggerName}: ${rec.message}');
-  });
+  // Console and file logging for the stream resolver, updater and the
+  // rest of the app.
+  initLogging();
   final config = SysConfig();
   final tube = InnerTube();
   final streamResolver = StreamResolver(cookie: tube.auth.cookie);
@@ -99,6 +96,14 @@ void main(List<String> args) {
   // Window close hides to the tray (see TrayService); quitting
   // flushes the session first, from either MPRIS or the tray menu.
   // Sleep inhibition must drop before exit, or the lock outlives us.
+  final discord = DiscordPresence(
+    appId: config.discordAppId,
+    enabled: config.discordEnabled,
+    statusText: discordStatusTextFromKey(config.discordStatusText),
+    pauseHideAfter: Duration(minutes: config.discordPauseHideMinutes),
+  );
+  unawaited(player.states.forEach(discord.update));
+
   final sleepInhibit = SleepInhibitService(controller: player);
   Future<void> quitApp() async {
     await sleepInhibit.dispose();
@@ -106,6 +111,9 @@ void main(List<String> args) {
       const Duration(seconds: 2),
       onTimeout: () {},
     );
+    try {
+      await discord.shutdown().timeout(const Duration(seconds: 2));
+    } catch (_) {}
     exit(0);
   }
 
@@ -120,12 +128,6 @@ void main(List<String> args) {
     scheme: state.displayScheme,
   );
   unawaited(tray.start().catchError((_) {}));
-  final discord = DiscordPresence(
-    appId: config.discordAppId,
-    enabled: config.discordEnabled,
-    statusText: discordStatusTextFromKey(config.discordStatusText),
-  );
-  unawaited(player.states.forEach(discord.update));
 
   final lastfm = LastFmService(config: config);
   unawaited(player.states.forEach(lastfm.update));

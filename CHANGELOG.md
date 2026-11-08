@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-11-08
+
+### Added
+
+- **Configurable Discord pause-hide timeout.** The 15-minute default can now be set to 5, 10 or 15 minutes from the Discord settings dialog.
+- **Diagnostic logs in a rotating file.** App diagnostics now go through a single logger that writes to the console and to a rotating file under the cache directory, replacing the scattered print and ad-hoc log files.
+
+### Fixed
+
+- **The update banner takes you straight to the update.** Its button used to land on the top of Settings, and the available version only appeared after pressing "Check for updates" again; it now opens Settings scrolled to App updates, where the release found at startup is already waiting, and the banner stays out of the way on that page and while an install runs.
+- **A failed install now says so.** When the running build cannot be replaced (for example a plain `flutter run` build), the App updates card reports the failure instead of silently returning to the idle state.
+- **Discord Rich Presence clears on quit.** Quitting the app now tells Discord to remove the presence (and disconnects the IPC link) instead of leaving it up for Discord's own stale-presence timeout; a flaky link during a pause no longer resets the 15-minute hide clock either.
+
 ## [0.4.2] — 2026-11-07
 
 ### Added

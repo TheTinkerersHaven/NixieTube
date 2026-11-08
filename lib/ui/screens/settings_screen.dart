@@ -44,6 +44,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _debugKey = GlobalKey();
   final _setupKey = GlobalKey();
 
+  /// Guards against queueing the same post-frame scroll more than once
+  /// while the request is still set (it clears after the scroll runs).
+  bool _focusScheduled = false;
+
   @override
   Widget build(BuildContext context) {
     // Select the toggle states so the switches rebuild when the
@@ -62,219 +66,238 @@ class _SettingsScreenState extends State<SettingsScreen> {
       (s) => s.config.underlineLinks,
     );
     final state = context.read<AppState>();
-    return screenList(
+    // The update banner opens this screen with the App updates section
+    // in mind: scroll there once the first frame has laid the list out.
+    if (state.focusAppUpdates && !_focusScheduled) {
+      _focusScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _focusScheduled = false;
+        if (!mounted) return;
+        final target = _updatesKey.currentContext;
+        if (target != null) {
+          Scrollable.ensureVisible(
+            target,
+            alignment: 0.04,
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeOutCubic,
+          );
+        }
+        context.read<AppState>().clearAppUpdatesFocus();
+      });
+    }
+    return screenColumn(
       children: [
         Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 16),
-              Container(
-                key: _accountKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Account',
-                      subtitle: 'Sign in to YouTube Music and manage your session.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(child: const _AccountCard()),
-                  ],
+        Container(
+          key: _accountKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Account',
+                subtitle: 'Sign in to YouTube Music and manage your session.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(child: const _AccountCard()),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _playbackKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Playback',
+                subtitle: 'Listening history reporting.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(
+                child: _ToggleRow(
+                  title: 'Report listening history',
+                  subtitle:
+                      'Send watchtime beacons so plays appear in your '
+                      'YouTube history.',
+                  value: reportPlayback,
+                  onChanged: (v) {
+                    state.config.setBool('reportPlayback', v);
+                    state.refreshConfig();
+                  },
                 ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _playbackKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Playback',
-                      subtitle: 'Listening history reporting.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(
-                      child: _ToggleRow(
-                        title: 'Report listening history',
-                        subtitle:
-                            'Send watchtime beacons so plays appear in your '
-                            'YouTube history.',
-                        value: reportPlayback,
-                        onChanged: (v) {
-                          state.config.setBool('reportPlayback', v);
-                          state.refreshConfig();
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _appearanceKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Appearance',
-                      subtitle: 'Color source, seed and manual overrides.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(child: const _ThemeCard()),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _accessibilityKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Accessibility',
-                      subtitle: 'Contrast, motion and link styling.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _ToggleRow(
-                            title: 'High contrast',
-                            subtitle:
-                                'Brighter text, stronger borders and more '
-                                'distinct surfaces.',
-                            value: highContrast,
-                            onChanged: (v) {
-                              state.config.highContrast = v;
-                              state.refreshConfig();
-                            },
-                          ),
-                          const Divider(),
-                          _ToggleRow(
-                            title: 'Reduce motion',
-                            subtitle:
-                                'Freezes the shimmer, crossfades and slide '
-                                'transitions.',
-                            value: reducedMotion,
-                            onChanged: (v) {
-                              state.config.reducedMotion = v;
-                              state.refreshConfig();
-                            },
-                          ),
-                          const Divider(),
-                          _ToggleRow(
-                            title: 'Underline links',
-                            subtitle:
-                                'Underlines tappable links in the info tab. '
-                                'Off keeps them plain primary-colored text.',
-                            value: underlineLinks,
-                            onChanged: (v) {
-                              state.config.underlineLinks = v;
-                              state.refreshConfig();
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _integrationsKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Desktop integrations',
-                      subtitle: 'MPRIS media keys and Discord Rich Presence.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(child: const _IntegrationsCard()),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _lastfmKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Last.fm scrobbling',
-                      subtitle: 'Scrobble plays and manage credentials.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(child: const _LastFmCard()),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _updatesKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'App updates',
-                      subtitle: 'Check for and install new releases.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(child: const _AppUpdatesCard()),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _debugKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Debug',
-                      subtitle: 'Cache and diagnostic actions.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(
-                      child: _DebugCard(
-                        onClearArtwork: () {
-                          state.clearArtworkCache();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Artwork cache cleared.')),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                key: _setupKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionTitle(
-                      'Setup',
-                      subtitle: 'Run the first-run wizard again.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SettingsCard(child: const _OnboardingCard()),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                '${_shortVersion(appVersionLabel)} - build ${_buildNumber(appVersionLabel)}',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-              Text(
-                'Made with ♥  by TheTinkerersHaven :3',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ],
-          );
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _appearanceKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Appearance',
+                subtitle: 'Color source, seed and manual overrides.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(child: const _ThemeCard()),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _accessibilityKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Accessibility',
+                subtitle: 'Contrast, motion and link styling.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _ToggleRow(
+                      title: 'High contrast',
+                      subtitle:
+                          'Brighter text, stronger borders and more '
+                          'distinct surfaces.',
+                      value: highContrast,
+                      onChanged: (v) {
+                        state.config.highContrast = v;
+                        state.refreshConfig();
+                      },
+                    ),
+                    const Divider(),
+                    _ToggleRow(
+                      title: 'Reduce motion',
+                      subtitle:
+                          'Freezes the shimmer, crossfades and slide '
+                          'transitions.',
+                      value: reducedMotion,
+                      onChanged: (v) {
+                        state.config.reducedMotion = v;
+                        state.refreshConfig();
+                      },
+                    ),
+                    const Divider(),
+                    _ToggleRow(
+                      title: 'Underline links',
+                      subtitle:
+                          'Underlines tappable links in the info tab. '
+                          'Off keeps them plain primary-colored text.',
+                      value: underlineLinks,
+                      onChanged: (v) {
+                        state.config.underlineLinks = v;
+                        state.refreshConfig();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _integrationsKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Desktop integrations',
+                subtitle: 'MPRIS media keys and Discord Rich Presence.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(child: const _IntegrationsCard()),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _lastfmKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Last.fm scrobbling',
+                subtitle: 'Scrobble plays and manage credentials.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(child: const _LastFmCard()),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _updatesKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'App updates',
+                subtitle: 'Check for and install new releases.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(child: const _AppUpdatesCard()),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _debugKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Debug',
+                subtitle: 'Cache and diagnostic actions.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(
+                child: _DebugCard(
+                  onClearArtwork: () {
+                    state.clearArtworkCache();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Artwork cache cleared.')),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Container(
+          key: _setupKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SectionTitle(
+                'Setup',
+                subtitle: 'Run the first-run wizard again.',
+              ),
+              const SizedBox(height: 8),
+              _SettingsCard(child: const _OnboardingCard()),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          '${_shortVersion(appVersionLabel)} - build ${_buildNumber(appVersionLabel)}',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        Text(
+          'Made with ♥  by TheTinkerersHaven :3',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      ],
+    );
   }
 }
 
@@ -810,6 +833,15 @@ class _DiscordAppIdDialogState extends State<_DiscordAppIdDialog> {
               const SizedBox(height: 8),
               _DiscordStatusLinePicker(config: state.config),
               const SizedBox(height: 16),
+              Text(
+                'Presence is withdrawn after a track stays paused for:',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _DiscordPauseHidePicker(config: state.config),
+              const SizedBox(height: 16),
               TextField(
                 controller: _appId,
                 decoration: const InputDecoration(
@@ -1250,94 +1282,44 @@ class _LastFmKeysDialogState extends State<_LastFmKeysDialog> {
 
 /// App updates card: current version, a manual check button, and an
 /// install button when a newer release is available on GitHub.
-class _AppUpdatesCard extends StatefulWidget {
+///
+/// The whole update flow lives in [AppState], so the startup check that
+/// raised the banner is the same one this card shows: opening Settings
+/// from the banner already lands on the available version instead of
+/// asking for another scan.
+class _AppUpdatesCard extends StatelessWidget {
   const _AppUpdatesCard();
-
-  @override
-  State<_AppUpdatesCard> createState() => _AppUpdatesCardState();
-}
-
-enum _UpdateStatus { idle, checking, available, upToDate, applying, applied }
-
-class _AppUpdatesCardState extends State<_AppUpdatesCard> {
-  final Updater _updater = Updater();
-  _UpdateStatus _status = _UpdateStatus.idle;
-  UpdateInfo? _update;
 
   /// Current short version (e.g. "0.4.1").
   String get _currentVersion => appVersion.split('+').first;
 
-  Future<void> _checkForUpdates() async {
-    setState(() {
-      _status = _UpdateStatus.checking;
-      _update = null;
-    });
-    try {
-      final info = await _updater.checkForUpdates();
-      if (!mounted) return;
-      if (info == null) {
-        setState(() {
-          _status = _UpdateStatus.upToDate;
-        });
-      } else {
-        setState(() {
-          _status = _UpdateStatus.available;
-          _update = info;
-        });
-      }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _status = _UpdateStatus.idle;
-      });
-    }
-  }
-
-  Future<void> _installUpdate() async {
-    if (_update == null) return;
-    setState(() {
-      _status = _UpdateStatus.applying;
-    });
-    try {
-      await _updater.applyUpdate(_update!);
-      if (!mounted) return;
-      setState(() {
-        _status = _UpdateStatus.applied;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _status = _UpdateStatus.idle;
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final state = context.read<AppState>();
+    final info = context.select<AppState, UpdateInfo?>((s) => s.updateInfo);
+    final checking = context.select<AppState, bool>((s) => s.updateChecking);
+    final checked = context.select<AppState, bool>((s) => s.updateChecked);
+    final applying = context.select<AppState, bool>((s) => s.updateApplying);
+    final applied = context.select<AppState, bool>((s) => s.updateApplied);
+    final failed = context.select<AppState, bool>((s) => s.updateFailed);
+    final busy = checking || applying;
+    final bodyStyle = Theme.of(context).textTheme.bodySmall
+        ?.copyWith(color: scheme.onSurfaceVariant);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Current version',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
+        Text('Current version', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 2),
-        Text(
-          _currentVersion,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
+        Text(_currentVersion, style: bodyStyle),
         const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: M3EOutlinedButton.icon(
-                onPressed: _status == _UpdateStatus.checking ||
-                        _status == _UpdateStatus.applying
+                onPressed: busy
                     ? null
-                    : _checkForUpdates,
+                    : () => unawaited(state.checkForUpdates(force: true)),
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Check for updates'),
               ),
@@ -1345,43 +1327,42 @@ class _AppUpdatesCardState extends State<_AppUpdatesCard> {
           ],
         ),
         const SizedBox(height: 8),
-        switch (_status) {
-          _UpdateStatus.checking => const LinearProgressIndicator(),
-          _UpdateStatus.upToDate => Text(
-              'No updates available — you are on the latest version.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          _UpdateStatus.available => Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Version ${_update!.version} is available.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+        if (checking || applying)
+          const LinearProgressIndicator()
+        else if (applied)
+          Text(
+            'Update installed. Restart NixieTube to use the new version.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.primary),
+          )
+        else if (failed)
+          Text(
+            'The update could not be installed. Download the new AppImage '
+            'from the release page instead.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.error),
+          )
+        else if (info != null)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Version ${info.version} is available.', style: bodyStyle),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: M3EFilledButton.icon(
+                  onPressed: () => unawaited(state.applyUpdate()),
+                  icon: const Icon(Icons.download_rounded),
+                  label: const Text('Install update'),
                 ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: M3EFilledButton.icon(
-                    onPressed: _installUpdate,
-                    icon: const Icon(Icons.download_rounded),
-                    label: const Text('Install update'),
-                  ),
-                ),
-              ],
-            ),
-          _UpdateStatus.applying => const LinearProgressIndicator(),
-          _UpdateStatus.applied => Text(
-              'Update installed. Restart NixieTube to use the new version.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: scheme.primary,
               ),
-            ),
-          _UpdateStatus.idle => const SizedBox.shrink(),
-        },
+            ],
+          )
+        else if (checked)
+          Text(
+            'No updates available — you are on the latest version.',
+            style: bodyStyle,
+          ),
       ],
     );
   }
@@ -1397,4 +1378,37 @@ String _shortVersion(String label) {
 String _buildNumber(String label) {
   final parts = label.split('+');
   return parts.length > 1 ? parts[1] : 'unknown';
+}
+
+
+/// Pause-hide timeout: 5, 10 or 15 minutes.
+class _DiscordPauseHidePicker extends StatelessWidget {
+  const _DiscordPauseHidePicker({required this.config});
+
+  final SysConfig config;
+
+  static const _options = [5, 10, 15];
+
+  @override
+  Widget build(BuildContext context) {
+    final discord = context.watch<DiscordPresence>();
+    final scheme = Theme.of(context).colorScheme;
+    return M3EToggleButtonGroup(
+      type: M3EButtonGroupType.connected,
+      size: M3EButtonSize.sm,
+      semanticLabel: 'Discord pause hide timeout',
+      selectedIndex: _options.indexOf(discord.pauseHideAfter.inMinutes),
+      onSelectedIndexChanged: (i) {
+        if (i == null) return;
+        final minutes = _options[i];
+        config.set('discord.pauseHideMinutes', '$minutes');
+        discord.setPauseHideMinutes(minutes);
+      },
+      actions: [
+        for (final m in _options)
+          M3EToggleButtonGroupAction(label: Text('$m min')),
+      ],
+      decoration: toggleButtonGroupDecoration(scheme),
+    );
+  }
 }

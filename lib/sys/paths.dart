@@ -17,3 +17,8 @@ Directory cacheDir() {
       '${Platform.environment['HOME'] ?? '.'}/.cache';
   return Directory('$base/nixietube')..createSync(recursive: true);
 }
+
+/// Application log dir (`~/.cache/nixietube/logs`), created on access.
+Directory logDir() {
+  return Directory('${cacheDir().path}/logs')..createSync(recursive: true);
+}

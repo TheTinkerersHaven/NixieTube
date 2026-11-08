@@ -8,7 +8,7 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:nixietube/sys/log.dart';
 
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/player/player_state.dart';
@@ -16,6 +16,8 @@ import 'package:nixietube/sys/sys_config.dart';
 
 const _loginCheckIntervalMs = 300000;
 const _reportHeartbeatMs = 10000;
+
+const _log = TaggedLog('playback');
 
 class PlaybackReporter {
   PlaybackReporter({
@@ -66,13 +68,11 @@ class PlaybackReporter {
     loginCheckedAt = now;
     final ok = await tube.verifyLogin();
     if (!ok) {
-      if (kDebugMode) {
-        debugPrint(
-          'watchtime: LOGIN_INFO expired (logged_in=0): '
-          'stats/* beacons will not record history. Re-authenticate in '
-          'Settings → Integrations.',
-        );
-      }
+      _log.w(
+        'watchtime: LOGIN_INFO expired (logged_in=0): '
+        'stats/* beacons will not record history. Re-authenticate in '
+        'Settings → Integrations.',
+      );
     }
     if (ok != loginValid) {
       loginValid = ok;
@@ -91,26 +91,22 @@ class PlaybackReporter {
     try {
       ok = await tube.reportWatchtime(beacon);
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint(
-          'watchtime: EXCEPTION ${beacon.state.wireName} ${beacon.videoId} '
-          '${e.runtimeType}',
-        );
-      }
+      _log.w(
+        'watchtime: EXCEPTION ${beacon.state.wireName} ${beacon.videoId} '
+        '${e.runtimeType}',
+      );
       return;
     }
     if (!ok) {
-      if (kDebugMode) {
-        final session = tube.auth;
-        final cookiePresent = (session.cookie ?? '').isNotEmpty;
-        final tokenPresent = (session.sessionToken ?? '').isNotEmpty;
-        final tag = cookiePresent ? 'COOKIE' : 'ANONYMOUS';
-        final tokenTag = tokenPresent ? 'TOKEN_YES' : 'TOKEN_NO';
-        debugPrint(
-          'watchtime: FAILED ${beacon.state.wireName} ${beacon.videoId} '
-          'cmt=${beacon.currentSec} auth=$tag $tokenTag',
-        );
-      }
+      final session = tube.auth;
+      final cookiePresent = (session.cookie ?? '').isNotEmpty;
+      final tokenPresent = (session.sessionToken ?? '').isNotEmpty;
+      final tag = cookiePresent ? 'COOKIE' : 'ANONYMOUS';
+      final tokenTag = tokenPresent ? 'TOKEN_YES' : 'TOKEN_NO';
+      _log.w(
+        'watchtime: FAILED ${beacon.state.wireName} ${beacon.videoId} '
+        'cmt=${beacon.currentSec} auth=$tag $tokenTag',
+      );
     }
   }
 

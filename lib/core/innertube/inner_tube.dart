@@ -6,14 +6,14 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File, FileMode;
+import 'dart:io' show File;
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/models.dart';
 import '../../sys/http_client.dart';
 import '../../sys/paths.dart';
+import '../../sys/log.dart';
 import 'auth_session.dart';
 import 'json.dart';
 import 'metadata.dart';
@@ -159,6 +159,9 @@ class _CoverLookupUnavailable implements Exception {
 }
 
 /// InnerTube client: anonymous by default, authenticated via [AuthSession].
+/// InnerTube diagnostics.
+const _log = TaggedLog('inner');
+
 class InnerTube {
   InnerTube({
     this.auth = const AuthSession.anonymous(),
@@ -1422,7 +1425,7 @@ class InnerTube {
     // which page it was.
     final counted = _likedCount;
     if (counted != null && out.length < counted) {
-      debugPrint(
+      _log.d(
         '[liked] the playlist counts $counted songs, the shelf rendered '
         '${out.length} (pages: $sizes)',
       );
@@ -1490,7 +1493,7 @@ class InnerTube {
       if (tracks.length < full && shelf.token != null) {
         // The page came back short: its response dropped rows. Fetch
         // it again and keep whichever answer carries more of them.
-        debugPrint(
+        _log.d(
           '[liked] page $page came back short: ${tracks.length} of '
           '$full rows',
         );
@@ -1500,7 +1503,7 @@ class InnerTube {
           if (again != null) {
             final refetched = _shelfTracks(again.rows);
             if (refetched.length > tracks.length) {
-              debugPrint(
+              _log.d(
                 '[liked] page $page refetched: ${refetched.length} rows',
               );
               shelf = again;
@@ -3077,7 +3080,7 @@ class InnerTube {
 
   /// True when the current session can actually read the library
   /// (stronger than account_menu, which is finicky about auth shape).
-  /// Logs diagnostics to /tmp/nixietube-auth-debug.log.
+  /// Logs diagnostics.
   Future<bool> verifyLogin() async {
     try {
       final res = await post(
@@ -3085,7 +3088,7 @@ class InnerTube {
         _bodyWith({'browseId': 'FEmusic_library_landing'}),
       );
       if (res is Map && res.containsKey('error')) {
-        _authDebugLog(
+        _log.d(
           'library: top-level error: '
           '${_clip(res.toString(), 200)}',
         );
@@ -3095,22 +3098,12 @@ class InnerTube {
           findAll(res, 'musicShelfRenderer').length +
           findAll(res, 'musicCarouselShelfRenderer').length +
           findAll(res, 'gridRenderer').length;
-      _authDebugLog('library: content blocks=$blocks');
+      _log.d('library: content blocks=$blocks');
       return blocks > 0;
     } catch (e) {
-      _authDebugLog('library: exception ${_clip(e.toString(), 200)}');
+      _log.d('library: exception ${_clip(e.toString(), 200)}');
       return false;
     }
-  }
-
-  /// Appends a timestamped line to the auth debug log.
-  void _authDebugLog(String line) {
-    try {
-      File('/tmp/nixietube-auth-debug.log').writeAsStringSync(
-        '${DateTime.now().toUtc().toIso8601String()} $line\n',
-        mode: FileMode.append,
-      );
-    } catch (_) {}
   }
 
   /// First [n] characters of [s], for debug logging.

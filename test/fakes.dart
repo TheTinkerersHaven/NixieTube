@@ -20,6 +20,7 @@ import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_engine.dart';
 import 'package:nixietube/sys/sys_config.dart';
+import 'package:nixietube/sys/updater.dart';
 import 'package:nixietube/ui/app_state.dart';
 
 /// A no-op [PlayerEngine] suitable for widget tests that drive the
@@ -94,6 +95,7 @@ Future<AppState> bootAppState(
   String? artDirPath,
   Future<ResolvedStream?> Function(String id)? resolveStream,
   Future<void> Function(String url)? openUrl,
+  Updater? updater,
 }) async {
   final dir = Directory.systemTemp.createTempSync('nt-test');
   addTearDown(() => dir.deleteSync(recursive: true));
@@ -115,6 +117,7 @@ Future<AppState> bootAppState(
     art: art,
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: openUrl ?? ((_) async {}),
+    updater: updater,
   );
   addTearDown(state.dispose);
   return state;
