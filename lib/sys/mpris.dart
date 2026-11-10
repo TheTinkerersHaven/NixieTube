@@ -6,7 +6,9 @@ import 'dart:async';
 import 'dart:io' show File;
 
 import 'package:dbus/dbus.dart';
+
 import 'log.dart';
+
 import 'package:flutter/foundation.dart';
 
 import '../core/artwork/artwork_store.dart';

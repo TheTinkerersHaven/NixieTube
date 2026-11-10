@@ -84,8 +84,7 @@ class _CacheEntry {
 
 /// Resolves direct audio stream URLs through the InnerTube player endpoint.
 class StreamResolver {
-  StreamResolver({Dio? dio, this._cookie})
-      : _dio = dio ?? newHttpClient();
+  StreamResolver({Dio? dio, this._cookie}) : _dio = dio ?? newHttpClient();
 
   Dio _dio;
 
@@ -222,18 +221,12 @@ class StreamResolver {
 
     final visionos = await _resolveAnonymous(videoId);
     if (visionos != null) {
-      _cache[videoId] = _CacheEntry(
-        visionos,
-        DateTime.now().add(cacheTtl),
-      );
+      _cache[videoId] = _CacheEntry(visionos, DateTime.now().add(cacheTtl));
       return visionos;
     }
     final ytDlp = await _resolveYtDlp(videoId);
     if (ytDlp != null) {
-      _cache[videoId] = _CacheEntry(
-        ytDlp,
-        DateTime.now().add(cacheTtl),
-      );
+      _cache[videoId] = _CacheEntry(ytDlp, DateTime.now().add(cacheTtl));
     }
     return ytDlp;
   }
@@ -287,19 +280,21 @@ class StreamResolver {
       final cookie = _cookie;
       if (cookie != null && cookie.isNotEmpty) {
         final file = File(
-            '${Directory.systemTemp.path}/nixietube_yt_dlp_cookies.txt');
+          '${Directory.systemTemp.path}/nixietube_yt_dlp_cookies.txt',
+        );
         final netscape = _cookieToNetscape(cookie);
         await file.writeAsString(netscape);
         cookieFile = file.path;
         args.addAll(['--cookies', cookieFile]);
         _log.d('Wrote yt-dlp cookie file at $cookieFile');
       }
-      _log.d('Running yt-dlp for $videoId with ${cookieFile != null ? 'cookies' : 'no cookies'}');
-      final result = await Process.run(
-        'yt-dlp',
-        [...args, 'https://www.youtube.com/watch?v=$videoId'],
-        runInShell: true,
-      ).timeout(const Duration(seconds: 30));
+      _log.d(
+        'Running yt-dlp for $videoId with ${cookieFile != null ? 'cookies' : 'no cookies'}',
+      );
+      final result = await Process.run('yt-dlp', [
+        ...args,
+        'https://www.youtube.com/watch?v=$videoId',
+      ], runInShell: true).timeout(const Duration(seconds: 30));
       if (result.exitCode != 0 || result.stdout.isEmpty) {
         _log.w(
           'yt-dlp failed for $videoId: exitCode=${result.exitCode} '
@@ -332,11 +327,9 @@ class StreamResolver {
   /// True when the `yt-dlp` binary is on PATH and executable.
   Future<bool> _ytDlpAvailable() async {
     try {
-      final result = await Process.run(
-        'yt-dlp',
-        ['--version'],
-        runInShell: true,
-      ).timeout(const Duration(seconds: 5));
+      final result = await Process.run('yt-dlp', [
+        '--version',
+      ], runInShell: true).timeout(const Duration(seconds: 5));
       return result.exitCode == 0;
     } catch (_) {
       return false;

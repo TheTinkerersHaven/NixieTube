@@ -95,7 +95,8 @@ class _TrackRowState extends State<TrackRow> {
   void _openMoreMenu() {
     setState(() => _menuOpen = true);
     widget.onMenuOpenChanged?.call(true);
-    final anchorBox = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final anchorBox =
+        _anchorKey.currentContext?.findRenderObject() as RenderBox?;
     final buttonBox = _moreKey.currentContext?.findRenderObject() as RenderBox?;
     if (anchorBox != null && buttonBox != null) {
       final buttonOrigin = buttonBox.localToGlobal(Offset.zero);

@@ -954,8 +954,7 @@ class _QueueRowState extends State<_QueueRow> {
                   contextMenu: false,
                   // Shared so the ⋮ and the handle appear together.
                   hovering: _hovering || _menuOpen,
-                  onMenuOpenChanged: (open) =>
-                      setState(() => _menuOpen = open),
+                  onMenuOpenChanged: (open) => setState(() => _menuOpen = open),
                 ),
               ),
               AnimatedSize(

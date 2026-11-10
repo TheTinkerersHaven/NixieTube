@@ -1503,9 +1503,7 @@ class InnerTube {
           if (again != null) {
             final refetched = _shelfTracks(again.rows);
             if (refetched.length > tracks.length) {
-              _log.d(
-                '[liked] page $page refetched: ${refetched.length} rows',
-              );
+              _log.d('[liked] page $page refetched: ${refetched.length} rows');
               shelf = again;
               tracks = refetched;
             }

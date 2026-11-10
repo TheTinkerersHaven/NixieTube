@@ -85,14 +85,15 @@ class TaggedLog {
 }
 
 /// `2026-11-08T09:15:42.123 [INFO] [stream] message`, with the error and
-/// stack trace appended when present.
+/// stack trace appended when present. The level keeps its own width
+/// instead of padding to `WARNING`'s, so no line carries dead spaces.
 class _LinePrinter extends LogPrinter {
   @override
   List<String> log(LogEvent event) {
     final buffer = StringBuffer()
       ..write(event.time.toIso8601String())
       ..write(' [')
-      ..write(event.level.name.toUpperCase().padRight(7))
+      ..write(event.level.name.toUpperCase())
       ..write('] ')
       ..write(event.message);
     if (event.error != null) buffer.write(' error=${event.error}');

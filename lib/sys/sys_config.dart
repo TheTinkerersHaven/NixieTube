@@ -364,6 +364,7 @@ class SysConfig {
       discordAppId.trim().isEmpty ? defaultDiscordAppId : discordAppId.trim();
   bool get discordEnabled => getBool('discord.enabled');
   String get discordStatusText => get('discord.statusText', 'app');
+
   /// Minutes a paused track stays on Discord before being withdrawn.
   int get discordPauseHideMinutes =>
       int.tryParse(get('discord.pauseHideMinutes', '15')) ?? 15;

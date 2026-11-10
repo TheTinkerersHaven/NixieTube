@@ -1416,9 +1416,11 @@ class PlayerController implements PlayerEngineListener {
 
     // Collect queue positions ahead that aren't already prefetched.
     final toPrefetch = <String>[];
-    for (var i = s.index + 1;
-        i < s.queue.length && toPrefetch.length < _prefetchLookahead;
-        i++) {
+    for (
+      var i = s.index + 1;
+      i < s.queue.length && toPrefetch.length < _prefetchLookahead;
+      i++
+    ) {
       final vid = s.queue[i].videoId;
       if (!_prefetchedStreams.containsKey(vid)) {
         toPrefetch.add(vid);

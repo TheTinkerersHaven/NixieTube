@@ -1380,7 +1380,6 @@ String _buildNumber(String label) {
   return parts.length > 1 ? parts[1] : 'unknown';
 }
 
-
 /// Pause-hide timeout: 5, 10 or 15 minutes.
 class _DiscordPauseHidePicker extends StatelessWidget {
   const _DiscordPauseHidePicker({required this.config});

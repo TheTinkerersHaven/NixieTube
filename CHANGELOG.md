@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-11-10
+
+### Fixed
+
+- **Installing an update actually replaces the AppImage.** The updater looked for the file to replace at the running executable's path, which inside an AppImage points into the temporary mount, so an install finished without touching the real file; it now uses the file the AppImage runtime reports, and a download that is not a real AppImage binary is discarded instead of written over the working build.
+
 ## [0.4.3] — 2026-11-08
 
 ### Added
