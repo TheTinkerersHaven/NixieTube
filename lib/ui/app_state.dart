@@ -51,6 +51,13 @@ import 'theme.dart' show ThemeSource, resolveColorScheme;
 export 'state/navigation_state.dart' show Screen;
 export 'state/search_state.dart' show SearchUiState;
 
+/// Loads one track's LRCLIB lyrics (with the album LRCLIB knows).
+typedef LrclibLyrics =
+    Future<({List<LyricLine> lines, String? album})> Function(Track track);
+
+/// Loads one track's lyrics from YouTube Music.
+typedef YtmLyrics = Future<List<LyricLine>> Function(Track track);
+
 /// Loaded state of the home feed.
 ///
 /// Entries the "Trending globally" home row previews. The worldwide
@@ -327,6 +334,10 @@ class AppState extends ChangeNotifier {
     required Future<void> Function(String url) openUrl,
     StreamResolver? streamResolver,
     Updater? updater,
+    // Test seams: the Lyrics tab's provider lookups. Production uses
+    // LRCLIB and YT Music over the network.
+    LrclibLyrics? lrclibLyrics,
+    YtmLyrics? ytmLyrics,
     // Test seam: cookie session file. Production uses the shared
     // config dir; tests must pass a temp path — the login/logout
     // flows create and delete this file, and must never touch the
@@ -338,6 +349,8 @@ class AppState extends ChangeNotifier {
     _library = AccountLibrary(tube: tube);
     _config = config;
     _openUrl = openUrl;
+    _lrclibLyrics = lrclibLyrics ?? _fetchLrclibLyrics;
+    _ytmLyrics = ytmLyrics ?? _fetchYtmLyrics;
     _streamResolver = streamResolver ?? StreamResolver();
     _updater = updater ?? Updater();
     _rating = RatingService(likesTrack: _isLikedTrack);
@@ -3029,68 +3042,53 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// The tab's provider lookups: production fetches, or the seams a test
+  /// injects. Independent on purpose — neither ever answers for the other.
+  late final LrclibLyrics _lrclibLyrics;
+  late final YtmLyrics _ytmLyrics;
+
   List<LyricLine> _lyrics = [];
   List<LyricLine> get lyrics => _lyrics;
 
-  /// True while the current track's lyrics are being fetched
-  /// (network paths only — cache hits set [_lyrics] without
-  /// going through a loading state, so they never flash a
-  /// skeleton). Drives the shimmering placeholder lines.
+  /// True while the shown provider's lyrics are being fetched (cache
+  /// hits publish immediately and never flash a skeleton). Drives the
+  /// shimmering placeholder lines.
   bool _lyricsLoading = false;
   bool get lyricsLoading => _lyricsLoading;
 
-  /// True when the last lyrics fetch failed (network/parse error)
-  /// rather than legitimately finding none. Drives the retry affordance.
-  bool _lyricsError = false;
-  bool get lyricsError => _lyricsError;
-
-  /// Fences concurrent lyric fetches (track skips, source
-  /// switches): only the latest fetch may publish or clear
-  /// the loading flag.
+  /// Fences concurrent lyric fetches (track skips, provider
+  /// switches): only the latest fetch may publish its result.
   int _lyricsGen = 0;
 
-  /// Selected lyrics provider, persisted. Defaults to LRCLIB.
-  LyricsSource get lyricsSource => LyricsSource.fromKey(_config.lyricsSource);
+  /// Provider the Lyrics tab is showing. Follows the persisted choice,
+  /// except when LRCLIB has nothing for the track: the tab then moves
+  /// to YT Music for that track without touching the preference.
+  LyricsSource _lyricsView = LyricsSource.lrclib;
+  LyricsSource get lyricsSource => _lyricsView;
 
-  /// Switches the lyrics provider, refetching the current track from
-  /// the newly selected source.
+  /// Switches the lyrics provider, persisting the choice and loading the
+  /// newly selected source for the current track.
   void setLyricsSource(LyricsSource source) {
-    if (lyricsSource == source) return;
-    _config.lyricsSource = source.name;
-    final track = _player.state.current;
-    final key = track?.videoId;
-    if (track != null && key != null && key.isNotEmpty) {
-      final cached = _lyricsCache['$key:${source.name}'];
-      if (cached != null) {
-        final otherKey =
-            '$key:${source == LyricsSource.lrclib ? 'ytmusic' : 'lrclib'}';
-        final other = _lyricsCache[otherKey];
-        _lyrics = cached.isNotEmpty ? cached : (other ?? cached);
-        _safeNotify();
-        // Ensure the other provider is cached too, in the background.
-        unawaited(_fetchLyricsFor(key));
-        return;
-      }
+    if (_config.lyricsSource != source.name) {
+      _config.lyricsSource = source.name;
     }
-    _lyrics = [];
-    _safeNotify();
-    if (track != null && key != null && key.isNotEmpty) {
-      unawaited(_fetchLyricsFor(key));
-    }
+    if (_lyricsView == source) return;
+    _showLyricsSource(source, autoSwitch: false);
   }
 
-  /// Lyrics lines per track and source (`$videoId:${source.name}`),
-  /// so switching providers back and forth never refetches. Evicts the
-  /// oldest entries past [lyricsCacheCap] so a long queue can't grow
-  /// the map without bound.
+  /// Lyrics results per track and provider (`$videoId:${source.name}`),
+  /// so re-tapping a provider never refetches. Only successful lookups
+  /// are stored — an empty one included — because a failure has to be
+  /// retried the next time the provider is shown. Evicts the oldest
+  /// entries past [lyricsCacheCap] so a long queue can't grow the map
+  /// without bound.
   final Map<String, List<LyricLine>> _lyricsCache = {};
 
   /// Upper bound on the per-provider lyric cache.
   static const lyricsCacheCap = 96;
 
   /// Stores a provider's result under [cacheKey], evicting the oldest
-  /// entry when the cap is reached. Reinserting on read keeps hot
-  /// tracks (the ones being revisited) fresh.
+  /// entry when the cap is reached.
   void _cacheLyrics(String cacheKey, List<LyricLine> lines) {
     if (_lyricsCache.length >= lyricsCacheCap &&
         !_lyricsCache.containsKey(cacheKey)) {
@@ -3099,135 +3097,103 @@ class AppState extends ChangeNotifier {
     _lyricsCache[cacheKey] = lines;
   }
 
-  /// Loads lyrics for [key] from the selected provider (LRCLIB with
-  /// album fill, or plain YTM text), serving the cache first.
-  Future<void> _fetchLyricsFor(String key) async {
-    final current = _player.state.current;
-    if (current == null || current.videoId != key) return;
+  /// Shows [source] for the current track, taking its lyrics from the
+  /// per-provider cache or fetching them from the network.
+  void _showLyricsSource(LyricsSource source, {required bool autoSwitch}) {
+    _lyricsView = source;
+    final key = _player.state.current?.videoId;
+    _lyrics = [];
+    _lyricsLoading = false;
+    _safeNotify();
+    if (key == null || key.isEmpty) return;
+    unawaited(_loadLyrics(key, source, autoSwitch: autoSwitch));
+  }
 
-    final selected = lyricsSource;
-    final lrclibKey = '$key:lrclib';
-    final ytmKey = '$key:ytmusic';
-    final cachedLrclib = _lyricsCache[lrclibKey];
-    final cachedYtm = _lyricsCache[ytmKey];
-
-    // Both providers already cached: switching the toggle is instant.
-    if (cachedLrclib != null && cachedYtm != null) {
-      if (_player.state.current?.videoId == key) {
-        _applyLyrics(
-          selected == LyricsSource.lrclib
-              ? (cachedLrclib.isNotEmpty ? cachedLrclib : cachedYtm)
-              : (cachedYtm.isNotEmpty ? cachedYtm : cachedLrclib),
-        );
-      }
+  /// Loads [source]'s lyrics for [key] into the tab. The providers stay
+  /// independent: a result is only ever shown under the provider that
+  /// produced it, and a miss shows that provider's empty state. With
+  /// [autoSwitch], an LRCLIB miss moves the tab to YT Music instead.
+  Future<void> _loadLyrics(
+    String key,
+    LyricsSource source, {
+    required bool autoSwitch,
+  }) async {
+    final gen = ++_lyricsGen;
+    final cacheKey = '$key:${source.name}';
+    final cached = _lyricsCache[cacheKey];
+    if (cached != null) {
+      _publishLyrics(cached, source, autoSwitch: autoSwitch);
       return;
     }
 
-    final gen = ++_lyricsGen;
     _lyricsLoading = true;
-    _lyricsError = false;
     _safeNotify();
+    var lines = const <LyricLine>[];
+    var loaded = false;
     try {
-      final fetched = await _fetchLyricsProviders(
-        current,
-        cachedLrclib,
-        cachedYtm,
-        lrclibKey,
-        ytmKey,
-      );
-      if (_player.state.current?.videoId != key || gen != _lyricsGen) return;
-
-      if (cachedLrclib == null) _cacheLyrics(lrclibKey, fetched.lrclibLines);
-      if (cachedYtm == null) _cacheLyrics(ytmKey, fetched.ytmLines);
-      if (fetched.album != null && fetched.album!.isNotEmpty) {
-        _player.updateTrackAlbum(key, fetched.album!);
-      }
-      final chosen = selected == LyricsSource.lrclib
-          ? fetched.lrclibLines
-          : fetched.ytmLines;
-      final fallback = selected == LyricsSource.lrclib
-          ? fetched.ytmLines
-          : fetched.lrclibLines;
-      _applyLyrics(chosen.isNotEmpty ? chosen : fallback);
+      lines = await _fetchLyrics(key, source);
+      loaded = true;
     } catch (_) {
-      _lyricsError = true;
-      if (!_disposed) notifyListeners();
-    } finally {
-      // Only the latest fetch generation owns the loading flag; an
-      // abandoned earlier fetch (skip, provider switch) never clears it.
-      if (gen == _lyricsGen) {
-        _lyricsLoading = false;
-        if (!_disposed) notifyListeners();
-      }
+      // A failed lookup ends on the same empty state as "no lyrics"
+      // and is left uncached, so showing the provider tries again.
     }
+    // Cache a completed lookup even when a newer fetch owns the tab:
+    // the entry is keyed by its own track and provider.
+    if (loaded) _cacheLyrics(cacheKey, lines);
+    if (gen != _lyricsGen || _player.state.current?.videoId != key) return;
+    _publishLyrics(lines, source, autoSwitch: autoSwitch);
   }
 
-  /// Fetches the missing lyric providers for [current], returning cached
-  /// values for any provider already in [cachedLrclib]/[cachedYtm].
-  /// Both providers run in parallel so a later toggle never waits on the
-  /// network. Failures degrade to empty/unknown.
-  Future<
-    ({List<LyricLine> lrclibLines, List<LyricLine> ytmLines, String? album})
-  >
-  _fetchLyricsProviders(
-    Track current,
-    List<LyricLine>? cachedLrclib,
-    List<LyricLine>? cachedYtm,
-    String lrclibKey,
-    String ytmKey,
-  ) async {
-    Future<List<LyricLine>> lrclibFuture;
-    Future<String?> albumFuture;
-    if (cachedLrclib != null) {
-      lrclibFuture = Future.value(cachedLrclib);
-      albumFuture = Future.value(null);
-    } else {
-      final pending = fetchLyricsAndAlbum(
-        current.artistNames(),
-        current.title,
-        current.album?.name ?? '',
-        current.durationSec,
-      );
-      lrclibFuture = pending
-          .then((r) => r.lines)
-          .catchError((_) => <LyricLine>[]);
-      albumFuture = pending.then((r) => r.album).catchError((_) => null);
-    }
-    final ytmFuture = cachedYtm != null
-        ? Future.value(cachedYtm)
-        : fetchYtmLyrics(current.videoId).catchError((_) => <LyricLine>[]);
-
-    final results = await Future.wait<Object?>([
-      lrclibFuture.then<Object?>((r) => r),
-      albumFuture.then<Object?>((r) => r),
-      ytmFuture.then<Object?>((r) => r),
-    ]);
-    return (
-      lrclibLines: results[0] is List<LyricLine>
-          ? results[0] as List<LyricLine>
-          : <LyricLine>[],
-      ytmLines: results[2] is List<LyricLine>
-          ? results[2] as List<LyricLine>
-          : <LyricLine>[],
-      album: results[1] as String?,
-    );
-  }
-
-  /// Applies [lines] as the current lyrics, with cache/error/loading state.
-  void _applyLyrics(List<LyricLine> lines) {
+  /// Publishes [lines] as the tab's lyrics, ending the loading phase.
+  void _publishLyrics(
+    List<LyricLine> lines,
+    LyricsSource source, {
+    required bool autoSwitch,
+  }) {
     _lyrics = lines;
-    _lyricsError = false;
     _lyricsLoading = false;
     _safeNotify();
-  }
-
-  /// Retries the current track's lyrics fetch after a failure.
-  void retryLyrics() {
-    final key = _player.state.current?.videoId;
-    if (key != null && key.isNotEmpty) {
-      unawaited(_fetchLyricsFor(key));
+    if (autoSwitch && lines.isEmpty && source == LyricsSource.lrclib) {
+      _showLyricsSource(LyricsSource.ytmusic, autoSwitch: false);
     }
   }
+
+  /// Fetches one provider's lyrics for the current track.
+  Future<List<LyricLine>> _fetchLyrics(String key, LyricsSource source) async {
+    final current = _player.state.current;
+    if (current == null || current.videoId != key) return const <LyricLine>[];
+    switch (source) {
+      case LyricsSource.lrclib:
+        final result = await _lrclibLyrics(current);
+        // LRCLIB also knows the album YTM sometimes omits; fill it in.
+        final album = result.album;
+        if (album != null &&
+            album.isNotEmpty &&
+            _player.state.current?.videoId == key) {
+          _player.updateTrackAlbum(key, album);
+        }
+        return result.lines;
+      case LyricsSource.ytmusic:
+        return _ytmLyrics(current);
+    }
+  }
+
+  /// The production LRCLIB lookup behind [_lrclibLyrics].
+  Future<({List<LyricLine> lines, String? album})> _fetchLrclibLyrics(
+    Track track,
+  ) async {
+    final result = await fetchLyricsAndAlbum(
+      track.artistNames(),
+      track.title,
+      track.album?.name ?? '',
+      track.durationSec,
+    );
+    return (lines: result.lines, album: result.album);
+  }
+
+  /// The production YouTube Music lookup behind [_ytmLyrics].
+  Future<List<LyricLine>> _fetchYtmLyrics(Track track) =>
+      fetchYtmLyrics(track.videoId);
 
   /// Cover palette bands for the Now Playing backdrop; empty until the
   /// artwork loads.
@@ -3287,6 +3253,9 @@ class AppState extends ChangeNotifier {
     if (track != null && key != null && key != _lastLyricKey) {
       _lastLyricKey = key;
       _lyrics = [];
+      // Each track starts on the persisted provider; an LRCLIB miss may
+      // move the tab to YT Music for this track only.
+      _lyricsView = LyricsSource.fromKey(_config.lyricsSource);
       _noteLocalHistory(track);
       _safeNotify();
       unawaited(_resolveCurrentMetadata(track));
@@ -3505,10 +3474,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> _resolveCurrentMetadata(Track track) async {
     final key = track.videoId;
-    // Prefetch lyrics in parallel with the (slow) metadata enrichment so
-    // the Lyrics tab is never waiting behind enrichTrack, and the result
-    // is cached for instant re-serving on a later revisit.
-    unawaited(_fetchLyricsFor(key));
+    // Prefetch the tab's provider in parallel with the (slow) metadata
+    // enrichment so the Lyrics tab is never waiting behind enrichTrack,
+    // and the result is cached for instant re-serving on a later revisit.
+    unawaited(_loadLyrics(key, _lyricsView, autoSwitch: true));
     // Paint locally known like-state first: queue copies from search,
     // radio or shelves often carry unknown ratings for liked songs, and
     // the network read below may fail while the answer is known locally.

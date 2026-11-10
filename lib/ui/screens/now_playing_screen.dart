@@ -1204,7 +1204,6 @@ class _LyricsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final lyrics = context.select<AppState, List<LyricLine>>((s) => s.lyrics);
     final loading = context.select<AppState, bool>((s) => s.lyricsLoading);
-    final error = context.select<AppState, bool>((s) => s.lyricsError);
     final state = context.read<AppState>();
     if (lyrics.isEmpty && loading) {
       return Skeletonizer(
@@ -1222,29 +1221,11 @@ class _LyricsBody extends StatelessWidget {
       );
     }
     if (lyrics.isEmpty) {
-      if (error) {
-        return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                "Couldn't load lyrics",
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: state.retryLyrics,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        );
-      }
+      // No lines from this tab's provider — a miss and a failed lookup
+      // look the same here, and the provider choice stays available.
       return Center(
         child: Text(
-          'No lyrics found',
+          'No lyrics available',
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),

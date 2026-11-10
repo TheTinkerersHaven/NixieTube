@@ -241,7 +241,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('failed lyrics fetch settles on "No lyrics found"', (
+  testWidgets('failed lyrics fetch settles on "No lyrics available"', (
     tester,
   ) async {
     final env = await _boot(tester, _QuietTube());
@@ -263,7 +263,7 @@ void main() {
     // the skeleton: the empty state shows the static note.
     expect(env.state.lyricsLoading, isFalse);
     expect(env.state.lyrics, isEmpty);
-    expect(find.text('No lyrics found'), findsOneWidget);
+    expect(find.text('No lyrics available'), findsOneWidget);
     env.state.player.dispose();
     await tester.pump();
   });

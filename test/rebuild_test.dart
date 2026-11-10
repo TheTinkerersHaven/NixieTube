@@ -847,7 +847,7 @@ void main() {
       expect(state.lyricsFull, isTrue);
       expect(find.byType(PlayerBar), findsOneWidget);
       expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
-      expect(find.text('No lyrics found'), findsOneWidget);
+      expect(find.text('No lyrics available'), findsOneWidget);
 
       await tester.tap(find.byIcon(Icons.fullscreen_exit_rounded));
       await tester.pump();

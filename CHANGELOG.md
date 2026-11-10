@@ -4,7 +4,11 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.5] — 2026-11-10
+
+### Changed
+
+- **The lyrics tab keeps its two providers apart.** The LRCLIB and YT Music tabs now each fetch and show only their own lyrics, and one with nothing to show says "No lyrics available" instead of filling in with the other provider's lines; when LRCLIB has no lyrics for a track, the tab moves to YT Music by itself, leaving the saved preference alone.
 
 ## [0.4.4] — 2026-11-10
 

@@ -96,6 +96,8 @@ Future<AppState> bootAppState(
   Future<ResolvedStream?> Function(String id)? resolveStream,
   Future<void> Function(String url)? openUrl,
   Updater? updater,
+  LrclibLyrics? lrclibLyrics,
+  YtmLyrics? ytmLyrics,
 }) async {
   final dir = Directory.systemTemp.createTempSync('nt-test');
   addTearDown(() => dir.deleteSync(recursive: true));
@@ -118,6 +120,8 @@ Future<AppState> bootAppState(
     config: SysConfig(configPath: '${dir.path}/config.properties'),
     openUrl: openUrl ?? ((_) async {}),
     updater: updater,
+    lrclibLyrics: lrclibLyrics,
+    ytmLyrics: ytmLyrics,
   );
   addTearDown(state.dispose);
   return state;
