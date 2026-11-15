@@ -15,6 +15,7 @@ import '../innertube/inner_tube.dart';
 import '../innertube/metadata.dart' show canonical;
 import '../innertube/stream_resolver.dart';
 import '../models/models.dart';
+import '../../sys/atomic_io.dart';
 import '../../sys/paths.dart';
 import 'player_engine.dart';
 import 'player_state.dart';
@@ -851,7 +852,7 @@ class PlayerController implements PlayerEngineListener {
       final path = _sessionFile().path;
       _saveChain = _saveChain.then(
         (_) => Isolate.run(() {
-          File(path).writeAsStringSync(jsonEncode(payload));
+          writeAtomicSync(path, jsonEncode(payload));
         }).catchError((_) {}),
       );
     } catch (_) {}

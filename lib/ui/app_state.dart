@@ -566,6 +566,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    // Never lose a queued cache update on a normal teardown.
+    _flushCacheSaves();
     _paletteHoldTimer?.cancel();
     _paletteHoldTimer = null;
     unawaited(_playerSub?.cancel());
@@ -1461,6 +1463,51 @@ class AppState extends ChangeNotifier {
   /// Writes a cache to its own file.
   void _writeCache(String name, String json) => _caches.write(name, json);
 
+  /// Queued cache writes: cache name → serializer for its current state.
+  ///
+  /// A track change stamps recents, play counts and enrichment at once,
+  /// and each of those used to rewrite its whole JSON file synchronously
+  /// in the middle of that call. Saves are queued instead and flushed in
+  /// one microtask, so a burst costs one write per cache and the latest
+  /// state always wins. A microtask rather than a timer keeps widget
+  /// tests free of a pending timer after playback.
+  final Map<String, String Function()> _pendingCacheSaves = {};
+
+  /// The JSON last written per cache, so re-saving identical content
+  /// (a repeated track, a re-resolved avatar) skips the disk entirely.
+  final Map<String, String> _lastCacheJson = {};
+
+  bool _cacheSaveScheduled = false;
+
+  void _scheduleCacheSave(String name, String Function() encode) {
+    _pendingCacheSaves[name] = encode;
+    if (_cacheSaveScheduled) return;
+    _cacheSaveScheduled = true;
+    scheduleMicrotask(_flushCacheSaves);
+  }
+
+  void _flushCacheSaves() {
+    _cacheSaveScheduled = false;
+    if (_pendingCacheSaves.isEmpty) return;
+    final pending = Map.of(_pendingCacheSaves);
+    _pendingCacheSaves.clear();
+    pending.forEach((name, encode) {
+      try {
+        final json = encode();
+        if (_lastCacheJson[name] == json) return;
+        _lastCacheJson[name] = json;
+        _writeCache(name, json);
+      } catch (_) {}
+    });
+  }
+
+  /// Writes any queued cache updates out now: quitting runs `exit()`
+  /// before a flush would otherwise happen.
+  void flushCaches() => _flushCacheSaves();
+
+  /// Bounds on the enrichment cache: newest entries win, so the cap is
+  /// applied after loading too (a hand-edited or older file can exceed
+  /// it) instead of only on save.
   void _loadTrackMeta() {
     try {
       final raw = _readCache('trackMeta');
@@ -1473,6 +1520,12 @@ class AppState extends ChangeNotifier {
           if (m != null) _trackMeta[k] = m;
         }
       });
+      if (_trackMeta.length > _trackMetaCap) {
+        final entries = _trackMeta.entries.toList();
+        _trackMeta
+          ..clear()
+          ..addEntries(entries.sublist(entries.length - _trackMetaCap));
+      }
     } catch (_) {}
   }
 
@@ -1485,9 +1538,9 @@ class AppState extends ChangeNotifier {
           ..clear()
           ..addEntries(entries);
       }
-      _writeCache(
+      _scheduleCacheSave(
         'trackMeta',
-        jsonEncode({for (final e in entries) e.key: e.value.toJson()}),
+        () => jsonEncode({for (final e in entries) e.key: e.value.toJson()}),
       );
     } catch (_) {}
   }
@@ -1633,15 +1686,23 @@ class AppState extends ChangeNotifier {
   static const _localRecentCap = 30;
   List<Track> _localRecents = [];
 
+  /// The most recent tracks played on this device, newest first,
+  /// deduped by id and capped at [_localRecentCap].
+  List<Track> get localRecents => _localRecents;
+
   void _loadLocalRecents() {
     try {
       final raw = _readCache('localRecents');
       if (raw == null) return;
       final decoded = jsonDecode(raw);
       if (decoded is! List) return;
+      // Dedupe by track: an older build could append the same song twice
+      // when a queue repeated it, and quick picks would show it twice.
+      final seen = <String>{};
       _localRecents = decoded
           .map(_decodeRecentTrack)
           .whereType<Track>()
+          .where((t) => t.videoId.isNotEmpty && seen.add(t.videoId))
           .take(_localRecentCap)
           .toList();
     } catch (_) {}
@@ -1660,9 +1721,10 @@ class AppState extends ChangeNotifier {
 
   void _saveLocalRecents() {
     try {
-      _writeCache(
+      final recents = _localRecents;
+      _scheduleCacheSave(
         'localRecents',
-        jsonEncode([for (final t in _localRecents) t.toJson()]),
+        () => jsonEncode([for (final t in recents) t.toJson()]),
       );
     } catch (_) {}
   }
@@ -1690,6 +1752,15 @@ class AppState extends ChangeNotifier {
           _playCounts[k] = v;
         }
       });
+      // The file may predate the cap (or have been edited by hand):
+      // keep the most played and drop the tail, as the save does.
+      if (_playCounts.length > _playCountCap) {
+        final entries = _playCounts.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        _playCounts
+          ..clear()
+          ..addEntries(entries.take(_playCountCap));
+      }
     } catch (_) {}
   }
 
@@ -1703,9 +1774,9 @@ class AppState extends ChangeNotifier {
           ..clear()
           ..addEntries(entries);
       }
-      _writeCache(
+      _scheduleCacheSave(
         'playCounts',
-        jsonEncode({for (final e in entries) e.key: e.value}),
+        () => jsonEncode({for (final e in entries) e.key: e.value}),
       );
     } catch (_) {}
   }
@@ -1791,6 +1862,9 @@ class AppState extends ChangeNotifier {
 
   final Map<String, String> _artistAvatarCache = {};
 
+  /// Bound on remembered avatar URLs (one per artist displayed).
+  static const _artistAvatarCap = 300;
+
   /// Loads remembered channel avatars so recent artists paint profile
   /// pictures (not song covers) from the first frame. Empty values
   /// are negative cache (looked, none found).
@@ -1805,21 +1879,27 @@ class AppState extends ChangeNotifier {
           _artistAvatarCache[k] = v;
         }
       });
+      if (_artistAvatarCache.length > _artistAvatarCap) {
+        final entries = _artistAvatarCache.entries.toList();
+        _artistAvatarCache
+          ..clear()
+          ..addEntries(entries.sublist(entries.length - _artistAvatarCap));
+      }
     } catch (_) {}
   }
 
   void _saveArtistAvatars() {
     try {
       var entries = _artistAvatarCache.entries.toList();
-      if (entries.length > 300) {
-        entries = entries.sublist(entries.length - 300);
+      if (entries.length > _artistAvatarCap) {
+        entries = entries.sublist(entries.length - _artistAvatarCap);
         _artistAvatarCache
           ..clear()
           ..addEntries(entries);
       }
-      _writeCache(
+      _scheduleCacheSave(
         'artistAvatars',
-        jsonEncode({for (final e in entries) e.key: e.value}),
+        () => jsonEncode({for (final e in entries) e.key: e.value}),
       );
     } catch (_) {}
   }

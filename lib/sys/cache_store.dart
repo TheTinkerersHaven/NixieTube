@@ -11,6 +11,7 @@
 
 import 'dart:io' show File;
 
+import 'atomic_io.dart';
 import 'paths.dart';
 
 /// The app's JSON caches on disk.
@@ -37,11 +38,12 @@ class CacheStore {
   }
 
   /// Writes the raw JSON of the cache [name].
+  ///
+  /// Atomic: a crash mid-write keeps the previous file instead of
+  /// leaving a truncated one that would read back as "no cache".
   void write(String name, String json) {
     try {
-      final file = _file(name);
-      file.parent.createSync(recursive: true);
-      file.writeAsStringSync(json);
+      writeAtomicSync(_file(name).path, json);
     } catch (_) {}
   }
 }

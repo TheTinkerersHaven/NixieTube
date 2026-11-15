@@ -249,6 +249,9 @@ void main() {
         expect(env.state.liked.first.album?.name, 'Panel Album 1');
         expect(env.state.liked.first.artistNames(), 'A1');
         expect(env.state.liked[1].album?.name, 'Panel Album 2');
+        // Cache saves are coalesced into a microtask; a real restart is
+        // never in the same event-loop turn, so let the write land.
+        await Future<void>.delayed(Duration.zero);
         // Session 2 (restart): a fresh tube with no panel data at all —
         // rows still paint full from the persisted cache, no reads needed.
         env = _app(dir: dir);

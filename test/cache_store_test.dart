@@ -72,5 +72,27 @@ void main() {
       // A missing cache reads as null, not as an error.
       expect(store.read('nothing'), isNull);
     });
+
+    test('a write is atomic and leaves no temp file', () {
+      final store = CacheStore(dir: dir.path);
+
+      store.write('playCounts', '{"v1":1}');
+      store.write('playCounts', '{"v1":2}');
+
+      expect(store.read('playCounts'), '{"v1":2}');
+      expect(File('${dir.path}/playCounts.json.tmp').existsSync(), isFalse);
+    });
+
+    test('a temp left by an interrupted write is ignored and replaced', () {
+      File('${dir.path}/playCounts.json.tmp').writeAsStringSync('{"trunc');
+      final store = CacheStore(dir: dir.path);
+
+      // The half-written temp is not a cache: the target is untouched.
+      expect(store.read('playCounts'), isNull);
+
+      store.write('playCounts', '{"v1":3}');
+      expect(store.read('playCounts'), '{"v1":3}');
+      expect(File('${dir.path}/playCounts.json.tmp').existsSync(), isFalse);
+    });
   });
 }

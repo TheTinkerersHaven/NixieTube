@@ -20,6 +20,7 @@
 // first start and then deleted (see [SysConfig.loadCredentials]).
 import 'dart:io';
 
+import 'atomic_io.dart';
 import 'paths.dart';
 import 'secure_store.dart';
 
@@ -120,7 +121,9 @@ void writeProperties(
           .replaceAll('\t', r'\t');
       buf.writeln('$key=$value');
     }
-    file.writeAsStringSync('$buf');
+    // Atomic: a crash while writing must not leave the settings file
+    // truncated (that would reset every preference on the next launch).
+    writeAtomicSync(file.path, '$buf');
     if (restrictive) {
       // The fallback holds secrets: no world/group read. dart:io has no
       // chmod, so shell out on Linux; elsewhere the file is still the

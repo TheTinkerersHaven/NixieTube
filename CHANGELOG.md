@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **The lyrics tab keeps its two providers apart.** The LRCLIB and YT Music tabs now each fetch and show only their own lyrics, and one with nothing to show says "No lyrics available" instead of filling in with the other provider's lines; when LRCLIB has no lyrics for a track, the tab moves to YT Music by itself, leaving the saved preference alone.
+- **Settings and listening history survive an interrupted write.** Everything the app saves to disk (preferences, recent plays, play counts, remembered credits and artwork) is now written to a temporary file and swapped in, so a crash or force-quit can no longer leave a half-written file that silently resets it; repeated plays of the same song also no longer show up twice in quick picks.
 
 ## [0.4.4] — 2026-11-10
 

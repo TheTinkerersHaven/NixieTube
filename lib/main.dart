@@ -114,6 +114,9 @@ void main(List<String> args) {
     try {
       await discord.shutdown().timeout(const Duration(seconds: 2));
     } catch (_) {}
+    // Queued cache writes (recents, play counts, enrichment) are flushed
+    // in a microtask; exit() would drop them.
+    state.flushCaches();
     exit(0);
   }
 

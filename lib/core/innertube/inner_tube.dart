@@ -11,6 +11,7 @@ import 'dart:io' show File;
 import 'package:dio/dio.dart';
 
 import '../models/models.dart';
+import '../../sys/atomic_io.dart';
 import '../../sys/http_client.dart';
 import '../../sys/paths.dart';
 import '../../sys/log.dart';
@@ -227,6 +228,9 @@ class InnerTube {
   Timer? _squareCoverSaveTimer;
   bool _squareCoversLoaded = false;
 
+  /// Bound on remembered square covers (one entry per track displayed).
+  static const _squareCoversCap = 2000;
+
   /// Album pages fetched for cover resolution, memoized by album id:
   /// lists routinely hold a dozen tracks off one album, and without
   /// this every tile would re-browse the same page while scrolling.
@@ -269,10 +273,18 @@ class InnerTube {
   Future<void> _writeSquareCovers() async {
     final f = _squareCoversFile;
     if (f == null) return;
+    // Bound the cache: a long-lived profile resolves a cover per track
+    // it ever displayed. Dropping the oldest entries only costs a
+    // re-resolve for a track that comes back.
+    if (_squareCovers.length > _squareCoversCap) {
+      final excess = _squareCovers.length - _squareCoversCap;
+      for (final key in _squareCovers.keys.take(excess).toList()) {
+        _squareCovers.remove(key);
+        _squareCoverMissing.removeWhere((m) => m.startsWith('$key|'));
+      }
+    }
     try {
-      final tmp = '${f.path}.tmp';
-      await File(tmp).writeAsString(jsonEncode(_squareCovers), flush: true);
-      await File(tmp).rename(f.path);
+      await writeAtomic(f.path, jsonEncode(_squareCovers));
     } catch (_) {}
   }
 
