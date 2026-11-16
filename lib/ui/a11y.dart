@@ -18,7 +18,14 @@ import 'app_state.dart';
 
 /// Reads the reduced-motion flag, defaulting to false when no
 /// [AppState] is in scope.
+///
+/// The OS "Reduce Motion" accessibility flag ([MediaQueryData.reduceMotion],
+/// new in Flutter 3.50) is honored alongside the in-app toggle: a user who
+/// asks the system to cut motion gets it everywhere, not only where the
+/// app's own setting is on. `maybeReduceMotionOf` also registers a rebuild
+/// on the aspect, so a live flip is picked up.
 bool _reduced(BuildContext context, bool listen) {
+  if (MediaQuery.maybeReduceMotionOf(context) ?? false) return true;
   try {
     if (listen) {
       return context.select<AppState, bool>((s) => s.config.reducedMotion);

@@ -172,31 +172,30 @@ class _ArtworkImageState extends State<ArtworkImage> {
   /// The cover image decoded for [box] logical pixels of painted width
   /// (the tile's own size, or the expand tile's parent cell).
   Widget _coverImage(File file, double box) {
-    final dpr = MediaQuery.devicePixelRatioOf(context);
     final needed = (box > 0 ? box : widget.size).clamp(1.0, 4096.0);
-    // Decode at the painted box in physical pixels: the smallest
-    // bitmap whose short side still covers the box under BoxFit.cover,
-    // so no upscaling happens on screen. No headroom factor: the
-    // filter quality (high) handles sub-pixel softness and the source's
-    // own resolution caps the result via allowUpscaling: false.
-    // Small headroom (1.5x) over the bare device-pixel box:
-    // rounding and the codec's internal resampling can leave the
-    // short side a hair under the box, and decoding a bit above the
-    // target lets FilterQuality.medium do the final reduction, which
-    // reads sharper than a single decode-to-target step. Capped at
-    // the source size via allowUpscaling: false, so small files lose
-    // nothing.
-    final devicePx = (needed * dpr * 3 / 2).ceil();
+    // Decode at the painted box: the smallest bitmap whose short side
+    // still covers the box under BoxFit.cover, so no upscaling happens
+    // on screen. The width is logical and ResizeImage applies the
+    // device pixel ratio itself (`useLogicalSize`), so the decode target
+    // is DPI-correct without reading MediaQuery here.
+    // Small headroom (1.5x) over the bare logical box: rounding and the
+    // codec's internal resampling can leave the short side a hair under
+    // the box, and decoding a bit above the target lets
+    // FilterQuality.medium do the final reduction, which reads sharper
+    // than a single decode-to-target step. Capped at the source size via
+    // allowUpscaling: false, so small files lose nothing.
+    final logical = needed * 3 / 2;
     final ImageProvider provider;
     if (_tileSize != null) {
       final (tw, th) = _tileSize!;
       final width = (tw >= th)
-          ? (devicePx * tw / th).round().clamp(1, tw)
-          : devicePx.clamp(1, tw);
+          ? (logical * tw / th).round().clamp(1, 1 << 31)
+          : logical.round().clamp(1, 1 << 31);
       provider = ResizeImage(
         FileImage(file),
         width: width,
         allowUpscaling: false,
+        useLogicalSize: true,
       );
     } else {
       provider = FileImage(file);
@@ -391,14 +390,15 @@ class _ArtworkImageState extends State<ArtworkImage> {
     Widget child;
     if (file != null) {
       // Decode only what the box shows: the bitmap's short side at the
-      // box's device pixels, the long side scaled along to keep the
-      // aspect (a 16:9 still decodes at width×aspect so its height
-      // still reaches the box), never beyond the file's own pixels —
-      // `allowUpscaling: false` clamps a target above the source to a
-      // natural-size decode, so nothing is invented. The target reads
-      // the PAINTED box, not the size prop: expand tiles fill their
-      // parent's cell, which can be either side of `size` — a target
-      // below the painted box upscales on screen and reads soft.
+      // box's logical size (ResizeImage scales it by the device pixel
+      // ratio), the long side scaled along to keep the aspect (a 16:9
+      // still decodes at width×aspect so its height still reaches the
+      // box), never beyond the file's own pixels — `allowUpscaling:
+      // false` clamps a target above the source to a natural-size
+      // decode, so nothing is invented. The target reads the PAINTED
+      // box, not the size prop: expand tiles fill their parent's cell,
+      // which can be either side of `size` — a target below the painted
+      // box upscales on screen and reads soft.
       child = widget.expand
           ? LayoutBuilder(
               builder: (context, constraints) =>

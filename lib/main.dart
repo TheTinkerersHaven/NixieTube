@@ -299,28 +299,52 @@ class _ThemedMaterialApp extends StatelessWidget {
     return MaterialApp(
       title: 'NixieTube',
       theme: theme,
-      home: SkeletonizerConfig(
-        // One high-contrast shimmer for every skeleton in the app (home
-        // feed, artwork tiles, …) — the package's dark-mode default is
-        // nearly invisible on this theme. Reduced motion swaps it for a
-        // static solid placeholder: skeletons stay, the movement goes.
-        data: SkeletonizerConfigData(
-          // Resolver form (the plain `effect` is deprecated in
-          // skeletonizer 3): brightness is ignored — the app
-          // is dark-only, so every skeleton shares the one
-          // high-contrast shimmer. Reduced motion swaps it
-          // for a static solid placeholder: skeletons stay,
-          // the movement goes.
-          effectResolver: (_) => reducedMotion
-              ? const SolidColorEffect(color: Color(0xFF2C2C2E))
-              : const ShimmerEffect(
-                  baseColor: Color(0xFF2C2C2E),
-                  highlightColor: Color(0xFF4B4B4F),
-                  duration: Duration(milliseconds: 1400),
-                ),
-        ),
+      home: _SkeletonConfig(
+        reducedMotion: reducedMotion,
         child: const Scaffold(body: AppShell()),
       ),
+    );
+  }
+}
+
+/// Applies the skeleton shimmer (or a static solid placeholder under
+/// reduced motion) around [child].
+///
+/// The OS "Reduce Motion" flag is OR-ed with the in-app toggle:
+/// [MediaQuery.maybeReduceMotionOf] rebuilds this widget when the system
+/// setting flips, so the shimmer stops without an app restart. This keeps
+/// the skeleton effect consistent with [motionDuration] in `a11y.dart`,
+/// which honors the same flag for every other animation.
+class _SkeletonConfig extends StatelessWidget {
+  const _SkeletonConfig({required this.reducedMotion, required this.child});
+
+  /// The in-app reduced-motion toggle.
+  final bool reducedMotion;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduced =
+        reducedMotion || (MediaQuery.maybeReduceMotionOf(context) ?? false);
+    return SkeletonizerConfig(
+      // One high-contrast shimmer for every skeleton in the app (home
+      // feed, artwork tiles, …) — the package's dark-mode default is
+      // nearly invisible on this theme. Reduced motion swaps it for a
+      // static solid placeholder: skeletons stay, the movement goes.
+      data: SkeletonizerConfigData(
+        // Resolver form (the plain `effect` is deprecated in
+        // skeletonizer 3): brightness is ignored — the app
+        // is dark-only, so every skeleton shares the one
+        // high-contrast shimmer.
+        effectResolver: (_) => reduced
+            ? const SolidColorEffect(color: Color(0xFF2C2C2E))
+            : const ShimmerEffect(
+                baseColor: Color(0xFF2C2C2E),
+                highlightColor: Color(0xFF4B4B4F),
+                duration: Duration(milliseconds: 1400),
+              ),
+      ),
+      child: child,
     );
   }
 }

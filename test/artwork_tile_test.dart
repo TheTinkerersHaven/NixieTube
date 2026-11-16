@@ -565,8 +565,12 @@ void main() {
       );
       await settleDecode(tester);
       expect(find.byType(Image), findsOneWidget);
-      // 48px on a 2x screen needs 96 device pixels on the short side.
-      expect((providerOf(tester) as ResizeImage).width, 144);
+      // The target is logical (48px box × 1.5 headroom); ResizeImage
+      // multiplies it by the 2x device pixel ratio at resolve, so the
+      // decode lands at 144 device pixels on the short side.
+      final provider = providerOf(tester) as ResizeImage;
+      expect(provider.width, 72);
+      expect(provider.useLogicalSize, isTrue);
     });
 
     testWidgets('a tiny source never upscales to the box', (tester) async {
@@ -590,11 +594,13 @@ void main() {
       );
       await settleDecode(tester);
       expect(find.byType(Image), findsOneWidget);
-      // The 30px source is smaller than the 48px box: the target is
-      // clamped to the file's own width, so the decode upscales only
-      // during the fit, never invents pixels.
+      // The 30px source is smaller than the 48px box (72 logical target):
+      // `allowUpscaling: false` makes ResizeImage clamp the decode to the
+      // file's own width, so it upscales only during the fit and never
+      // invents pixels.
       final provider = providerOf(tester) as ResizeImage;
-      expect(provider.width, 30);
+      expect(provider.width, 72);
+      expect(provider.useLogicalSize, isTrue);
       expect(provider.allowUpscaling, isFalse);
     });
 

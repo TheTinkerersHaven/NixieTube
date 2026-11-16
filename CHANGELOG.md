@@ -4,6 +4,12 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **The app honors the system "Reduce Motion" setting.** Animations and the loading shimmer now stop when the desktop's accessibility setting asks for reduced motion, in addition to the existing in-app toggle.
+
 ## [0.4.5] — 2026-11-15
 
 ### Changed
