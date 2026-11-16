@@ -1,10 +1,10 @@
 name: nixietube
 description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
-version: 0.4.5+2
+version: 0.4.5+3
 
 environment:
-  sdk: ^3.13.5
+  sdk: ^3.14.0
 
 dependencies:
   flutter:
@@ -41,11 +41,11 @@ dependencies:
   # come from flutter itself.
   dynamic_color: ^2.1.0
   google_fonts: ^9.0.0
-  tray_manager: ^0.8.3
-  window_manager: ^0.6.0
+  tray_manager: ^0.9.0
+  window_manager: ^0.7.0
   # window_manager's native API re-exports the window surface but not the
   # application-level one; the tray sets the window icon through Application.
-  nativeapi: ^0.5.10
+  nativeapi: ^0.6.1
   # Embedded Google-login window (system WebKit).
   desktop_webview_window: ^0.4.2
   silky_scroll: ^2.6.4

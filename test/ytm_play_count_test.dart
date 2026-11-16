@@ -1,8 +1,8 @@
 // YTM play-count cache: one fetch per track per session, the count is
 // remembered, failed fetches stay uncached and refetch on the next ask.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'fakes.dart';
 

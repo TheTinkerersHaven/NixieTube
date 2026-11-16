@@ -62,7 +62,7 @@ Grab the latest build from the [Releases page](https://github.com/TheTinkerersHa
 
 ### Prerequisites
 
-- Flutter SDK `^3.47.0`
+- Flutter SDK `^3.50.0` (Dart 3.14)
 
 On **Linux**, install the build and runtime dependencies:
 

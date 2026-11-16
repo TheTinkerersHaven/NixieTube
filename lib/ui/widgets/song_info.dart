@@ -1,6 +1,6 @@
 import 'dart:async' show unawaited;
 
-import 'package:flutter/material.dart' as fm;
+import 'package:flutter/widgets.dart' as fm;
 import 'package:m3e_core/m3e_core.dart' show M3ELoadingIndicator;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
