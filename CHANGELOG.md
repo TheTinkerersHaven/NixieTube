@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Song info now fills in the year and like count.** Opening a song's info from a list, such as the home screen's liked songs, showed both as "Unknown" because list rows carry neither; the panel now resolves them from YouTube Music when it opens.
+
 ### Changed
 
 - **The app honors the system "Reduce Motion" setting.** Animations and the loading shimmer now stop when the desktop's accessibility setting asks for reduced motion, in addition to the existing in-app toggle.

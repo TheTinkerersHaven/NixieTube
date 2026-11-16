@@ -12,14 +12,73 @@ import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../format.dart';
 
-class SongInfoView extends StatelessWidget {
+class SongInfoView extends StatefulWidget {
   const SongInfoView({super.key, required this.track, this.theme});
 
   final Track track;
   final ThemeData? theme;
 
   @override
+  State<SongInfoView> createState() => _SongInfoViewState();
+}
+
+class _SongInfoViewState extends State<SongInfoView> {
+  late Track _track;
+  int? _likeCount;
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _track = widget.track;
+    _likeCount = widget.track.likeCount >= 0 ? widget.track.likeCount : null;
+    _loadMissing();
+  }
+
+  @override
+  void didUpdateWidget(covariant SongInfoView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.track.videoId != widget.track.videoId) {
+      _track = widget.track;
+      _likeCount = widget.track.likeCount >= 0 ? widget.track.likeCount : null;
+      _loadMissing();
+    } else if (oldWidget.track != widget.track) {
+      // A later state update can carry the fields the first paint lacked
+      // (the now-playing panel enriches the current track in place).
+      final incoming = widget.track;
+      final currentYear = _track.album?.year.trim() ?? '';
+      final incomingYear = incoming.album?.year.trim() ?? '';
+      if ((_track.album == null && incoming.album != null) ||
+          (currentYear.isEmpty && incomingYear.isNotEmpty)) {
+        _track = _track.copyWith(album: incoming.album);
+      }
+      if (_likeCount == null && incoming.likeCount >= 0) {
+        _likeCount = incoming.likeCount;
+      }
+    }
+  }
+
+  /// Fills the year and like count a list row can lack. Rows carry only
+  /// what the list parsed, while these two fields need a watch-next read
+  /// (like count) and the album page (year). A late answer for a track
+  /// the user already navigated away from is dropped.
+  void _loadMissing() async {
+    final missingYear = _track.album?.year.trim().isEmpty ?? true;
+    if (!missingYear && _likeCount != null) return;
+    final generation = ++_generation;
+    final state = context.read<AppState>();
+    final result = await state.resolveSongInfo(_track);
+    if (!mounted || generation != _generation) return;
+    setState(() {
+      _track = result.track;
+      final likes = result.likeCount;
+      if (likes != null && likes >= 0) _likeCount = likes;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final track = _track;
     final state = context.read<AppState>();
     // Duration latches 0 -> actual once the engine reports, but only for
     // the track that is actually playing; other tracks fall back to their
@@ -38,7 +97,7 @@ class SongInfoView extends StatelessWidget {
     final linkDecoration = underlineLinks
         ? TextDecoration.underline
         : TextDecoration.none;
-    final theme = this.theme ?? Theme.of(context);
+    final theme = widget.theme ?? Theme.of(context);
     Widget row(String label, String value, {VoidCallback? onTap}) {
       final scheme = theme.colorScheme;
       return Column(
@@ -165,7 +224,7 @@ class SongInfoView extends StatelessWidget {
             row('Album', ''),
           row('Year', track.album?.year ?? ''),
           row('Duration', shownMs > 0 ? formatClock(shownMs) : ''),
-          row('Likes', compactCount(track.likeCount)),
+          row('Likes', compactCount(_likeCount ?? track.likeCount)),
           _LastFmInfo(
             track: track,
             key: ValueKey(track.videoId),

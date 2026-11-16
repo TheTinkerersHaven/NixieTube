@@ -3090,6 +3090,11 @@ class AppState extends ChangeNotifier {
   final Map<String, int> _ytmPlays = <String, int>{};
   final Map<String, Future<int>> _ytmPlayJobs = <String, Future<int>>{};
 
+  // Public like counts learned for the song-info panel, keyed by video
+  // id. Rows from lists carry no count, so opening the dialog fetches it
+  // once; later opens (and the now-playing panel) reuse the answer.
+  final Map<String, int> _songInfoLikes = <String, int>{};
+
   /// Cached YTM play count for [videoId], or null when not fetched yet.
   int? ytmPlayCount(String videoId) => _ytmPlays[videoId];
 
@@ -3120,6 +3125,30 @@ class AppState extends ChangeNotifier {
       // it can't settle with an unwatched error.
       _ytmPlayJobs.remove(videoId)?.ignore();
     }
+  }
+
+  /// Resolves the song-info fields a list row can lack: the album year
+  /// (one watch-next read plus the album page) and the public like count.
+  /// Both are best effort — a failure keeps the track and a null count,
+  /// so the dialog still shows everything it already knew.
+  Future<({Track track, int? likeCount})> resolveSongInfo(Track track) async {
+    final needsYear = track.album?.year.trim().isEmpty ?? true;
+    final enrichedF = needsYear
+        ? _tube.enrichTrack(track).catchError((_) => track)
+        : Future<Track>.value(track);
+    final cachedLikes =
+        _songInfoLikes[track.videoId] ??
+        (track.likeCount >= 0 ? track.likeCount : null);
+    if (cachedLikes != null) {
+      return (track: await enrichedF, likeCount: cachedLikes);
+    }
+    final likesF = track.videoId.isEmpty
+        ? Future<int?>.value()
+        : _api.videoLikeCount(track.videoId).catchError((_) => null);
+    final results = await Future.wait<Object?>([enrichedF, likesF]);
+    final likes = results[1] as int?;
+    if (likes != null && likes >= 0) _songInfoLikes[track.videoId] = likes;
+    return (track: results[0] as Track, likeCount: likes);
   }
 
   /// The tab's provider lookups: production fetches, or the seams a test
@@ -3607,6 +3636,7 @@ class AppState extends ChangeNotifier {
           if (likes != null &&
               likes >= 0 &&
               _player.state.current?.videoId == key) {
+            _songInfoLikes[key] = likes;
             _player.updateTrackStats(key, likes, -1);
           }
         } catch (_) {}
