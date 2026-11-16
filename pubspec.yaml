@@ -27,7 +27,7 @@ dependencies:
   just_audio_media_kit: ^2.1.0
   media_kit_libs_linux: ^1.2.1
   dbus: ^0.8.0
-  material_ui: ^1.10.0
+  material_ui: ^1.11.0
   # Loading skeletons for the home feed (replaces the spinner while shelves
   # resolve, so the layout is stable and content reveals in place).
   skeletonizer: ^3.0.0
@@ -41,11 +41,11 @@ dependencies:
   # come from flutter itself.
   dynamic_color: ^2.1.0
   google_fonts: ^9.0.0
-  tray_manager: ^0.8.3
-  window_manager: ^0.6.0
+  tray_manager: ^0.9.0
+  window_manager: ^0.7.0
   # window_manager's native API re-exports the window surface but not the
   # application-level one; the tray sets the window icon through Application.
-  nativeapi: ^0.5.10
+  nativeapi: ^0.6.1
   # Embedded Google-login window (system WebKit).
   desktop_webview_window: ^0.4.2
   silky_scroll: ^2.6.4
