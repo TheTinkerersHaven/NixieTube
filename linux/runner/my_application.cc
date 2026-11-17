@@ -55,8 +55,10 @@ static void my_application_activate(GApplication* application) {
   gtk_window_set_default_size(window, 1280, 900);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
-  // Disable Impeller until it is stable on Linux.
-  // fl_dart_project_set_enable_impeller(project, FALSE);
+  // Keep Skia on Linux: Impeller's gradient shader overflows mediump
+  // precision, so the full-screen palette washes render as a flat band with an
+  // abrupt step instead of a ramp (flutter/flutter#195159).
+  fl_dart_project_set_enable_impeller(project, FALSE);
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);
 

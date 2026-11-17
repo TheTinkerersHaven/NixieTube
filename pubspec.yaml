@@ -1,7 +1,7 @@
 name: nixietube
 description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
-version: 0.4.5+9
+version: 0.4.5+12
 
 environment:
   sdk: ^3.14.0
@@ -27,7 +27,7 @@ dependencies:
   just_audio_media_kit: ^2.1.0
   media_kit_libs_linux: ^1.2.1
   dbus: ^0.8.0
-  material_ui: ^1.10.0
+  material_ui: ^1.11.1
   # Loading skeletons for the home feed (replaces the spinner while shelves
   # resolve, so the layout is stable and content reveals in place).
   skeletonizer: ^3.0.0
@@ -40,7 +40,6 @@ dependencies:
   # Android. Only DynamicColorBuilder is used; seed schemes
   # come from flutter itself.
   dynamic_color: ^2.1.0
-  google_fonts: ^9.0.0
   tray_manager: ^0.9.0
   window_manager: ^0.7.0
   # window_manager's native API re-exports the window surface but not the

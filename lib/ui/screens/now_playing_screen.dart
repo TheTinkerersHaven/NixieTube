@@ -298,70 +298,7 @@ class _TransportColumnState extends State<_TransportColumn> {
             ),
           ),
           const SizedBox(height: 16),
-          Text(
-            track.title,
-            style: Theme.of(context).textTheme.headlineMedium,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-          ),
-          if (track.artists.isNotEmpty)
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (track.explicit)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Icon(
-                        Icons.explicit,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  for (var i = 0; i < track.artists.length; i++) ...[
-                    InkWell(
-                      onTap: () {
-                        state.closeNow();
-                        unawaited(state.openArtist(track.artists[i], track));
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2),
-                        child: Text(
-                          track.artists[i].name,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                      ),
-                    ),
-                    if (i != track.artists.length - 1)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Text(
-                          '•',
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                      ),
-                  ],
-                ],
-              ),
-            ),
-          if (track.album != null)
-            InkWell(
-              onTap: () {
-                state.closeNow();
-                unawaited(state.openAlbum(track, track.album!));
-              },
-              child: Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  track.album!.name,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
+          _TrackHeader(track: track, state: state),
           const SizedBox(height: 16),
           if (hasDuration) _TransportProgress(state: state),
           const SizedBox(height: 8),
@@ -510,6 +447,107 @@ class _TransportColumnState extends State<_TransportColumn> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Title, artists and album, centered under the cover. Owns its styling,
+/// navigation and overflow so the transport column stays about controls.
+class _TrackHeader extends StatelessWidget {
+  const _TrackHeader({required this.track, required this.state});
+
+  final Track track;
+  final AppState state;
+
+  void _openArtist(ArtistRef artist) {
+    state.closeNow();
+    unawaited(state.openArtist(artist, track));
+  }
+
+  void _openAlbum() {
+    state.closeNow();
+    unawaited(state.openAlbum(track, track.album!));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          track.title,
+          style: text.headlineLarge!.copyWith(
+            fontVariations: const [
+              FontVariation('ROND', 50),
+              FontVariation('wdth', 105),
+            ],
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+        ),
+        if (track.artists.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (track.explicit)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Icon(
+                    Icons.explicit,
+                    size: 16,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              for (var i = 0; i < track.artists.length; i++) ...[
+                _LinkText(
+                  track.artists[i].name,
+                  style: text.bodyLarge,
+                  onTap: () => _openArtist(track.artists[i]),
+                ),
+                if (i != track.artists.length - 1)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: Text('•', style: text.bodyLarge),
+                  ),
+              ],
+            ],
+          ),
+        ],
+        if (track.album != null) ...[
+          const SizedBox(height: 2),
+          _LinkText(
+            track.album!.name,
+            style: text.bodyMedium,
+            onTap: _openAlbum,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Tappable text with a small hit padding and ink ripple.
+class _LinkText extends StatelessWidget {
+  const _LinkText(this.label, {required this.onTap, this.style});
+
+  final String label;
+  final TextStyle? style;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: Text(label, style: style, textAlign: TextAlign.center),
       ),
     );
   }

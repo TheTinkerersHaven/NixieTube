@@ -526,11 +526,7 @@ _readRowCredits(
     } else if (browseId != null && browseId.startsWith('MPRE')) {
       flushPlainGroup();
       setAlbum(
-        AlbumRef(
-          text,
-          browseId: browseId,
-          kind: detectReleaseKind(text),
-        ),
+        AlbumRef(text, browseId: browseId, kind: detectReleaseKind(text)),
       );
     } else if (browseId == null &&
         !isBylineNoise(text) &&
@@ -1348,12 +1344,7 @@ AlbumDetail? buildAlbum(dynamic res, String browseId) {
           title: '',
           artists: linkedHeader != null ? [linkedHeader] : const [],
           album: albumTitle.isNotEmpty
-              ? AlbumRef(
-                  albumTitle,
-                  browseId: browseId,
-                  kind: kind,
-                  year: year,
-                )
+              ? AlbumRef(albumTitle, browseId: browseId, kind: kind, year: year)
               : null,
           thumbnails: headerThumbs,
         ),

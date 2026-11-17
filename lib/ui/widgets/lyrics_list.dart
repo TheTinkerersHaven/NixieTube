@@ -210,16 +210,22 @@ class _LyricsListState extends State<LyricsList> {
                 vertical: widget.large ? 12 : 8,
                 horizontal: 16,
               ),
+              // A 0.5 damping ratio overshoots by ~16% at the
+              // first peak and then rings back twice: pop in,
+              // spring back, spring forward, slight spring back.
+              // 0.75 cuts the ring to ~3%, which lands as a single
+              // small overshoot: the swell settles instead of
+              // rocking.
               child: SingleMotionBuilder(
                 motion: M3EMotion.custom(
                   stiffness: 300,
-                  damping: 0.5,
+                  damping: 0.75,
                 ).toMotion(),
                 value: active ? 1.0 : 0.0,
                 active: !reducedMotion,
                 builder: (context, scale, _) {
                   return Transform.scale(
-                    scale: 1.0 + scale * 0.1,
+                    scale: 1.0 + scale * 0.2,
                     child: AnimatedDefaultTextStyle(
                       duration: swell,
                       curve: Curves.easeOut,
@@ -239,6 +245,19 @@ class _LyricsListState extends State<LyricsList> {
                                               .textTheme
                                               .bodyLarge))
                               ?.copyWith(
+                                // Inactive lines wear a 300 cut so the
+                                // sung line is the only w500 weight in
+                                // the list — the theme caps its type
+                                // scale at w500, so the light weight is
+                                // set here. The bundled font is the full
+                                // variable cut (wght 1–1000), so 300
+                                // resolves as a real instance.
+                                fontWeight: active
+                                    ? FontWeight.w500
+                                    : FontWeight.w300,
+                                fontVariations: active
+                                    ? null
+                                    : [FontVariation('wght', 300)],
                                 color: active
                                     ? scheme.primary
                                     : (timed

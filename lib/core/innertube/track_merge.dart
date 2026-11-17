@@ -99,8 +99,7 @@ Track mergeTrack(
   final artists = _mergeArtists(current, incoming.artists, options.artists);
   // `copyWith` treats a null album as "keep", so folding the fallback
   // here keeps the merge's result identical to the old call sites.
-  final album =
-      _mergeAlbum(current, incoming, options.album) ?? current.album;
+  final album = _mergeAlbum(current, incoming, options.album) ?? current.album;
   final thumbnails = _mergeThumbnails(
     current.thumbnails,
     incoming.thumbnails,
@@ -108,8 +107,10 @@ Track mergeTrack(
   );
   final title = switch (options.title) {
     TitleMerge.keepCurrent => current.title,
-    TitleMerge.preferredFeatured =>
-      preferredTrackTitle(current.title, incoming.title),
+    TitleMerge.preferredFeatured => preferredTrackTitle(
+      current.title,
+      incoming.title,
+    ),
     TitleMerge.incomingWins =>
       incoming.title.isNotEmpty ? incoming.title : current.title,
   };
@@ -237,9 +238,7 @@ AlbumRef? _preferredAlbum(Track current, Track incoming) {
       cur != null &&
       (cur.browseId == null || cur.browseId!.isEmpty) &&
       cur.kind == null &&
-      artists.any(
-        (artist) => canonical(artist.name) == canonical(cur.name),
-      );
+      artists.any((artist) => canonical(artist.name) == canonical(cur.name));
 
   AlbumRef? merged;
   if (currentIsUnlinkedArtist && inc == null) {

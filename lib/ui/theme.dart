@@ -199,7 +199,7 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
         fontVariations: const [
           FontVariation('wght', 500),
           FontVariation('opsz', 28),
-          FontVariation('ROND', 100),
+          FontVariation('ROND', 50),
         ],
       ),
       // Shelf / section titles — light enough to not shout.
@@ -210,7 +210,7 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
         fontVariations: const [
           FontVariation('wght', 500),
           FontVariation('opsz', 22),
-          FontVariation('ROND', 100),
+          FontVariation('ROND', 50),
         ],
       ),
       // Track row titles — regular weight, clean.
@@ -221,7 +221,7 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
         fontVariations: const [
           FontVariation('wght', 400),
           FontVariation('opsz', 16),
-          FontVariation('ROND', 100),
+          FontVariation('ROND', 50),
         ],
       ),
       // Small titles — medium, aired out with spacing.
@@ -232,7 +232,7 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
         fontVariations: const [
           FontVariation('wght', 500),
           FontVariation('opsz', 14),
-          FontVariation('ROND', 100),
+          FontVariation('ROND', 50),
         ],
       ),
       // Body text — regular weight for readability.

@@ -4,21 +4,19 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.5] — 2026-11-17
 
 ### Fixed
 
 - **Song info now fills in the year and like count.** Opening a song's info from a list, such as the home screen's liked songs, showed both as "Unknown" because list rows carry neither; the panel now resolves them from YouTube Music when it opens.
+- **The now-playing artist line is centered and wraps.** Short artist lists line up with the centered title and album instead of starting at the left edge, and long lists wrap onto more lines rather than needing a sideways scroll to read.
 
 ### Changed
 
+- **Titles use the font's default roundness.** The now-playing title, section headings and track titles no longer push the Google Sans Flex ROND axis to its maximum; at 50 the letterforms keep the font's intended shape instead of the exaggerated rounding.
 - **The app honors the system "Reduce Motion" setting.** Animations and the loading shimmer now stop when the desktop's accessibility setting asks for reduced motion, in addition to the existing in-app toggle.
-
-## [0.4.5] — 2026-11-15
-
-### Changed
-
 - **The lyrics tab keeps its two providers apart.** The LRCLIB and YT Music tabs now each fetch and show only their own lyrics, and one with nothing to show says "No lyrics available" instead of filling in with the other provider's lines; when LRCLIB has no lyrics for a track, the tab moves to YT Music by itself, leaving the saved preference alone.
+- **The active lyric line stands out more.** It now swells a little larger and settles without the old spring-back wobble, while the surrounding lines use a lighter weight so the sung line is the only emphasized one.
 - **Settings and listening history survive an interrupted write.** Everything the app saves to disk (preferences, recent plays, play counts, remembered credits and artwork) is now written to a temporary file and swapped in, so a crash or force-quit can no longer leave a half-written file that silently resets it; repeated plays of the same song also no longer show up twice in quick picks.
 
 ## [0.4.4] — 2026-11-10
