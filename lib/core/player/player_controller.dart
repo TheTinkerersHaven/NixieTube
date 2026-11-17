@@ -12,8 +12,8 @@ import 'dart:isolate';
 import 'dart:math' show Random;
 
 import '../innertube/inner_tube.dart';
-import '../innertube/metadata.dart' show canonical;
 import '../innertube/stream_resolver.dart';
+import '../innertube/track_merge.dart';
 import '../models/models.dart';
 import '../../sys/atomic_io.dart';
 import '../../sys/paths.dart';
@@ -1039,105 +1039,21 @@ class PlayerController implements PlayerEngineListener {
         !explicit &&
         (incomingTitle == null || incomingTitle.isEmpty);
     if (hasNoUpdates) return;
-    Track fix(Track t) {
-      if (t.videoId != videoId) return t;
-      final existingKeys = t.artists.map((a) => canonical(a.name)).toSet();
-      final incomingAddsArtist = artists.any(
-        (a) => !existingKeys.contains(canonical(a.name)),
-      );
-      final incomingAddsIdentity = artists.any((incoming) {
-        final key = canonical(incoming.name);
-        return t.artists.any(
-          (existing) =>
-              canonical(existing.name) == key &&
-              (existing.browseId == null || existing.browseId!.isEmpty) &&
-              incoming.browseId != null &&
-              incoming.browseId!.isNotEmpty,
-        );
-      });
-      final replaceArtist =
-          t.artists.isEmpty ||
-          t.artistNames().trim().toLowerCase() == 'release' ||
-          artists.length > t.artists.length ||
-          incomingAddsArtist ||
-          incomingAddsIdentity;
-      final existingAlbum = t.album;
-      final knownArtists = [...t.artists, ...artists];
-      final existingAlbumIsUnlinkedArtist =
-          existingAlbum != null &&
-          (existingAlbum.browseId == null || existingAlbum.browseId!.isEmpty) &&
-          existingAlbum.kind == null &&
-          knownArtists.any(
-            (a) => canonical(a.name) == canonical(existingAlbum.name),
-          );
-      AlbumRef? mergedAlbum;
-      if (album == null && existingAlbumIsUnlinkedArtist) {
-        mergedAlbum = null;
-      } else if (album == null) {
-        mergedAlbum = existingAlbum;
-      } else if (existingAlbum == null) {
-        mergedAlbum = album;
-      } else if (existingAlbum.name.trim().toLowerCase() == 'release') {
-        mergedAlbum = album;
-      } else if (existingAlbumIsUnlinkedArtist) {
-        mergedAlbum = album;
-      } else if ((existingAlbum.browseId == null ||
-              existingAlbum.browseId!.isEmpty) &&
-          album.browseId != null &&
-          album.browseId!.isNotEmpty) {
-        mergedAlbum = album;
-      } else if (existingAlbum.kind == null && album.kind != null) {
-        mergedAlbum = AlbumRef(
-          album.name.isEmpty ? existingAlbum.name : album.name,
-          browseId: album.browseId ?? existingAlbum.browseId,
-          kind: album.kind,
-          year: existingAlbum.year,
-        );
-      } else {
-        mergedAlbum = existingAlbum;
-      }
-      // Year arrives later than the rest (extra album-page fetch in
-      // enrichTrack): fill it in even when the album ref itself was
-      // already resolved and kept above.
-      final mergedYear =
-          (mergedAlbum != null && mergedAlbum.year.trim().isNotEmpty)
-          ? mergedAlbum.year
-          : (album != null && album.year.trim().isNotEmpty ? album.year : '');
-      final AlbumRef? finalAlbum =
-          (mergedAlbum != null &&
-              mergedAlbum.year.trim().isEmpty &&
-              mergedYear.trim().isNotEmpty)
-          ? AlbumRef(
-              mergedAlbum.name,
-              browseId: mergedAlbum.browseId,
-              kind: mergedAlbum.kind,
-              year: mergedYear,
-            )
-          : mergedAlbum;
-      final seenUrls = <String>{};
-      final mergedThumbnails = <Thumbnail>[];
-      for (final th in [...t.thumbnails, ...thumbnails]) {
-        if (seenUrls.add(th.url)) mergedThumbnails.add(th);
-      }
-      return t.copyWith(
-        title: (incomingTitle != null && incomingTitle.isNotEmpty)
-            ? incomingTitle
-            : t.title,
-        artists: (replaceArtist && artists.isNotEmpty)
-            ? List.of(artists)
-            : t.artists,
-        album: finalAlbum,
-        thumbnails: mergedThumbnails,
-        // Fill-if-missing: list sources often lack durations (search
-        // rows carry no length); catalog values always win.
-        durationSec: t.durationSec > 0
-            ? t.durationSec
-            : (durationSec > 0 ? durationSec : t.durationSec),
-        // OR, never overwrite: a missing badge means "not marked",
-        // not "clean".
-        explicit: t.explicit || explicit,
-      );
-    }
+    final incoming = Track(
+      videoId: videoId,
+      title: incomingTitle ?? '',
+      artists: artists,
+      album: album,
+      thumbnails: thumbnails,
+      durationSec: durationSec,
+      explicit: explicit,
+    );
+    // Catalog metadata is authoritative for the title; everything else
+    // follows the shared panel merge (fuller artists, preferred album,
+    // unioned thumbnails, fill-if-missing duration, OR-ed explicit).
+    const mergeOptions = TrackMerge(title: TitleMerge.incomingWins);
+    Track fix(Track t) =>
+        t.videoId != videoId ? t : mergeTrack(t, incoming, mergeOptions);
 
     _update(
       _state.copyWith(

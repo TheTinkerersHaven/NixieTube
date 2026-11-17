@@ -31,8 +31,8 @@ import '../core/innertube/auth_session.dart';
 import '../core/innertube/inner_tube.dart';
 import '../core/innertube/lyrics.dart';
 import '../core/innertube/parse.dart';
-import '../core/innertube/metadata.dart'
-    show canonical, hasGenericReleaseArtist;
+import '../core/innertube/track_merge.dart';
+import '../core/innertube/metadata.dart' show hasGenericReleaseArtist;
 import '../core/models/models.dart';
 import '../core/player/player_controller.dart';
 import '../core/player/player_state.dart';
@@ -1545,48 +1545,31 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Panel (or remembered panel) artists win over thin credits: empty,
-  /// placeholder, or a single unbrowsable credit that never saw feat.
-  /// artists or an explicit verdict. Multi-artist and linked credits
-  /// are assumed panel-complete, except a same-name link upgrade.
-  /// Null means "keep the existing credit".
-  List<ArtistRef>? _adoptArtists(Track t, List<ArtistRef> incoming) {
-    if (incoming.isEmpty) return null;
-    if (t.artists.isEmpty || hasGenericReleaseArtist(t)) {
-      return List.of(incoming);
-    }
-    if (t.artists.length == 1 && (t.artists.single.browseId ?? '').isEmpty) {
-      return List.of(incoming);
-    }
-    if (incoming.length == 1 && t.artists.length == 1) {
-      final cur = t.artists.single;
-      final inc = incoming.single;
-      if ((cur.browseId ?? '').isEmpty &&
-          (inc.browseId ?? '').isNotEmpty &&
-          canonical(cur.name) == canonical(inc.name)) {
-        return List.of(incoming);
-      }
-    }
-    return null;
-  }
-
   /// Paints cached enrichment onto [track] without network: fuller
   /// artists over thin credits, album over none, explicit OR-ed in
   /// (a missing badge means unmarked, not clean — but the cache only
-  /// ever stores positive verdicts).
+  /// ever stores positive verdicts). The cache carries no title,
+  /// thumbnails or duration, so only those fields are eligible.
   Track _withCachedMeta(Track t) {
     final m = _trackMeta[t.videoId];
     if (m == null) return t;
-    var out = t;
-    final artists = _adoptArtists(t, m.artists);
-    if (artists != null) out = out.copyWith(artists: artists);
-    if (m.album != null && t.album == null) {
-      out = out.copyWith(album: m.album);
-    }
-    if (m.explicit && !t.explicit) {
-      out = out.copyWith(explicit: true);
-    }
-    return out;
+    return mergeTrack(
+      t,
+      Track(
+        videoId: t.videoId,
+        title: '',
+        artists: m.artists,
+        album: m.album,
+        explicit: m.explicit,
+      ),
+      const TrackMerge(
+        artists: ArtistMerge.thin,
+        album: AlbumMerge.fillMissing,
+        title: TitleMerge.keepCurrent,
+        thumbnails: ThumbnailMerge.keep,
+        duration: false,
+      ),
+    );
   }
 
   List<Track> _stampTrackMeta(List<Track> tracks) =>
@@ -1638,15 +1621,21 @@ class AppState extends ChangeNotifier {
       Track merge(Track t) {
         final e = byId[t.videoId];
         if (e == null) return t;
-        var out = t;
-        final artists = _adoptArtists(t, e.artists);
-        if (artists != null) out = out.copyWith(artists: artists);
-        if (e.album != null && t.album == null) {
-          out = out.copyWith(album: e.album);
-        }
-        if (e.explicit && !t.explicit) {
-          out = out.copyWith(explicit: true);
-        }
+        // The enriched track carries the same thin-credit fill as the
+        // cache: fuller artists, album over none, explicit OR-ed in.
+        // Its title/thumbnails/duration are deliberately ignored — this
+        // pass only heals the fields the cache stores.
+        final out = mergeTrack(
+          t,
+          e,
+          const TrackMerge(
+            artists: ArtistMerge.thin,
+            album: AlbumMerge.fillMissing,
+            title: TitleMerge.keepCurrent,
+            thumbnails: ThumbnailMerge.keep,
+            duration: false,
+          ),
+        );
         if (out != t) {
           rowsChanged = true;
           // Refresh recency (reinsert at the end) so trimming drops

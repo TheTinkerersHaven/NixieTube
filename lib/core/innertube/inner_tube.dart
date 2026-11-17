@@ -19,6 +19,7 @@ import 'auth_session.dart';
 import 'json.dart';
 import 'metadata.dart';
 import 'parse.dart';
+import 'track_merge.dart';
 
 const _base = 'https://music.youtube.com/youtubei/v1';
 const _origin = 'https://music.youtube.com';
@@ -2294,84 +2295,11 @@ class InnerTube {
   }
 
   /// The track as the watch-next panel describes it.
-  Track _applyPanel(Track track, Track panel) {
-    final replaceGenericArtist =
-        track.artists.isEmpty ||
-        track.artistNames().trim().toLowerCase() == 'release';
-    final existingKeys = track.artists
-        .map((artist) => canonicalMetadata(artist.name))
-        .toSet();
-    final panelAddsArtist = panel.artists.any(
-      (artist) => !existingKeys.contains(canonicalMetadata(artist.name)),
-    );
-    final panelAddsIdentity = panel.artists.any((incoming) {
-      final key = canonicalMetadata(incoming.name);
-      return track.artists.any(
-        (existing) =>
-            canonicalMetadata(existing.name) == key &&
-            (existing.browseId == null || existing.browseId!.isEmpty) &&
-            incoming.browseId != null &&
-            incoming.browseId!.isNotEmpty,
-      );
-    });
-    final panelHasMoreArtists = panel.artists.length > track.artists.length;
-    final panelAddsValue =
-        replaceGenericArtist ||
-        panelHasMoreArtists ||
-        panelAddsArtist ||
-        panelAddsIdentity;
-    final seenUrls = <String>{};
-    final thumbnails = <Thumbnail>[];
-    for (final thumb in [...track.thumbnails, ...panel.thumbnails]) {
-      if (seenUrls.add(thumb.url)) thumbnails.add(thumb);
-    }
-    return track.copyWith(
-      title: preferredTrackTitle(track.title, panel.title),
-      artists: (panel.artists.isNotEmpty && panelAddsValue)
-          ? panel.artists
-          : track.artists,
-      album: _preferredAlbum(track, panel),
-      thumbnails: thumbnails,
-      // Panel badge/duration fill what's missing: list sources often
-      // lack both (search rows carry no length, no badges).
-      // OR, never overwrite — a missing badge means "not marked",
-      // not "clean", and catalog durations beat panel ones.
-      explicit: track.explicit || panel.explicit,
-      durationSec: track.durationSec > 0
-          ? track.durationSec
-          : panel.durationSec,
-    );
-  }
-
-  /// The album reference that describes the track best.
   ///
-  /// The panel wins over a placeholder ("Release") or an unlinked album
-  /// that only repeats an artist name; otherwise the catalog reference
-  /// stays.
-  AlbumRef? _preferredAlbum(Track track, Track panel) {
-    final current = track.album;
-    final fromPanel = panel.album;
-    final currentIsUnlinkedArtist =
-        current != null &&
-        (current.browseId == null || current.browseId!.isEmpty) &&
-        current.kind == null &&
-        [...track.artists, ...panel.artists].any(
-          (artist) =>
-              canonicalMetadata(artist.name) == canonicalMetadata(current.name),
-        );
-    if (currentIsUnlinkedArtist && fromPanel == null) return null;
-    if (fromPanel == null) return current;
-    if (current == null) return fromPanel;
-    if (current.name.trim().toLowerCase() == 'release') return fromPanel;
-    if (currentIsUnlinkedArtist) return fromPanel;
-    if ((current.browseId == null || current.browseId!.isEmpty) &&
-        fromPanel.browseId != null &&
-        fromPanel.browseId!.isNotEmpty) {
-      return fromPanel;
-    }
-    if (current.kind == null && fromPanel.kind != null) return fromPanel;
-    return current;
-  }
+  /// The panel wins over thin or generic credits, fills a missing
+  /// duration and ORs the explicit badge, while the catalog reference
+  /// and title keep their precedence (see [mergeTrack]).
+  Track _applyPanel(Track track, Track panel) => mergeTrack(track, panel);
 
   /// The track with the album kind and year filled in.
   Future<Track> _fillAlbumDetails(Track track) async {

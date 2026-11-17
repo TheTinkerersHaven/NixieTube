@@ -32,6 +32,41 @@ bool _isFourDigitYear(String v) =>
     (v.startsWith('19') || v.startsWith('20')) &&
     int.tryParse(v) != null;
 
+final _featureCreditRe = RegExp(
+  r'(?:\(|\[|\b)(?:feat\.?|ft\.?|featuring|w/)\s+[^)\]]+(?:\)|\])?',
+  caseSensitive: false,
+);
+final _featureSegmentRe = RegExp(
+  r'''\s*[\(\[]?(?:feat\.?|ft\.?|featuring|w/)\s+[^)\]]+[\)\]]?''',
+  caseSensitive: false,
+);
+
+/// True when a title carries a featured-artist credit
+/// ("Song (feat. X)"). Used to prefer the credited variant when two
+/// sources disagree on a track title.
+bool hasFeaturedCredit(String value) => _featureCreditRe.hasMatch(value);
+
+/// Picks the better of two candidate titles for the same track:
+/// prefers the variant carrying a featured-artist credit, otherwise
+/// keeps the current one. Contributors disagree on "feat." placement,
+/// so this settles it in one place instead of per call site.
+String preferredTrackTitle(String current, String candidate) {
+  final oldTitle = current.trim();
+  final newTitle = candidate.trim();
+  if (newTitle.isEmpty) return oldTitle;
+  if (oldTitle.isEmpty) return newTitle;
+  final oldHasFeature = hasFeaturedCredit(oldTitle);
+  final newHasFeature = hasFeaturedCredit(newTitle);
+  if (newHasFeature && !oldHasFeature) return newTitle;
+  if (newHasFeature &&
+      oldHasFeature &&
+      canonical(oldTitle.replaceAll(_featureSegmentRe, '')) ==
+          canonical(newTitle.replaceAll(_featureSegmentRe, ''))) {
+    return newTitle;
+  }
+  return oldTitle;
+}
+
 /// True when a subtitle token is release metadata rather than a
 /// credit ("Single", "EP", "2024", "Official Audio"). Used to keep
 /// type/year tags out of artist names.

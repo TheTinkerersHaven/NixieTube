@@ -9,6 +9,7 @@ import 'dart:math' show log;
 import '../models/models.dart';
 import 'json.dart';
 import 'metadata.dart' show canonical;
+import 'track_merge.dart';
 
 /// Lowercases, maps every non-alphanumeric run to a space, trims.
 String canonicalMetadata(String value) => canonical(value);
@@ -190,44 +191,10 @@ final _skipWordsRe = RegExp(
   caseSensitive: false,
 );
 
-final _featureCreditRe = RegExp(
-  r'(?:\(|\[|\b)(?:feat\.?|ft\.?|featuring|w/)\s+[^)\]]+(?:\)|\])?',
-  caseSensitive: false,
-);
-final _featureSegmentRe = RegExp(
-  r'''\s*[\(\[]?(?:feat\.?|ft\.?|featuring|w/)\s+[^)\]]+[\)\]]?''',
-  caseSensitive: false,
-);
 final _creditStripRe = RegExp(
   r'^(feat\.?|ft\.?|featuring)\s+',
   caseSensitive: false,
 );
-
-/// True when a title carries a featured-artist credit
-/// ("Song (feat. X)"). Used to prefer the credited variant when two
-/// sources disagree on a track title.
-bool hasFeaturedCredit(String value) => _featureCreditRe.hasMatch(value);
-
-/// Picks the better of two candidate titles for the same track:
-/// prefers the variant carrying a featured-artist credit, otherwise
-/// keeps the current one. Contributors disagree on "feat." placement,
-/// so this settles it in one place instead of per call site.
-String preferredTrackTitle(String current, String candidate) {
-  final oldTitle = current.trim();
-  final newTitle = candidate.trim();
-  if (newTitle.isEmpty) return oldTitle;
-  if (oldTitle.isEmpty) return newTitle;
-  final oldHasFeature = hasFeaturedCredit(oldTitle);
-  final newHasFeature = hasFeaturedCredit(newTitle);
-  if (newHasFeature && !oldHasFeature) return newTitle;
-  if (newHasFeature &&
-      oldHasFeature &&
-      canonicalMetadata(oldTitle.replaceAll(_featureSegmentRe, '')) ==
-          canonicalMetadata(newTitle.replaceAll(_featureSegmentRe, ''))) {
-    return newTitle;
-  }
-  return oldTitle;
-}
 
 /// True when a byline run is metadata, not a credit: bare joiners
 /// ("and", "feat"), type labels ("official", "lyric video"), years,
@@ -360,27 +327,69 @@ String? firstVideoId(dynamic runs) {
   return null;
 }
 
+/// Builds a track from the fields a row renderer extracted.
+///
+/// The three row shapes (`musicResponsiveListItemRenderer`,
+/// `playlistPanelVideoRenderer`, `musicTwoRowItemRenderer`) keep the
+/// title, credits, duration and badges in different places, but the
+/// track they describe is the same. Each parser extracts its own fields
+/// and calls this, so artist dedup, the radio playlist id, the artist
+/// channel id and credit/album interpretation live in one place.
+Track? trackFromRow({
+  required String? videoId,
+  required String title,
+  required List<List> creditColumns,
+  List<Thumbnail> thumbnails = const [],
+  String? playlistId,
+  String? views,
+  int? duration,
+  RatingStatus rating = RatingStatus.unknown,
+  bool explicit = false,
+  bool detectViews = true,
+  bool detectDuration = true,
+  bool inferAlbumFromPlain = true,
+  bool firstAlbumWins = false,
+  bool fillArtistId = true,
+}) {
+  if (videoId == null || videoId.isEmpty) return null;
+  final credits = _readRowCredits(
+    creditColumns,
+    title,
+    detectViews: detectViews,
+    detectDuration: detectDuration,
+    inferAlbumFromPlain: inferAlbumFromPlain,
+    firstAlbumWins: firstAlbumWins,
+  );
+  final artists = _distinctArtists(credits.artists);
+  return Track(
+    videoId: videoId,
+    title: title,
+    artists: artists,
+    album: credits.album,
+    durationSec: duration ?? credits.duration,
+    thumbnails: thumbnails,
+    playlistId: playlistId,
+    radioPlaylistId: 'RDAMVM$videoId',
+    artistId: fillArtistId ? _firstChannelId(artists) : null,
+    views: views ?? credits.views,
+    rating: rating,
+    explicit: explicit,
+  );
+}
+
 /// Parses a `musicResponsiveListItemRenderer` row into a track.
 Track? parseListItem(dynamic li) {
   final cols = _listItemColumns(li);
   if (cols.isEmpty) return null;
   final titleRuns = cols[0];
-  final title = runsText(titleRuns);
   final identity = _listItemIdentity(li, titleRuns);
   if (identity == null) return null;
-  final credits = _readRowCredits(cols, title);
-  final artists = _distinctArtists(credits.artists);
-  return Track(
+  return trackFromRow(
     videoId: identity.videoId,
-    title: title,
-    artists: artists,
-    album: credits.album,
-    durationSec: credits.duration,
+    title: runsText(titleRuns),
+    creditColumns: cols.skip(1).toList(),
     thumbnails: parseThumbnails(li),
     playlistId: identity.playlistId,
-    radioPlaylistId: 'RDAMVM${identity.videoId}',
-    artistId: _firstChannelId(artists),
-    views: credits.views,
     rating: parseLikeRating(li),
     explicit: parseExplicit(li),
   );
@@ -415,9 +424,64 @@ List<List> _listItemColumns(dynamic li) {
   return (videoId: videoId, playlistId: str(nav(watch, const ['playlistId'])));
 }
 
-/// The credits, duration and views carried by a list row.
+/// One text/bullet segment of a byline, after splitting runs that pack
+/// several segments into one string ("Artist • Album"). A bullet carries
+/// no text and only separates segments.
+class _CreditRun {
+  const _CreditRun(this.text, {this.browseId, this.bullet = false});
+
+  final String text;
+  final String? browseId;
+  final bool bullet;
+}
+
+/// Flattens row text columns into credit segments, splitting bullets
+/// embedded inside a run. List rows already use separate bullet runs;
+/// two-row subtitles often pack "Artist • Album" into one run. Linked
+/// runs (a browse id) stay whole, since the link applies to the run.
+List<_CreditRun> _creditRuns(List<List> columns) {
+  final out = <_CreditRun>[];
+  for (final col in columns) {
+    for (final run in col) {
+      final raw = (str(nav(run, const ['text'])) ?? '').trim();
+      if (raw.isEmpty) continue;
+      if (raw == '•' || raw == '·') {
+        out.add(const _CreditRun('', bullet: true));
+        continue;
+      }
+      final browseId = str(
+        nav(run, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
+      );
+      if (browseId != null) {
+        out.add(_CreditRun(raw, browseId: browseId));
+        continue;
+      }
+      final pieces = raw.split(RegExp(r'\s*[•·]\s*'));
+      for (var i = 0; i < pieces.length; i++) {
+        if (i > 0) out.add(const _CreditRun('', bullet: true));
+        final text = pieces[i].trim();
+        if (text.isNotEmpty) out.add(_CreditRun(text));
+      }
+    }
+  }
+  return out;
+}
+
+/// The credits, duration and views carried by a row's text columns
+/// (the title column excluded). [detectViews] and [detectDuration]
+/// skip the text scans for renderers that carry those elsewhere (panel
+/// bylines, two-row subtitles); [inferAlbumFromPlain] controls the
+/// plain-text album fallback; [firstAlbumWins] keeps the first linked
+/// album instead of the last.
 ({List<ArtistRef> artists, AlbumRef? album, int duration, String views})
-_readRowCredits(List<List> cols, String title) {
+_readRowCredits(
+  List<List> columns,
+  String title, {
+  bool detectViews = true,
+  bool detectDuration = true,
+  bool inferAlbumFromPlain = true,
+  bool firstAlbumWins = false,
+}) {
   final artists = <ArtistRef>[];
   final plainGroups = <String>[];
   final plainGroup = StringBuffer();
@@ -431,64 +495,67 @@ _readRowCredits(List<List> cols, String title) {
     plainGroup.clear();
   }
 
-  final segments = _creditSegmentFlags(cols);
+  void setAlbum(AlbumRef candidate) {
+    if (firstAlbumWins && album != null) return;
+    album = candidate;
+  }
+
+  final segments = _creditSegmentFlags(columns);
   var segmentIdx = 0;
 
-  for (final col in cols.skip(1)) {
-    for (final run in col) {
-      final text = (str(nav(run, const ['text'])) ?? '').trim();
-      if (text.isEmpty) continue;
-      if (text == '•' || text == '·') {
-        flushPlainGroup();
-        segmentIdx++;
-        continue;
-      }
-      if (views.isEmpty && _viewsRe.hasMatch(text)) {
-        views = text;
-        continue;
-      }
-      if (_durationRe.hasMatch(text)) {
-        duration = toDurationSec(text);
-        continue;
-      }
-      final browseId = str(
-        nav(run, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
-      );
-      if (browseId != null && browseId.startsWith('UC')) {
-        flushPlainGroup();
-        artists.add(ArtistRef(text, browseId: browseId));
-      } else if (browseId != null && browseId.startsWith('MPRE')) {
-        flushPlainGroup();
-        album = AlbumRef(
+  for (final run in _creditRuns(columns)) {
+    if (run.bullet) {
+      flushPlainGroup();
+      segmentIdx++;
+      continue;
+    }
+    final text = run.text;
+    if (text.isEmpty) continue;
+    if (detectViews && views.isEmpty && _viewsRe.hasMatch(text)) {
+      views = text;
+      continue;
+    }
+    if (detectDuration && _durationRe.hasMatch(text)) {
+      duration = toDurationSec(text);
+      continue;
+    }
+    final browseId = run.browseId;
+    if (browseId != null && browseId.startsWith('UC')) {
+      flushPlainGroup();
+      artists.add(ArtistRef(text, browseId: browseId));
+    } else if (browseId != null && browseId.startsWith('MPRE')) {
+      flushPlainGroup();
+      setAlbum(
+        AlbumRef(
           text,
           browseId: browseId,
           kind: detectReleaseKind(text),
-        );
-      } else if (browseId == null &&
-          !isBylineNoise(text) &&
-          !_skipWordsRe.hasMatch(text)) {
-        final credit = text
-            .replaceAll(_creditStripRe, '')
-            .trim()
-            .replaceAll(RegExp(r'[,;:]+$'), '');
-        if (_isArtistCredit(credit, segmentIdx, segments)) {
-          artists.add(ArtistRef(credit));
-        } else {
-          // Runs before the first bullet form one artist credit; runs after
-          // a bullet are a separate release field.
-          if (plainGroup.isNotEmpty) plainGroup.write(' ');
-          plainGroup.write(text);
-        }
+        ),
+      );
+    } else if (browseId == null &&
+        !isBylineNoise(text) &&
+        !_skipWordsRe.hasMatch(text)) {
+      final credit = text
+          .replaceAll(_creditStripRe, '')
+          .trim()
+          .replaceAll(RegExp(r'[,;:]+$'), '');
+      if (_isArtistCredit(credit, segmentIdx, segments)) {
+        artists.add(ArtistRef(credit));
+      } else {
+        // Runs before the first bullet form one artist credit; runs after
+        // a bullet are a separate release field.
+        if (plainGroup.isNotEmpty) plainGroup.write(' ');
+        plainGroup.write(text);
       }
     }
   }
   flushPlainGroup();
   if (artists.isEmpty) {
     if (plainGroups.isNotEmpty) artists.add(ArtistRef(plainGroups.first));
-    if (album == null) {
+    if (album == null && inferAlbumFromPlain) {
       for (final group in plainGroups.skip(1)) {
         if (canonicalMetadata(group) != canonicalMetadata(title)) {
-          album = AlbumRef(group, kind: detectReleaseKind(group));
+          setAlbum(AlbumRef(group, kind: detectReleaseKind(group)));
           break;
         }
       }
@@ -499,27 +566,22 @@ _readRowCredits(List<List> cols, String title) {
 
 /// Which bullet-separated credit segments carry artist or album links.
 ({List<bool> hasArtist, List<bool> hasRelease}) _creditSegmentFlags(
-  List<List> cols,
+  List<List> columns,
 ) {
   final hasArtist = <bool>[false];
   final hasRelease = <bool>[false];
-  for (final col in cols.skip(1)) {
-    for (final run in col) {
-      final text = (str(nav(run, const ['text'])) ?? '').trim();
-      if (text == '•' || text == '·') {
-        hasArtist.add(false);
-        hasRelease.add(false);
-        continue;
-      }
-      final browseId = str(
-        nav(run, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
-      );
-      if (browseId != null && browseId.startsWith('UC')) {
-        hasArtist[hasArtist.length - 1] = true;
-      }
-      if (browseId != null && browseId.startsWith('MPRE')) {
-        hasRelease[hasRelease.length - 1] = true;
-      }
+  for (final run in _creditRuns(columns)) {
+    if (run.bullet) {
+      hasArtist.add(false);
+      hasRelease.add(false);
+      continue;
+    }
+    final browseId = run.browseId;
+    if (browseId != null && browseId.startsWith('UC')) {
+      hasArtist[hasArtist.length - 1] = true;
+    }
+    if (browseId != null && browseId.startsWith('MPRE')) {
+      hasRelease[hasRelease.length - 1] = true;
     }
   }
   return (hasArtist: hasArtist, hasRelease: hasRelease);
@@ -590,39 +652,6 @@ Track? parsePanelVideo(dynamic item) {
       nav(item, const ['longBylineText', 'runs']) ??
       nav(item, const ['shortBylineText', 'runs']);
   final runs = byline is List ? byline : const [];
-  final artists = <ArtistRef>[];
-  AlbumRef? album;
-  for (final run in runs) {
-    final text = (str(nav(run, const ['text'])) ?? '').trim();
-    if (text.isEmpty || text == '•') continue;
-    final id = str(
-      nav(run, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
-    );
-    if (id != null && id.startsWith('UC')) {
-      artists.add(ArtistRef(text, browseId: id));
-    } else if (id != null && id.startsWith('MPRE')) {
-      album = AlbumRef(text, browseId: id, kind: detectReleaseKind(text));
-    }
-  }
-  final pieces = runs
-      .map((r) => str(nav(r, const ['text'])) ?? '')
-      .join(' ')
-      .split(RegExp(r'\s*[•·]\s*'))
-      .map((p) => p.trim())
-      .where((p) => p.isNotEmpty)
-      .toList();
-  if (artists.isEmpty) {
-    final plain = pieces.where((p) => !isBylineNoise(p)).toList();
-    if (plain.isNotEmpty) artists.add(ArtistRef(plain.first));
-    if (album == null) {
-      for (final p in plain.skip(1)) {
-        if (canonicalMetadata(p) != canonicalMetadata(title)) {
-          album = AlbumRef(p, kind: detectReleaseKind(p));
-          break;
-        }
-      }
-    }
-  }
   var duration = toDurationSec(
     runsText(nav(item, const ['lengthText', 'runs'])),
   );
@@ -631,30 +660,19 @@ Track? parsePanelVideo(dynamic item) {
       str(nav(item, const ['lengthText', 'simpleText'])) ?? '',
     );
   }
-  final rating = parseLikeRating(item);
-  final seen = <String>{};
-  final distinctArtists = <ArtistRef>[];
-  for (final a in artists) {
-    if (seen.add(a.name)) distinctArtists.add(a);
-  }
-  String? artistId;
-  for (final a in distinctArtists) {
-    if (a.browseId != null && a.browseId!.startsWith('UC')) {
-      artistId = a.browseId;
-      break;
-    }
-  }
-  return Track(
+  return trackFromRow(
     videoId: videoId,
     title: title,
-    artists: distinctArtists,
-    album: album,
-    durationSec: duration,
+    // A byline is one runs array; views and duration live elsewhere on
+    // the panel (`lengthText`), so the credit scan must not treat them
+    // as text columns.
+    creditColumns: [runs],
     thumbnails: parseThumbnails(item),
-    radioPlaylistId: 'RDAMVM$videoId',
-    artistId: artistId,
-    rating: rating,
+    duration: duration,
+    rating: parseLikeRating(item),
     explicit: parseExplicit(item),
+    detectViews: false,
+    detectDuration: false,
   );
 }
 
@@ -881,55 +899,25 @@ ShelfItem? parseShelfItem(dynamic el) {
         ]),
       );
       // Subtitle runs carry the real credits ("Artist • Album" with
-      // linked UC/MPRE ids). Using the whole subtitle string as one
-      // artist name (the old behavior) produced credits like
-      // "Artist • Album", so parse the runs like list rows do and
-      // only fall back to the leading bullet segment when unlinked.
+      // linked UC/MPRE ids). The shared row builder parses them like
+      // list rows; a plain subtitle still falls back to its leading
+      // segment, and a card never infers an album from unlinked text.
       final subtitleRuns = nav(twoRow, const ['subtitle', 'runs']);
-      final artists = <ArtistRef>[];
-      AlbumRef? album;
-      if (subtitleRuns is List) {
-        for (final run in subtitleRuns) {
-          final text = (str(nav(run, const ['text'])) ?? '').trim();
-          if (text.isEmpty || text == '•' || text == '·') continue;
-          final id = str(
-            nav(run, const [
-              'navigationEndpoint',
-              'browseEndpoint',
-              'browseId',
-            ]),
-          );
-          if (id != null && id.startsWith('UC')) {
-            artists.add(ArtistRef(text, browseId: id));
-          } else if (id != null && id.startsWith('MPRE')) {
-            album ??= AlbumRef(
-              text,
-              browseId: id,
-              kind: detectReleaseKind(text),
-            );
-          }
-        }
-      }
-      if (artists.isEmpty) {
-        final parts = subtitle
-            .split(RegExp(r'\s*[•·]\s*'))
-            .map((p) => p.trim())
-            .where((p) => p.isNotEmpty && !isBylineNoise(p))
-            .toList();
-        if (parts.isNotEmpty) artists.add(ArtistRef(parts.first));
-      }
-      return ShelfItem.song(
-        Track(
-          videoId: watchVideoId,
-          title: title.isEmpty ? subtitle : title,
-          artists: artists,
-          album: album,
-          thumbnails: thumbs,
-          playlistId: playlistId,
-          radioPlaylistId: 'RDAMVM$watchVideoId',
-          explicit: parseExplicit(twoRow),
-        ),
+      final runs = subtitleRuns is List ? subtitleRuns : const [];
+      final track = trackFromRow(
+        videoId: watchVideoId,
+        title: title.isEmpty ? subtitle : title,
+        creditColumns: [runs],
+        thumbnails: thumbs,
+        playlistId: playlistId,
+        explicit: parseExplicit(twoRow),
+        detectViews: false,
+        detectDuration: false,
+        inferAlbumFromPlain: false,
+        firstAlbumWins: true,
+        fillArtistId: false,
       );
+      if (track != null) return ShelfItem.song(track);
     }
     final endpoint = nav(twoRow, const [
       'navigationEndpoint',
@@ -1345,42 +1333,41 @@ AlbumDetail? buildAlbum(dynamic res, String browseId) {
     for (final it in contents) {
       final li = nav(it, const ['musicResponsiveListItemRenderer']);
       if (li == null) continue;
-      var track = parseListItem(li);
-      if (track == null) continue;
-      if (track.thumbnails.isEmpty && headerThumbs.isNotEmpty) {
-        track = track.copyWith(thumbnails: headerThumbs);
-      }
+      final parsed = parseListItem(li);
+      if (parsed == null) continue;
       // Only linked header artists backfill track rows: stamping an
       // unlinked credit (e.g. Various Artists) would poison artist-based
       // matching downstream.
       final linkedHeader = headerArtist?.browseId != null ? headerArtist : null;
-      if (track.artists.isEmpty && linkedHeader != null) {
-        track = track.copyWith(
-          artists: [linkedHeader],
-          artistId: () => linkedHeader.browseId,
-        );
-      }
-      if (track.album == null && albumTitle.isNotEmpty) {
-        track = track.copyWith(
-          album: AlbumRef(
-            albumTitle,
-            browseId: browseId,
-            kind: kind,
-            year: year,
-          ),
-        );
-      } else if (track.album != null &&
-          track.album!.year.isEmpty &&
-          year.isNotEmpty) {
-        final a = track.album!;
-        track = track.copyWith(
-          album: AlbumRef(
-            a.name,
-            browseId: a.browseId,
-            kind: a.kind,
-            year: year,
-          ),
-        );
+      // Header metadata fills only what the row lacks: thumbnails, a
+      // linked artist, the album reference, and a missing year.
+      var track = mergeTrack(
+        parsed,
+        Track(
+          videoId: parsed.videoId,
+          title: '',
+          artists: linkedHeader != null ? [linkedHeader] : const [],
+          album: albumTitle.isNotEmpty
+              ? AlbumRef(
+                  albumTitle,
+                  browseId: browseId,
+                  kind: kind,
+                  year: year,
+                )
+              : null,
+          thumbnails: headerThumbs,
+        ),
+        const TrackMerge(
+          artists: ArtistMerge.fillMissing,
+          album: AlbumMerge.fillMissing,
+          title: TitleMerge.keepCurrent,
+          thumbnails: ThumbnailMerge.fillMissing,
+          duration: false,
+          explicit: false,
+        ),
+      );
+      if (parsed.artists.isEmpty && linkedHeader != null) {
+        track = track.copyWith(artistId: () => linkedHeader.browseId);
       }
       tracks.add(track);
     }
