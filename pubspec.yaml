@@ -1,7 +1,7 @@
 name: nixietube
 description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
-version: 0.4.5+8
+version: 0.4.5+9
 
 environment:
   sdk: ^3.14.0

@@ -23,4 +23,13 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 
+# Since Flutter 3.50.0 the engine links LLVM libunwind statically and exports
+# its _Unwind_* symbols, so they interpose on the system libgcc_s for every
+# other library in the process. libmpv's Lua (LuaJIT) raises errors through
+# _Unwind_RaiseException and dies inside the engine's unwinder, taking the
+# whole app with it, so ask the linker for libgcc_s first and let the system
+# unwinder win the lookup again. See flutter/flutter#196402.
+target_link_options(${BINARY_NAME} PRIVATE
+  "LINKER:--push-state,--no-as-needed,-lgcc_s,--pop-state")
+
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
