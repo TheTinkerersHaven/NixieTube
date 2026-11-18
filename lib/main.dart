@@ -24,6 +24,7 @@ import 'sys/tray_service.dart';
 import 'ui/app.dart';
 import 'ui/app_state.dart';
 import 'ui/theme.dart';
+import 'ui/widgets/track_menu_scope.dart';
 
 /// Caps the in-memory image cache. `maximumSizeBytes` is the memory bound;
 /// `maximumSize` (entry count) is left at its default — setting it to a byte
@@ -232,7 +233,7 @@ ColorScheme? _publishScheme(BuildContext context, ColorScheme? scheme) {
 /// plus every theme setting, so the root rebuilds when any of
 /// them flips (theme + skeleton effect) and on nothing else —
 /// the frequent progress ticks never rebuild the tree.
-class _ThemedMaterialApp extends StatelessWidget {
+class _ThemedMaterialApp extends StatefulWidget {
   const _ThemedMaterialApp({this.darkDynamic});
 
   /// System dark scheme from [DynamicColorBuilder], or null
@@ -240,7 +241,24 @@ class _ThemedMaterialApp extends StatelessWidget {
   final ColorScheme? darkDynamic;
 
   @override
+  State<_ThemedMaterialApp> createState() => _ThemedMaterialAppState();
+}
+
+class _ThemedMaterialAppState extends State<_ThemedMaterialApp> {
+  /// One menu coordinator for the whole app: opening a track menu closes
+  /// whichever one is already open, so a right-click elsewhere swaps the
+  /// menu in the same gesture.
+  final _menus = TrackMenuCoordinator();
+
+  @override
+  void dispose() {
+    _menus.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final darkDynamic = widget.darkDynamic;
     final highContrast = context.select<AppState, bool>(
       (s) => s.config.highContrast,
     );
@@ -299,6 +317,12 @@ class _ThemedMaterialApp extends StatelessWidget {
     return MaterialApp(
       title: 'NixieTube',
       theme: theme,
+      // The menu coordinator sits above the navigator, so every track
+      // row and rail card can swap the open menu in one gesture.
+      builder: (context, child) => TrackMenuScope(
+        coordinator: _menus,
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: _SkeletonConfig(
         reducedMotion: reducedMotion,
         child: const Scaffold(body: AppShell()),

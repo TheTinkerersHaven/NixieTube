@@ -224,6 +224,30 @@ class LastFmService extends ChangeNotifier {
     }
   }
 
+  /// Fetches Last.fm metadata for an album (album.getInfo): its wiki
+  /// summary, release year, and tag list. Returns null on failure or
+  /// when the album is unknown.
+  Future<Map<String, dynamic>?> albumInfo(
+    String artist,
+    String album, {
+    String? mbid,
+  }) async {
+    if (artist.trim().isEmpty || album.trim().isEmpty) return null;
+    try {
+      final params = <String, String>{
+        'artist': artist,
+        'album': album,
+        'autocorrect': '1',
+        if (mbid != null && mbid.isNotEmpty) 'mbid': mbid,
+      };
+      final root = await _callPublic('album.getInfo', params, root: 'album');
+      if (root == null) return null;
+      return root;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// GETs [method] and returns [root]'s object from the decoded JSON body,
   /// or null when Last.fm says "not found" (`error` field or empty [root]).
   Future<Map<String, dynamic>?> _callPublic(

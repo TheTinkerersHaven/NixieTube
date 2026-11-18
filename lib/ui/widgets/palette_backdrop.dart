@@ -37,6 +37,19 @@ Color washStop(Color other, double amount, Color base) {
   );
 }
 
+/// Pulls a vivid cover tint down to a muted, dark wash so it can sit behind
+/// the UI accent without competing with it. Near-neutral covers and tints
+/// that are already dark keep their color; [washStop] still collapses any
+/// bright cover toward the surface.
+Color tameWashTint(Color color) {
+  final hsl = HSLColor.fromColor(color);
+  if (hsl.saturation <= 0.45) return color;
+  return hsl
+      .withSaturation(0.35)
+      .withLightness(hsl.lightness.clamp(0.0, 0.2))
+      .toColor();
+}
+
 /// Backdrop built from a cover-art [palette] (5x5 grid
 /// from `coverBands`, row-major TL→BR). Renders a plain
 /// surface color when no palette is available yet.
@@ -93,7 +106,9 @@ LinearGradient _gradient(List<Color> palette, Color backdrop) {
       green += (cell.g * 255).round();
       blue += (cell.b * 255).round();
     }
-    final avg = Color.fromRGBO(red ~/ 5, green ~/ 5, blue ~/ 5, 1);
+    final avg = tameWashTint(
+      Color.fromRGBO(red ~/ 5, green ~/ 5, blue ~/ 5, 1),
+    );
     stops.add(washStop(avg, 0.08 + 0.14 * row / 4, backdrop));
   }
   return LinearGradient(

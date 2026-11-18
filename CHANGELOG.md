@@ -4,6 +4,17 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.6] — 2026-11-18
+
+### Changed
+
+- **Vivid cover colors no longer fight the accent.** The tinted backdrop now mutes and darkens saturated covers before blending them into the surface, so a bright red or yellow sleeve reads as a muted maroon or olive wash behind a blue accent; neutral and already-dark covers keep their color.
+
+### Added
+
+- **Album and playlist cards have a right-click menu with shuffle.** Right-clicking an album or playlist card now opens Play, Shuffle, Open and Copy link, so a full album can be started in order or shuffled without opening the album page first; the same menu also lists the album's info.
+- **The album info panel shows more than a description.** It now lists the album's year, release type, song count, total runtime and artist, and falls back to the Last.fm summary and genre tags when YouTube Music has no description; open it from the album page's ⋮ menu or a card's right-click menu. Opening it from a card shows a loading note while the album page is fetched, and the album is remembered so a second look is instant.
+
 ## [0.4.5] — 2026-11-17
 
 ### Fixed

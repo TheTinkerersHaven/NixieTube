@@ -14,7 +14,10 @@ import '../../core/models/models.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/album_panel.dart';
+import '../widgets/detail_header.dart';
+import '../widgets/detail_menu.dart';
 import '../widgets/loading_placeholders.dart';
+import '../widgets/palette_backdrop.dart';
 import '../widgets/rails.dart';
 import '../widgets/track_row.dart';
 
@@ -77,6 +80,7 @@ class DetailScreen extends StatelessWidget {
         tracks: album.tracks,
         numbered: true,
         showViews: true,
+        topPadding: 16,
       );
     } else if (detail.playlist != null) {
       final pl = detail.playlist!;
@@ -88,6 +92,7 @@ class DetailScreen extends StatelessWidget {
         owner: pl.author,
         tracks: pl.tracks,
         numbered: false,
+        topPadding: 16,
         removable: pl.editable,
         onRemoveTrack: pl.editable && pl.id.isNotEmpty
             ? (t) async {
@@ -108,27 +113,58 @@ class DetailScreen extends StatelessWidget {
         ),
       );
     }
-    // Only the album/playlist panels still need the hand-placed back
-    // button; the artist view carries its own back button in its app bar.
+    // Album and playlist pages share the library's top sliver: a tinted
+    // backdrop, a back/title/menu header, then the same panel below.
     if (detail.artist != null) return body;
+    final title =
+        detail.album?.title ?? detail.playlist?.title ?? item?.title ?? '';
     return Stack(
+      fit: StackFit.expand,
       children: [
-        body,
-        Positioned(
-          left: 8,
-          top: 8,
-          child: CircleAvatar(
-            radius: 24,
-            backgroundColor: Colors.black.withValues(alpha: 0.28),
-            child: IconButton(
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-              tooltip: 'Back',
-              onPressed: state.goBack,
+        if (item != null)
+          RepaintBoundary(
+            child: ListenableBuilder(
+              listenable: state.paletteTick,
+              builder: (context, _) =>
+                  PaletteBackdrop(palette: _paletteFor(state, detail, item)),
             ),
           ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DetailHeader(
+              title: title,
+              onBack: state.goBack,
+              trailing: item != null && detail.album != null
+                  ? DetailMenuButton(item: item, album: detail.album!)
+                  : null,
+            ),
+            Expanded(child: body),
+          ],
         ),
       ],
     );
+  }
+
+  /// The same cover wash the library uses behind an open playlist header.
+  List<Color> _paletteFor(
+    AppState state,
+    DetailUiState detail,
+    BrowseItem item,
+  ) {
+    final covers =
+        (detail.album?.tracks ?? detail.playlist?.tracks ?? const <Track>[])
+            .map((t) => t.displayArtwork)
+            .whereType<String>()
+            .where((u) => u.isNotEmpty)
+            .toSet()
+            .toList();
+    return state.paletteFor(
+          detail.album?.artworkOr(item) ??
+              detail.playlist?.artworkOr(item) ??
+              (covers.isEmpty ? null : covers.first),
+        ) ??
+        const <Color>[];
   }
 }
 

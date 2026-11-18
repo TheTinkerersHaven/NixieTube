@@ -731,6 +731,7 @@ class _QuickPicksGrid extends StatelessWidget {
               art: t.displayArtwork,
               squareCoverKey: t.videoId,
               playing: t.videoId == playingId,
+              track: t,
               onTap: () => open(item),
             );
           }
@@ -1114,6 +1115,7 @@ class _ShelfSection extends StatelessWidget {
                 browseId: '',
                 thumbnails: t.thumbnails,
               ),
+              track: t,
               onTap: () {
                 if (AppState.isMixSeed(t)) {
                   unawaited(state.playMixSeed(t));

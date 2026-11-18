@@ -1,14 +1,41 @@
 // Tests for the Now Playing wash stops: bright palettes collapse toward
-// the background (readable text), dark palettes keep their tint.
+// the background (readable text), dark palettes keep their tint, and vivid
+// covers are muted so they don't fight the accent.
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/ui/widgets/palette_backdrop.dart'
-    show PaletteBackdrop, washStop;
+    show PaletteBackdrop, tameWashTint, washStop;
 
 double lum(Color c) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
 
 void main() {
+  group('tameWashTint', () {
+    test('a vivid red becomes a muted dark maroon', () {
+      final tamed = tameWashTint(const Color(0xFFFF0000));
+      final hsl = HSLColor.fromColor(tamed);
+      expect(hsl.saturation, lessThan(0.4));
+      expect(hsl.lightness, lessThanOrEqualTo(0.2));
+      expect(tamed.r, greaterThan(tamed.b));
+    });
+
+    test('a vivid yellow becomes a dark olive', () {
+      final tamed = tameWashTint(const Color(0xFFFFFF00));
+      final hsl = HSLColor.fromColor(tamed);
+      expect(hsl.saturation, lessThan(0.4));
+      expect(hsl.lightness, lessThanOrEqualTo(0.2));
+      expect(tamed.r, greaterThan(tamed.b));
+      expect(tamed.g, greaterThan(tamed.b));
+    });
+
+    test('neutral and dark covers keep their color', () {
+      const gray = Color(0xFF808080);
+      const deep = Color(0xFF2A2A2A);
+      expect(tameWashTint(gray), gray);
+      expect(tameWashTint(deep), deep);
+    });
+  });
+
   group('washStop', () {
     const bg = Color(0xFF131314);
 
@@ -93,6 +120,25 @@ void main() {
       // than it (the cover's tint survives the blur).
       expect(top.r, greaterThan(top.b));
       expect(lum(top), lessThan(0.25));
+    });
+
+    testWidgets('a vivid cover tames the tinted stop', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          home: Scaffold(
+            body: PaletteBackdrop(
+              palette: List.filled(25, const Color(0xFFFF0000)),
+            ),
+          ),
+        ),
+      );
+      final top = _embeddedGradient(tester).colors.first;
+      final hsl = HSLColor.fromColor(top);
+      // Still red, but muted and dark enough to sit behind the accent.
+      expect(top.r, greaterThan(top.b));
+      expect(hsl.saturation, lessThan(0.4));
+      expect(hsl.lightness, lessThanOrEqualTo(0.2));
     });
 
     testWidgets('the wash ramps toward the bottom', (tester) async {

@@ -704,6 +704,87 @@ class AppState extends ChangeNotifier {
     searchAndGo('${track.artistNames()} ${album.name}');
   }
 
+  /// Opens a browsable card: playlists in the playlist view, everything
+  /// else on its detail page.
+  void openBrowsable(BrowseItem item) {
+    if (item.isPlaylist) {
+      openPlaylistById(item.browseId, item: item);
+    } else {
+      go(Screen.detail, detail: item);
+    }
+  }
+
+  /// Plays an album or playlist straight from its card.
+  ///
+  /// Returns false when the list cannot be loaded or has no tracks, so
+  /// the caller can say so instead of silently doing nothing.
+  Future<bool> playBrowsable(BrowseItem item) async {
+    final tracks = await _loadBrowsableTracks(item);
+    if (tracks == null || tracks.isEmpty) return false;
+    playSongs(tracks, 0);
+    return true;
+  }
+
+  /// Shuffles an album or playlist straight from its card. Same loading
+  /// and empty checks as [playBrowsable]; returns false when the list
+  /// cannot be loaded or has no tracks.
+  Future<bool> playBrowsableShuffled(BrowseItem item) async {
+    final tracks = await _loadBrowsableTracks(item);
+    if (tracks == null || tracks.isEmpty) return false;
+    playShuffled(tracks);
+    return true;
+  }
+
+  /// Loads the track list behind a browsable card, or null when the
+  /// item is neither a playable album nor a playlist.
+  Future<List<Track>?> _loadBrowsableTracks(BrowseItem item) async {
+    final id = item.browseId.trim();
+    if (id.startsWith('MPRE')) {
+      final album = await _tube.album(id);
+      return album?.tracks;
+    }
+    if (item.isPlaylist) {
+      final playlist = await _tube.playlist(id, params: item.browseParams);
+      return playlist?.tracks;
+    }
+    return null;
+  }
+
+  /// Loads the album detail for a card, so a context menu can show album
+  /// info without navigating to the album page first. Null when the load
+  /// fails (or the item isn't an album).
+  ///
+  /// The result is remembered: reopening the same album's info is
+  /// instant instead of re-fetching the page every time.
+  Future<AlbumDetail?> albumDetailFor(BrowseItem item) async {
+    final id = item.browseId.trim();
+    if (!id.startsWith('MPRE')) return null;
+    final cached = _albumInfoCache[id];
+    if (cached != null) return cached;
+    try {
+      final album = await _tube.album(id);
+      if (album != null) _albumInfoCache[id] = album;
+      return album;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Albums opened from a card's info menu, keyed by browse id.
+  final Map<String, AlbumDetail> _albumInfoCache = {};
+
+  /// The YouTube Music link for a browsable card.
+  String browsableLink(BrowseItem item) {
+    final id = item.browseId.trim();
+    if (id.startsWith('UC')) {
+      return 'https://music.youtube.com/channel/$id';
+    }
+    if (item.isPlaylist) {
+      return 'https://music.youtube.com/playlist?list=$id';
+    }
+    return 'https://music.youtube.com/browse/$id';
+  }
+
   // ---------- Home / search / detail ----------
 
   HomeUiState home = HomeUiState();
@@ -2201,29 +2282,48 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Prepends the synthetic YTM-style "Liked songs" entry.
+  /// Prepends the synthetic YTM-style "Liked songs" entry, or removes it
+  /// when the last like is gone so the card cannot linger with a stale
+  /// count and cover.
   void _updateLikedPlaylistEntry() {
-    if (_liked.isNotEmpty) {
-      final collage = _liked
-          .take(4)
-          .map((t) => t.displayArtwork)
-          .whereType<String>()
-          .toList();
-      _playlists = [
-        AccountPlaylist(
-          id: '__liked',
-          title: 'Liked songs',
-          // YouTube's own count for the playlist: it counts every
-          // entry, while the shelf only renders the ones it can show.
-          itemCount: _likedCount ?? _liked.length,
-          // The playlist's own cover, once it is fetched; the first
-          // song's art stands in until then.
-          art: _likedCover ?? (collage.isEmpty ? null : collage.first),
-          arts: collage,
-        ),
-        ..._playlists.where((p) => p.id != '__liked'),
-      ];
+    final others = _playlists.where((p) => p.id != '__liked').toList();
+    if (_liked.isEmpty) {
+      _playlists = others;
+      return;
     }
+    final collage = _liked
+        .take(4)
+        .map((t) => t.displayArtwork)
+        .whereType<String>()
+        .toList();
+    _playlists = [
+      AccountPlaylist(
+        id: '__liked',
+        title: 'Liked songs',
+        // YouTube's own count for the playlist: it counts every
+        // entry, while the shelf only renders the ones it can show.
+        itemCount: _likedCount ?? _liked.length,
+        // The playlist's own cover, once it is fetched; the first
+        // song's art stands in until then.
+        art: _likedCover ?? (collage.isEmpty ? null : collage.first),
+        arts: collage,
+      ),
+      ...others,
+    ];
+  }
+
+  /// Keeps an open liked-songs view in step with a like/unlike: the open
+  /// list holds a copy of `_liked`, so without this it would only change
+  /// after reopening the playlist.
+  void _refreshOpenLikedPlaylist(String videoId, {Track? likedTrack}) {
+    final opened = _openPlaylist;
+    if (opened == null || opened.playlist.id != '__liked') return;
+    final rest = opened.tracks
+        .where((t) => t.videoId != videoId)
+        .toList(growable: false);
+    _openPlaylist = opened.copyWith(
+      tracks: likedTrack == null ? rest : [likedTrack, ...rest],
+    );
   }
 
   /// Fetches YouTube's cover for the liked-music playlist.
@@ -2711,9 +2811,10 @@ class AppState extends ChangeNotifier {
   Future<void> rateTrackFeedback(
     BuildContext context,
     String videoId,
-    RatingStatus rating,
-  ) async {
-    final ok = await rateTrack(videoId, rating);
+    RatingStatus rating, {
+    Track? track,
+  }) async {
+    final ok = await rateTrack(videoId, rating, track: track);
     if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2731,13 +2832,17 @@ class AppState extends ChangeNotifier {
   ) async {
     final id = _player.state.current?.videoId;
     if (id == null) return;
-    await rateTrackFeedback(context, id, rating);
+    await rateTrackFeedback(context, id, rating, track: _player.state.current);
   }
 
   /// Rates a track via InnerTube, updating player, views and liked
   /// songs. The button flips optimistically and is reverted (with a
   /// failure result) if the backend rejects the change.
-  Future<bool> rateTrack(String videoId, RatingStatus rating) async {
+  Future<bool> rateTrack(
+    String videoId,
+    RatingStatus rating, {
+    Track? track,
+  }) async {
     if (rating == RatingStatus.unknown) return false;
     final previous = _rating.knownRating(videoId) ?? RatingStatus.unknown;
     final wasLiked = _rating.isLiked(videoId);
@@ -2768,20 +2873,46 @@ class AppState extends ChangeNotifier {
       _safeNotify();
       return false;
     }
-    // Backend accepted: maintain the liked list.
+    // Backend accepted: maintain the liked list, the library card and
+    // the open liked-songs view. This must happen even when the track is
+    // not playing — likes come from rails, rows and search results too.
+    final source = track ?? _playingOrQueued(videoId);
     if (rating == RatingStatus.like) {
-      final track = _player.state.current?.videoId == videoId
-          ? _player.state.current
-          : _player.state.queue.where((t) => t.videoId == videoId).firstOrNull;
-      if (track != null && !_liked.any((t) => t.videoId == videoId)) {
-        _liked = [..._liked, track];
-        _updateLikedPlaylistEntry();
-      }
+      if (source != null) _likeTrack(source);
     } else {
-      _liked = _liked.where((t) => t.videoId != videoId).toList();
-      _updateLikedPlaylistEntry();
+      _unlikeTrack(videoId);
     }
+    _updateLikedPlaylistEntry();
     return true;
+  }
+
+  /// The track [videoId] refers to when it is playing or queued, if any.
+  Track? _playingOrQueued(String videoId) =>
+      _player.state.current?.videoId == videoId
+      ? _player.state.current
+      : _player.state.queue.where((t) => t.videoId == videoId).firstOrNull;
+
+  /// Adds [track] to the liked list, or refreshes it when it is already
+  // there, and mirrors the change in an open liked-songs view.
+  void _likeTrack(Track track) {
+    final stamped = _withCachedMeta(track).copyWith(rating: RatingStatus.like);
+    final videoId = stamped.videoId;
+    if (_liked.any((t) => t.videoId == videoId)) {
+      _liked = _liked.map((t) => t.videoId == videoId ? stamped : t).toList();
+    } else {
+      _liked = [stamped, ..._liked];
+      _likedCount = _likedCount == null ? null : _likedCount! + 1;
+    }
+    _refreshOpenLikedPlaylist(videoId, likedTrack: stamped);
+  }
+
+  /// Removes [videoId] from the liked list and an open liked-songs view.
+  void _unlikeTrack(String videoId) {
+    _liked = _liked.where((t) => t.videoId != videoId).toList();
+    _likedCount = _likedCount == null
+        ? null
+        : (_likedCount! - 1).clamp(0, 1 << 31);
+    _refreshOpenLikedPlaylist(videoId);
   }
 
   /// Applies [rating] to the player's track, the rating cache, and every

@@ -48,25 +48,8 @@ Key symbols:
 - `Updater` (`lib/sys/updater.dart`) — `checkForUpdates()` hits the GitHub releases API; `applyUpdate()` downloads to `<exe>.new` and atomically renames.
 - `UpdateInfo` — data class returned by `checkForUpdates()`, carries `version` and the download URL.
 
-## File editing
-
-- Always modify files with the built-in `edit`, `write`, and `patch` tools.
-- Never use sed, awk, perl, python, echo/cat redirection or heredocs to change files.
-- Use bash only for running builds, tests, git, and read-only inspection.
-
-## Git: the user owns commits, tags, and pushes
-
-The agent must **never** commit, push, tag, or force-push on the user's behalf. All changes stay **uncommitted on the working tree** until the user explicitly asks to commit.
-
-- `git commit`, `git tag`, `git push`, `git push --tags`, and any force-push are user-only operations.
-- When the user does commit, sign-offs/gpg signing are handled by the user (`git -c commit.gpgsign=false` or their own signing setup); the agent must not add `-c commit.gpgsign=false` or otherwise circumvent the user's signing flow.
-- **Never force-push remote tags.**
-- Before any release: the user decides when the tree is clean, what goes into the commit, the tag name, and when to push.
-
 ## Code style & conventions
 
-- Never hard-wrap prose. In Markdown and any text written for a reader (README, CHANGELOG, AGENTS, docs, and replies to the user), a paragraph or a bullet stays on one line; the renderer wraps it. Only `dart format` decides code line breaks, and comments follow the wrapping of the file around them.
-- M3 (`useMaterial3: true`); M3E components throughout; no hardcoding user-facing content except explicitly requested section names.
 - Keep resource usage minimal; verify via execution, not speculation.
 - Check whether an existing dependency already implements a feature before hand-rolling it.
 - Prefer `dart pub global run dartdoc` with 9.0.0 pinned for `dart doc`.
@@ -130,9 +113,3 @@ CI (`.github/workflows/build.yml`) copies the release body with `awk`: it starts
 - No entries for tests, refactors or dependency bumps unless the app behaves differently because of them. File paths and private symbols belong in the commit, not in the changelog.
 - Every bullet must be true of the code being released and verifiable in the diff — no plans, no "will".
 - Do not repeat a bullet from an earlier release; if this release refines it, say what is new.
-
-## When the user says "release"
-
-1. The user reviews the diff and decides what is included.
-2. The user commits (signed as they prefer).
-3. The user tags (e.g. `v0.1.x`) and pushes; the agent may be asked to draft release notes but must not execute the push or tag itself.

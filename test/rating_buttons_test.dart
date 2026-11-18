@@ -204,4 +204,50 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('liking a rail track updates the liked list and open view', (
+    tester,
+  ) async {
+    final tube = FakeTube()..rateResult = true;
+    final state = await _boot(tester, tube);
+    await state.openPlaylist(
+      const AccountPlaylist(id: '__liked', title: 'Liked songs', itemCount: 0),
+    );
+    await tester.pump();
+    expect(state.openedPlaylist!.tracks, isEmpty);
+
+    // The track is neither playing nor queued: the old code only looked
+    // at the player, so a rail like never reached the liked list.
+    const railTrack = Track(
+      videoId: 'r1',
+      title: 'Rail song',
+      artists: [ArtistRef('Rail act')],
+    );
+    final ok = await state.rateTrack(
+      railTrack.videoId,
+      RatingStatus.like,
+      track: railTrack,
+    );
+    await tester.pump();
+
+    expect(ok, isTrue);
+    expect(state.liked.map((t) => t.videoId), contains('r1'));
+    expect(state.playlists.where((p) => p.id == '__liked'), isNotEmpty);
+    expect(state.openedPlaylist!.tracks.map((t) => t.videoId), contains('r1'));
+
+    // Unliking the last song clears the list, the open view and the
+    // library card instead of leaving a stale entry behind.
+    await state.rateTrack(
+      railTrack.videoId,
+      RatingStatus.indifferent,
+      track: railTrack,
+    );
+    await tester.pump();
+
+    expect(state.liked, isEmpty);
+    expect(state.openedPlaylist!.tracks, isEmpty);
+    expect(state.playlists.where((p) => p.id == '__liked'), isEmpty);
+    state.player.dispose();
+    await tester.pump();
+  });
 }

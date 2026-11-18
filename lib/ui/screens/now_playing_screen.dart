@@ -23,6 +23,7 @@ import '../widgets/loading_placeholders.dart';
 import '../widgets/palette_backdrop.dart';
 import '../widgets/player_bar.dart';
 import '../widgets/seek_slider.dart';
+import '../widgets/track_menu_scope.dart';
 import '../widgets/track_row.dart';
 import '../widgets/song_info.dart';
 import '../widgets/volume_slider.dart';
@@ -955,69 +956,74 @@ class _QueueRow extends StatefulWidget {
   State<_QueueRow> createState() => _QueueRowState();
 }
 
-class _QueueRowState extends State<_QueueRow> {
+class _QueueRowState extends State<_QueueRow> with TrackMenuHost<_QueueRow> {
   bool _hovering = false;
   bool _menuOpen = false;
-  final M3EMenuController _menuController = M3EMenuController();
-
-  @override
-  void dispose() {
-    _menuController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return M3EMenuAnchor(
-      controller: _menuController,
-      menuChildren: _queueMenuItems(context),
-      builder: (ctx, controller, child) => child!,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovering = true),
-        onExit: (_) => setState(() => _hovering = false),
-        child: GestureDetector(
-          onSecondaryTapDown: (details) =>
-              _menuController.open(position: details.localPosition),
-          child: Row(
-            children: [
-              Expanded(
-                child: TrackRow(
-                  track: widget.track,
-                  playing: widget.playing,
-                  onPlay: widget.onPlay,
-                  rateable: true,
-                  // The row hosts its own right-click menu; the row-local
-                  // one stays off.
-                  contextMenu: false,
-                  // Shared so the ⋮ and the handle appear together.
-                  hovering: _hovering || _menuOpen,
-                  onMenuOpenChanged: (open) => setState(() => _menuOpen = open),
-                ),
+    final showAnchor = anchorWanted;
+    updateAnchorVisibility(showAnchor);
+    final content = MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        onSecondaryTapDown: (details) => openTrackMenu(
+          context,
+          menuController,
+          position: details.localPosition,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: TrackRow(
+                track: widget.track,
+                playing: widget.playing,
+                onPlay: widget.onPlay,
+                rateable: true,
+                // The row hosts its own right-click menu; the row-local
+                // one stays off.
+                contextMenu: false,
+                // Shared so the ⋮ and the handle appear together.
+                hovering: _hovering || _menuOpen,
+                onMenuOpenChanged: (open) => setState(() => _menuOpen = open),
               ),
-              AnimatedSize(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutBack,
-                child: (_hovering || _menuOpen)
-                    ? ReorderableDragStartListener(
-                        index: widget.index,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 16,
-                          ),
-                          child: Icon(
-                            Icons.drag_handle_rounded,
-                            color: scheme.onSurfaceVariant,
-                          ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutBack,
+              child: (_hovering || _menuOpen)
+                  ? ReorderableDragStartListener(
+                      index: widget.index,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 16,
                         ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ],
-          ),
+                        child: Icon(
+                          Icons.drag_handle_rounded,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
         ),
       ),
+    );
+    final keyed = KeyedSubtree(key: menuChildKey, child: content);
+    if (!showAnchor) return keyed;
+    return M3EMenuAnchor(
+      controller: menuController,
+      menuChildren: _queueMenuItems(context),
+      builder: (ctx, controller, child) => child!,
+      onClose: () => closeTrackMenu(context, menuController),
+      // Translucent so a right-click on another row/card reaches it; the
+      // coordinator closes this menu as the new one opens.
+      consumeOutsideTaps: false,
+      child: keyed,
     );
   }
 
@@ -1352,7 +1358,8 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
                               widget.track.title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleLarge,
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w600),
                             ),
                             Text(
                               widget.track.artistNames(),

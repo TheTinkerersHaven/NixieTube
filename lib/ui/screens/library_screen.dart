@@ -13,6 +13,7 @@ import '../widgets/screen_list.dart';
 import '../widgets/album_panel.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/cards.dart';
+import '../widgets/detail_header.dart';
 import '../widgets/rails.dart';
 
 import '../widgets/palette_backdrop.dart';
@@ -59,70 +60,10 @@ class LibraryScreen extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                screenPadding,
-                screenPadding,
-                screenPadding,
-                screenPadding,
-              ),
-              child: Row(
-                children: [
-                  if (opened != null)
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back_rounded),
-                      tooltip: 'Back',
-                      onPressed: state.closePlaylist,
-                    ),
-                  Expanded(
-                    child: Text(
-                      opened?.playlist.title ?? 'Library',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                  ),
-                  if (opened != null && opened.editable)
-                    M3EPopupMenuButton<_PlaylistMenuAction>(
-                      tooltip: 'More actions',
-                      icon: const Icon(Icons.more_vert_rounded),
-                      onSelected: (action) => _handlePlaylistEdit(
-                        context,
-                        state,
-                        opened,
-                        action == _PlaylistMenuAction.rename
-                            ? 'rename'
-                            : 'delete',
-                      ),
-                      itemBuilder: (context) => [
-                        const M3EPopupMenuItem<_PlaylistMenuAction>(
-                          value: _PlaylistMenuAction.rename,
-                          child: Row(
-                            children: [
-                              Icon(Icons.drive_file_rename_outline_rounded),
-                              SizedBox(width: 12),
-                              Text('Rename playlist'),
-                            ],
-                          ),
-                        ),
-                        const M3EPopupMenuItem<_PlaylistMenuAction>(
-                          value: _PlaylistMenuAction.delete,
-                          child: Row(
-                            children: [
-                              Icon(Icons.delete_rounded),
-                              SizedBox(width: 12),
-                              Text('Delete playlist'),
-                            ],
-                          ),
-                        ),
-                      ],
-                    )
-                  else if (opened == null)
-                    IconButton(
-                      icon: const Icon(Icons.settings_rounded),
-                      tooltip: 'Settings',
-                      onPressed: () => state.go(Screen.settings),
-                    ),
-                ],
-              ),
+            DetailHeader(
+              title: opened?.playlist.title ?? 'Library',
+              onBack: opened == null ? null : state.closePlaylist,
+              trailing: _headerTrailing(context, state, opened),
             ),
             if (opened != null)
               Expanded(child: _openPlaylist(context, state, opened))
@@ -195,6 +136,55 @@ class LibraryScreen extends StatelessWidget {
   /// Palette for the open-playlist wash. Resolves the same artwork
   /// URL as AlbumPlaylistView (which triggers the computation), so
   /// both read the same cached bands; empty until it lands.
+  /// Trailing action in the shared header: settings at the library root,
+  /// playlist edits when a playlist is open.
+  Widget? _headerTrailing(
+    BuildContext context,
+    AppState state,
+    OpenPlaylist? opened,
+  ) {
+    if (opened == null) {
+      return IconButton(
+        icon: const Icon(Icons.settings_rounded),
+        tooltip: 'Settings',
+        onPressed: () => state.go(Screen.settings),
+      );
+    }
+    if (!opened.editable) return null;
+    return M3EPopupMenuButton<_PlaylistMenuAction>(
+      tooltip: 'More actions',
+      icon: const Icon(Icons.more_vert_rounded),
+      onSelected: (action) => _handlePlaylistEdit(
+        context,
+        state,
+        opened,
+        action == _PlaylistMenuAction.rename ? 'rename' : 'delete',
+      ),
+      itemBuilder: (context) => const [
+        M3EPopupMenuItem<_PlaylistMenuAction>(
+          value: _PlaylistMenuAction.rename,
+          child: Row(
+            children: [
+              Icon(Icons.drive_file_rename_outline_rounded),
+              SizedBox(width: 12),
+              Text('Rename playlist'),
+            ],
+          ),
+        ),
+        M3EPopupMenuItem<_PlaylistMenuAction>(
+          value: _PlaylistMenuAction.delete,
+          child: Row(
+            children: [
+              Icon(Icons.delete_rounded),
+              SizedBox(width: 12),
+              Text('Delete playlist'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   List<Color> _paletteFor(AppState state, OpenPlaylist opened) {
     final covers = opened.tracks
         .map((t) => t.displayArtwork)

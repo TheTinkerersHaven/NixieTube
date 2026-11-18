@@ -1,10 +1,12 @@
-// Shelf cards: `QuickPickCard` and `SimilarArtistCard`.
+// Shelf cards: browse, track rail, quick-pick and similar-artist cards.
 
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/models/models.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
+import 'browse_menu.dart';
+import 'track_menu_scope.dart';
 
 /// Card for a browsable shelf item (album, playlist, artist): 208dp wide,
 /// 200dp art, two-line title plus subtitle.
@@ -14,17 +16,26 @@ class BrowseCard extends StatelessWidget {
     required this.item,
     required this.onTap,
     this.width,
+    this.track,
+    this.contextMenu = true,
   });
 
   final BrowseItem item;
   final VoidCallback onTap;
   final double? width;
 
+  /// When set, the card stands for a song and right-click opens the
+  /// track menu (mixed shelves render their songs as browse cards).
+  final Track? track;
+
+  /// Whether right-click and the ⋮ button open the browsable menu.
+  final bool contextMenu;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final art = item.thumbnails.isEmpty ? null : item.bestArtwork;
-    return InkWell(
+    final card = InkWell(
       onTap: onTap,
       child: Container(
         width: width ?? 208,
@@ -51,26 +62,38 @@ class BrowseCard extends StatelessWidget {
         ),
       ),
     );
+    final track = this.track;
+    if (track != null) return TrackMenuTarget(track: track, child: card);
+    if (!contextMenu) return card;
+    return BrowseMenuTarget(item: item, child: card);
   }
 }
 
 /// Rail card for a track with large artwork, title and artist line.
+///
+/// Right-click opens the shared track menu (Play next, Add to playlist,
+/// Copy link, Song info). [contextMenu] can turn it off for hosts that
+/// supply their own menu.
 class TrackRailCard extends StatelessWidget {
   const TrackRailCard({
     super.key,
     required this.track,
     this.playing = false,
     required this.onTap,
+    this.contextMenu = true,
+    this.showPlaylists = true,
   });
 
   final Track track;
   final bool playing;
   final VoidCallback onTap;
+  final bool contextMenu;
+  final bool showPlaylists;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return InkWell(
+    final card = InkWell(
       onTap: onTap,
       child: Container(
         width: 208,
@@ -125,6 +148,12 @@ class TrackRailCard extends StatelessWidget {
         ),
       ),
     );
+    return TrackMenuTarget(
+      track: track,
+      showPlaylists: showPlaylists,
+      enabled: contextMenu,
+      child: card,
+    );
   }
 }
 
@@ -139,6 +168,7 @@ class QuickPickCard extends StatelessWidget {
     this.playing = false,
     this.squareCoverKey,
     required this.onTap,
+    this.track,
   });
 
   final String title;
@@ -153,10 +183,14 @@ class QuickPickCard extends StatelessWidget {
   final String? squareCoverKey;
   final VoidCallback onTap;
 
+  /// When set, the tile stands for a song and right-click opens the
+  /// track menu.
+  final Track? track;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
+    final card = Padding(
       padding: const EdgeInsets.all(4),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(cardRadius),
@@ -237,6 +271,9 @@ class QuickPickCard extends StatelessWidget {
         ),
       ),
     );
+    final track = this.track;
+    if (track == null) return card;
+    return TrackMenuTarget(track: track, child: card);
   }
 }
 
