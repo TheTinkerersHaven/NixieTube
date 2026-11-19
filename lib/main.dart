@@ -43,8 +43,6 @@ void _configureImageCache() {
       ? desktopCache
       : mobileCache;
 
-  // `maximumSize` (entry count) is left at its default so the
-  // entry-count LRU still applies underneath the byte bound.
   PaintingBinding.instance.imageCache.maximumSizeBytes = cacheSizeBytes;
 }
 
@@ -66,7 +64,6 @@ class _ImageCachePressureObserver extends WidgetsBindingObserver {
 void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
   WidgetsBinding.instance.addObserver(_ImageCachePressureObserver());
-  // Configure adaptive image cache based on available memory.
   _configureImageCache();
   JustAudioMediaKit.ensureInitialized();
   // Console and file logging for the stream resolver, updater and the
@@ -291,9 +288,8 @@ class _ThemedMaterialAppState extends State<_ThemedMaterialApp> {
     // without the remembered value it would start on the built-in
     // fallback every launch. Writes only on change; `set` itself
     // never notifies, so no build loop.
-    final liveDynamic = darkDynamic;
-    if (liveDynamic != null) {
-      final live = liveDynamic.primary.toARGB32();
+    if (darkDynamic != null) {
+      final live = darkDynamic.primary.toARGB32();
       if (rememberedSystem != live) {
         context.read<AppState>().config.themeSystemPrimary = live;
       }

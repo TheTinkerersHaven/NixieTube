@@ -91,25 +91,23 @@ class SleepInhibitService {
       try {
         _lock = await _runner();
         // A pause landed while the lock was being taken: release now.
-        if (!_lastState.playing) {
-          final lock = _lock;
-          _lock = null;
-          try {
-            await lock?.release();
-          } catch (_) {}
-        }
+        if (!_lastState.playing) await _releaseLock();
       } catch (_) {
         _lock = null;
       }
     } else {
-      final lock = _lock;
-      _lock = null;
-      if (lock != null) {
-        try {
-          await lock.release();
-        } catch (_) {}
-      }
+      await _releaseLock();
     }
+  }
+
+  /// Drops the held lock, if any, and releases it without throwing.
+  Future<void> _releaseLock() async {
+    final lock = _lock;
+    _lock = null;
+    if (lock == null) return;
+    try {
+      await lock.release();
+    } catch (_) {}
   }
 
   Future<void> dispose() async {
@@ -122,13 +120,7 @@ class SleepInhibitService {
     try {
       await _chain.timeout(const Duration(seconds: 5));
     } catch (_) {}
-    final lock = _lock;
-    _lock = null;
-    if (lock != null) {
-      try {
-        await lock.release();
-      } catch (_) {}
-    }
+    await _releaseLock();
   }
 
   /// Spawns `systemd-inhibit` holding a sleep lock for as long as the

@@ -129,7 +129,7 @@ class TrayService {
     _lastIconFg = scheme.onPrimary;
     _lastIconPlaying = playing;
     _log.d(
-      '[tray] rendering icon primary=#${scheme.primary.toARGB32().toRadixString(16).padLeft(8, '0')} playing=$playing',
+      'rendering icon primary=#${scheme.primary.toARGB32().toRadixString(16).padLeft(8, '0')} playing=$playing',
     );
     try {
       final bytes = await renderTrayIcon(

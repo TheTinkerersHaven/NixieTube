@@ -15,7 +15,8 @@ import 'package:flutter/foundation.dart';
 
 import '../core/player/player_state.dart';
 import 'discord_ipc.dart';
-import 'sys_config.dart' show defaultDiscordAppId;
+import 'sys_config.dart'
+    show defaultDiscordAppId, defaultDiscordPauseHideMinutes;
 
 // The presence contract and its activity payload live with the pure-Dart
 // IPC client; re-exported so callers keep one import.
@@ -80,12 +81,9 @@ String? discordArtwork(String? url) {
   return null;
 }
 
-/// Discord caps these fields at 128 characters.
-const _discordTextLimit = 128;
-
-String _clipDiscord(String text) => text.length > _discordTextLimit
-    ? text.substring(0, _discordTextLimit)
-    : text;
+/// Discord caps these fields at 128 characters (see `discord_ipc.dart`).
+String _clipDiscord(String text) =>
+    text.length > discordTextLimit ? text.substring(0, discordTextLimit) : text;
 
 /// Builds the presence activity for a player snapshot, or null when
 /// nothing should be shown. [mode] picks what the Discord status line
@@ -162,34 +160,7 @@ const discordResyncInterval = Duration(seconds: 30);
 const discordSeekRealignment = Duration(milliseconds: 1200);
 
 /// How long a track may stay paused before its presence is withdrawn.
-const discordPauseHideAfter = Duration(minutes: 15);
-
-/// The real client: a pure-Dart IPC link, no native bridge involved.
-class _NativeDiscordRpc implements DiscordRpc {
-  _NativeDiscordRpc([DiscordIpcClient? client])
-    : _client = client ?? DiscordIpcClient();
-
-  final DiscordIpcClient _client;
-
-  @override
-  bool get isConnected => _client.isConnected;
-
-  @override
-  Future<void> initialize(String appId) => _client.initialize(appId);
-
-  @override
-  Future<void> connect() => _client.connect();
-
-  @override
-  Future<void> setActivity(DiscordActivity activity) =>
-      _client.setActivity(activity);
-
-  @override
-  Future<void> clearActivity() => _client.clearActivity();
-
-  @override
-  Future<void> disconnect() => _client.disconnect();
-}
+const discordPauseHideAfter = Duration(minutes: defaultDiscordPauseHideMinutes);
 
 /// Discord Rich Presence client: IPC lifecycle plus presence pushes.
 class DiscordPresence extends ChangeNotifier {
@@ -206,7 +177,7 @@ class DiscordPresence extends ChangeNotifier {
     _appId = appId;
     _enabled = enabled;
     _statusText = statusText;
-    _rpc = rpc ?? _NativeDiscordRpc();
+    _rpc = rpc ?? DiscordIpcClient();
   }
 
   late String _appId;
@@ -234,11 +205,10 @@ class DiscordPresence extends ChangeNotifier {
   DateTime _pushedAt = DateTime.now();
   bool _initialized = false;
 
-  /// Whether an [DiscordRpc.initialize] has ever completed. The native
-  /// client survives [DiscordRpc.disconnect], so a later re-initialize
-  /// answering "already been initialized" is harmless *only* after one
-  /// genuinely succeeded — otherwise it is a half-built singleton that
-  /// no amount of retrying can finish.
+  /// Whether [DiscordRpc.initialize] has ever completed. A later
+  /// initialize answering "already been initialized" is then harmless
+  /// (the disable/re-enable case); before one has succeeded it means a
+  /// client that never came up, and no amount of retrying can finish it.
   bool _initConfirmed = false;
   Future<void>? _initFuture;
   String? _firstInitError;
@@ -344,12 +314,18 @@ class DiscordPresence extends ChangeNotifier {
   }
 
   void _forgetPresence() {
+    _resetPushBookkeeping();
+    _pausedAt = null;
+    _pausedTrackId = null;
+  }
+
+  /// Clears the push bookkeeping so the next update re-sends the
+  /// activity and the resync cadence starts from a clean slate.
+  void _resetPushBookkeeping() {
     _dedup = '';
     _pushedPosMs = 0;
     _pushedPlaying = false;
     _pushedAt = DateTime.now();
-    _pausedAt = null;
-    _pausedTrackId = null;
   }
 
   Future<void> _ensureInitialized() {
@@ -366,15 +342,13 @@ class DiscordPresence extends ChangeNotifier {
       _initConfirmed = true;
     } catch (e) {
       final msg = '$e';
-      // The package assigns its Dart singleton *before* standing up the
-      // native client, so an attempt that failed partway leaves the
-      // singleton behind and every later call answers "already been
-      // initialized" even though the native side never came up. Trust
-      // that message only once an initialize has actually completed:
-      // that is the disable/re-enable case, where the client is set up
-      // and only the link was closed. Otherwise the real cause is kept
-      // and reported, instead of faking a working client that then sits
-      // at "idle" until the app restarts.
+      // A client that answers "already been initialized" after a
+      // successful initialize is simply re-initialized: that is the
+      // disable/re-enable case, where the client is set up and only the
+      // link was closed. Before any success the same message means a
+      // half-built client, so the real cause is kept and reported
+      // instead of faking a working one that then sits at "idle" until
+      // the app restarts.
       if (_initConfirmed && msg.contains('already been initialized')) {
         _initialized = true;
         return;
@@ -545,10 +519,7 @@ class DiscordPresence extends ChangeNotifier {
     // Preserve pause timing across reconnects: a flaky link must not
     // reset the 15-minute hide clock. Only the push bookkeeping is
     // forgotten so the fresh link re-renders the activity.
-    _dedup = '';
-    _pushedPosMs = 0;
-    _pushedPlaying = false;
-    _pushedAt = DateTime.now();
+    _resetPushBookkeeping();
     await update(last);
   }
 

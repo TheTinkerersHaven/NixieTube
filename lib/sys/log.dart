@@ -17,6 +17,9 @@ const _maxLogBytes = 1 << 20;
 
 Logger _logger = _create();
 
+/// True once [initLogging] has wired the file sink.
+bool _fileLogging = false;
+
 /// The app-wide logger. Before [initLogging] runs it only writes to the
 /// console, so tests and tooling never touch the user's log file.
 Logger get appLog => _logger;
@@ -33,8 +36,6 @@ void initLogging() {
     _logger = _create();
   }
 }
-
-bool _fileLogging = false;
 
 /// Appends one line per event; the file is opened in append mode and a
 /// failed write is ignored, so logging can never break the caller.

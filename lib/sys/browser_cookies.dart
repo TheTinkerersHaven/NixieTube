@@ -16,6 +16,31 @@ bool isYouTubeDomain(String domain) {
   return false;
 }
 
+/// One YouTube-session cookie as `name=value`.
+typedef _CookiePair = ({String name, String value});
+
+/// The YouTube-session cookies in [cookies] as trimmed pairs. Entries
+/// that are not cookie maps, are on another domain, or carry no name or
+/// value are skipped.
+Iterable<_CookiePair> _youTubeCookies(List<dynamic> cookies) sync* {
+  for (final c in cookies) {
+    if (c is! Map) continue;
+    final domain = c['domain'];
+    final rawName = c['name'];
+    final rawValue = c['value'];
+    if (domain is! String ||
+        rawName is! String ||
+        rawValue is! String ||
+        !isYouTubeDomain(domain)) {
+      continue;
+    }
+    final name = rawName.trim();
+    final value = rawValue.trim();
+    if (name.isEmpty || value.isEmpty) continue;
+    yield (name: name, value: value);
+  }
+}
+
 /// Helpers for assembling and validating a YouTube cookie payload.
 class BrowserCookies {
   BrowserCookies._();
@@ -23,20 +48,9 @@ class BrowserCookies {
   /// True when [cookies] carry a signed-in YouTube session (a SAPISID
   /// value), as opposed to anonymous visitor cookies. Pure.
   static bool hasSignedInSession(List<dynamic> cookies) {
-    for (final c in cookies) {
-      if (c is! Map) continue;
-      final domain = c['domain'];
-      final name = c['name'];
-      final value = c['value'];
-      if (domain is! String ||
-          name is! String ||
-          value is! String ||
-          !isYouTubeDomain(domain)) {
-        continue;
-      }
-      final n = name.trim();
-      if ((n == 'SAPISID' || n == '__Secure-3PAPISID') &&
-          value.trim().isNotEmpty) {
+    for (final c in _youTubeCookies(cookies)) {
+      if ((c.name == 'SAPISID' || c.name == '__Secure-3PAPISID') &&
+          c.value.isNotEmpty) {
         return true;
       }
     }
@@ -49,21 +63,8 @@ class BrowserCookies {
   /// Null when none are present.
   static String? buildYouTubeHeader(List<dynamic> cookies) {
     final byName = <String, String>{};
-    for (final c in cookies) {
-      if (c is! Map) continue;
-      final domain = c['domain'];
-      final name = c['name'];
-      final value = c['value'];
-      if (domain is! String ||
-          name is! String ||
-          value is! String ||
-          !isYouTubeDomain(domain)) {
-        continue;
-      }
-      final n = name.trim();
-      final v = value.trim();
-      if (n.isEmpty || v.isEmpty || byName.containsKey(n)) continue;
-      byName[n] = v;
+    for (final c in _youTubeCookies(cookies)) {
+      byName.putIfAbsent(c.name, () => c.value);
     }
     if (byName.isEmpty) return null;
     return byName.entries.map((e) => '${e.key}=${e.value}').join('; ');

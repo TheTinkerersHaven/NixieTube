@@ -154,7 +154,7 @@ class LastFmService extends ChangeNotifier {
     String title, {
     int durationSec = 0,
   }) async {
-    if (artist.trim().isEmpty || title.trim().isEmpty) return null;
+    if (_blank(artist) || _blank(title)) return null;
     // Feature credits first (anywhere in the title), then trailing
     // playback-noise tags — mirrors the scrobble-title cleaning.
     final clean = cleanInfoTitle(cleanScrobbleTitle(title));
@@ -172,35 +172,39 @@ class LastFmService extends ChangeNotifier {
       );
       if (best == null) return null;
       final mbid = best['mbid'];
-      if (mbid is String && mbid.isNotEmpty) {
-        return await _callPublic('track.getInfo', {
-          'mbid': mbid,
-          'autocorrect': '1',
-        }, root: 'track');
-      }
-      final candArtist = best['artist'];
-      final candTitle = best['name'];
-      if (candArtist is String &&
-          candArtist.trim().isNotEmpty &&
-          candTitle is String &&
-          candTitle.trim().isNotEmpty) {
-        return await _callPublic('track.getInfo', {
-          'artist': candArtist,
-          'track': candTitle,
-          'autocorrect': '1',
-        }, root: 'track');
-      }
-      return null;
+      if (mbid is String && mbid.isNotEmpty) return await _byMbid(best);
+      return await _byCandidate(best);
     } catch (_) {
       return null;
     }
+  }
+
+  /// Looks a search hit up by its MBID.
+  Future<Map<String, dynamic>?> _byMbid(Map best) => _callPublic(
+    'track.getInfo',
+    {'mbid': best['mbid'] as String, 'autocorrect': '1'},
+    root: 'track',
+  );
+
+  /// Looks a search hit up by its own artist and title, or null when
+  /// either is missing.
+  Future<Map<String, dynamic>?> _byCandidate(Map best) async {
+    final artist = best['artist'];
+    final title = best['name'];
+    if (artist is! String || _blank(artist)) return null;
+    if (title is! String || _blank(title)) return null;
+    return _callPublic('track.getInfo', {
+      'artist': artist,
+      'track': title,
+      'autocorrect': '1',
+    }, root: 'track');
   }
 
   /// The artist's most-voted tags (artist.getTopTags). Used as the genre
   /// fallback when a track itself carries none in `track.getInfo`. Empty
   /// list on failure or when the artist is unknown.
   Future<List<String>> artistTags(String artist, {int limit = 10}) async {
-    if (artist.trim().isEmpty) return [];
+    if (_blank(artist)) return [];
     try {
       final root = await _callPublic('artist.getTopTags', {
         'artist': artist,
@@ -232,7 +236,7 @@ class LastFmService extends ChangeNotifier {
     String album, {
     String? mbid,
   }) async {
-    if (artist.trim().isEmpty || album.trim().isEmpty) return null;
+    if (_blank(artist) || _blank(album)) return null;
     try {
       final params = <String, String>{
         'artist': artist,
@@ -264,9 +268,8 @@ class LastFmService extends ChangeNotifier {
         'format': 'json',
       },
     );
-    final data = res.data is String ? jsonDecode(res.data as String) : res.data;
-    if (data is! Map) return null;
-    if (data['error'] != null) return null;
+    final data = _decodeBody(res.data);
+    if (data == null || data['error'] != null) return null;
     final obj = data[root];
     return obj is Map ? Map<String, dynamic>.from(obj) : null;
   }
@@ -289,8 +292,8 @@ class LastFmService extends ChangeNotifier {
         'format': 'json',
       },
     );
-    final data = res.data is String ? jsonDecode(res.data as String) : res.data;
-    if (data is! Map) return null;
+    final data = _decodeBody(res.data);
+    if (data == null) return null;
     final matches = data['results'];
     final trackMatches = matches is Map ? matches['trackmatches'] : null;
     var list = const [];
@@ -331,38 +334,36 @@ class LastFmService extends ChangeNotifier {
   /// player's (accepts seconds or milliseconds encodings).
   bool _durationAgrees(Map e, int durationSec) {
     if (durationSec <= 0) return false;
-    final ms = int.tryParse('${e['duration']}') ?? 0;
-    if (ms <= 0) return false;
-    final candSec = ms > 10000 ? ms ~/ 1000 : ms;
+    final candSec = _durationSeconds(e['duration'] ?? 0);
+    if (candSec <= 0) return false;
     return (candSec - durationSec).abs() <= 20;
   }
 
   /// Likeness score for one `track.search` candidate row.
   double _matchScore(Map e, String artist, String title, int durationSec) {
-    final candArtist = ('${e['artist']}').toLowerCase().trim();
     final candTitle = ('${e['name']}').toLowerCase().trim();
     final wantArtist = artist.toLowerCase().trim();
     final wantTitle = title.toLowerCase().trim();
     var score = 0.0;
-    if (candArtist == wantArtist) {
-      score += 1.5;
-    } else if (candArtist.contains(wantArtist) ||
-        wantArtist.contains(candArtist)) {
-      score += 0.75;
+    if (_artistMatch(e, artist)) {
+      score += ('${e['artist']}').toLowerCase().trim() == wantArtist
+          ? 1.5
+          : 0.75;
     }
     if (candTitle == wantTitle) {
       score += 1.0;
     } else if (candTitle.contains(wantTitle) || wantTitle.contains(candTitle)) {
       score += 0.5;
     }
-    final ms = int.tryParse('${e['duration']}') ?? 0;
-    if (durationSec > 0 && ms > 0) {
-      final candSec = ms > 10000 ? ms ~/ 1000 : ms;
-      final diff = (candSec - durationSec).abs();
-      if (diff <= 5) {
-        score += 1.5;
-      } else if (diff <= 20) {
-        score += 0.75;
+    if (durationSec > 0) {
+      final candSec = _durationSeconds(e['duration'] ?? 0);
+      if (candSec > 0) {
+        final diff = (candSec - durationSec).abs();
+        if (diff <= 5) {
+          score += 1.5;
+        } else if (diff <= 20) {
+          score += 0.75;
+        }
       }
     }
     return score;
@@ -391,7 +392,7 @@ class LastFmService extends ChangeNotifier {
       }
       return token;
     } catch (e) {
-      _setStatus('error: ${_snippet('$e', 'request failed')}');
+      _setStatus('error: ${_snippet('$e')}');
       return null;
     }
   }
@@ -430,7 +431,7 @@ class LastFmService extends ChangeNotifier {
       refreshStatus();
       return true;
     } catch (e) {
-      _setStatus('error: ${_snippet('$e', 'request failed')}');
+      _setStatus('error: ${_snippet('$e')}');
       return false;
     }
   }
@@ -460,23 +461,15 @@ class LastFmService extends ChangeNotifier {
     String? album,
     int durationSec = 0,
   }) async {
-    if (!ready() || artist.trim().isEmpty || track.trim().isEmpty) return;
-    try {
-      final el = await _signedCall(
-        _trackParams(
-          method: 'track.updateNowPlaying',
-          artist: artist,
-          track: track,
-          timestampSec: null,
-          album: album,
-          durationSec: durationSec,
-        ),
-        _secret,
-      );
-      if (el['error'] != null) _setStatus('error: ${_lastfmError(el)}');
-    } catch (e) {
-      _setStatus('error: ${_snippet('$e', 'request failed')}');
-    }
+    if (!ready() || _blank(artist) || _blank(track)) return;
+    await _signedTrackCall(
+      method: 'track.updateNowPlaying',
+      artist: artist,
+      track: track,
+      timestampSec: null,
+      album: album,
+      durationSec: durationSec,
+    );
   }
 
   /// Scrobbles one play; failures only surface via [status].
@@ -487,11 +480,33 @@ class LastFmService extends ChangeNotifier {
     String? album,
     int durationSec = 0,
   }) async {
-    if (!ready() || artist.trim().isEmpty || track.trim().isEmpty) return false;
+    if (!ready() || _blank(artist) || _blank(track)) return false;
+    final ok = await _signedTrackCall(
+      method: 'track.scrobble',
+      artist: artist,
+      track: track,
+      timestampSec: timestampSec,
+      album: album,
+      durationSec: durationSec,
+    );
+    if (ok) _setStatus('signed in as ${_config.lastfmUsername}');
+    return ok;
+  }
+
+  /// Runs one signed track call (now-playing or scrobble), reporting a
+  /// failure through [status]. Returns whether Last.fm accepted it.
+  Future<bool> _signedTrackCall({
+    required String method,
+    required String artist,
+    required String track,
+    required int? timestampSec,
+    String? album,
+    int durationSec = 0,
+  }) async {
     try {
       final el = await _signedCall(
         _trackParams(
-          method: 'track.scrobble',
+          method: method,
           artist: artist,
           track: track,
           timestampSec: timestampSec,
@@ -503,15 +518,22 @@ class LastFmService extends ChangeNotifier {
       if (el['error'] != null) {
         _setStatus('error: ${_lastfmError(el)}');
         return false;
-      } else {
-        _setStatus('signed in as ${_config.lastfmUsername}');
-        return true;
       }
+      return true;
     } catch (e) {
-      _setStatus('error: ${_snippet('$e', 'request failed')}');
+      _setStatus('error: ${_snippet('$e')}');
       return false;
     }
   }
+
+  /// Reports [track] as the now-playing one; failures only surface via
+  /// [status].
+  Future<void> _pushNowPlaying(Track track) => updateNowPlaying(
+    artist: lastfmArtistName(track),
+    track: cleanScrobbleTitle(track.title),
+    album: track.album?.name,
+    durationSec: track.durationSec,
+  );
 
   /// Track params shared by now-playing and scrobble calls.
   Map<String, String> _trackParams({
@@ -541,8 +563,31 @@ class LastFmService extends ChangeNotifier {
     return 'request rejected';
   }
 
+  /// True when [value] is null or only whitespace.
+  static bool _blank(String? value) => value == null || value.trim().isEmpty;
+
+  /// Decodes a response body that Dio may hand back either as a JSON
+  /// string or as an already-decoded object; null when it is neither a
+  /// map nor decodable.
+  static Map<String, dynamic>? _decodeBody(Object? data) {
+    final decoded = data is String ? jsonDecode(data) : data;
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+  }
+
+  /// Interprets a Last.fm duration that may be encoded in seconds or in
+  /// milliseconds: values above [_maxDurationSec] are milliseconds.
+  static int _durationSeconds(Object raw) {
+    final ms = int.tryParse('$raw') ?? 0;
+    if (ms <= 0) return 0;
+    return ms > _maxDurationSec ? ms ~/ 1000 : ms;
+  }
+
+  /// Largest value still read as a whole number of seconds; anything
+  /// above it must be milliseconds (a 3-hour track is ~10.8k seconds).
+  static const _maxDurationSec = 10000;
+
   /// Truncates an error string to [_errorSnippetLen] chars, with a fallback.
-  String _snippet(String raw, String fallback) {
+  String _snippet(String raw, [String fallback = 'request failed']) {
     if (raw.isEmpty) return fallback;
     return raw.length > _errorSnippetLen
         ? raw.substring(0, _errorSnippetLen)
@@ -572,8 +617,8 @@ class LastFmService extends ChangeNotifier {
         contentType: Headers.formUrlEncodedContentType,
       ),
     );
-    final decoded = jsonDecode(res.data ?? '');
-    return decoded is Map<String, dynamic> ? decoded : const {};
+    final decoded = _decodeBody(res.data);
+    return decoded ?? const {};
   }
 
   /// Watches one player emission: now-playing on each new track, one scrobble
@@ -591,12 +636,7 @@ class LastFmService extends ChangeNotifier {
       progress.lastPositionMs = 0;
       progress.scrobbled = false;
       if (videoId != null && track != null && ready()) {
-        await updateNowPlaying(
-          artist: lastfmArtistName(track),
-          track: cleanScrobbleTitle(track.title),
-          album: track.album?.name,
-          durationSec: track.durationSec,
-        );
+        await _pushNowPlaying(track);
       }
       return;
     }
@@ -617,12 +657,7 @@ class LastFmService extends ChangeNotifier {
       progress.startEpochSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       progress.scrobbled = false;
       if (s.playing) {
-        await updateNowPlaying(
-          artist: lastfmArtistName(track),
-          track: cleanScrobbleTitle(track.title),
-          album: track.album?.name,
-          durationSec: track.durationSec,
-        );
+        await _pushNowPlaying(track);
       }
       return;
     }

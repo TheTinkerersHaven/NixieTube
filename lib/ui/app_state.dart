@@ -183,7 +183,6 @@ class OpenPlaylist {
   }
 }
 
-/// Normalizes a name for navigation matching.
 /// Content signature for change detection: length plus per-item identity
 /// and rating. Ratings arrive through the player stream, so they must
 /// participate or like buttons would go stale.
@@ -242,8 +241,6 @@ bool isVolumeOnlyUpdate(PlayerState prev, PlayerState next) {
       prev.sleepTimerEndsAtMs == next.sleepTimerEndsAtMs &&
       queueSignature(prev.queue) == queueSignature(next.queue);
 }
-
-/// Watchtime failure log (successes stay silent).
 
 /// Remembered panel enrichment for one track (see
 /// `AppState._trackMeta`): fuller artists, album, explicit flag.
@@ -1125,6 +1122,33 @@ class AppState extends ChangeNotifier {
     _player.playTracks(songs, index);
   }
 
+  /// The watch-next radio playlist for [track]: its own when it carries
+  /// one, else the song radio derived from the video id.
+  static String _radioPlaylistId(Track track) {
+    final own = track.radioPlaylistId;
+    return (own != null && own.isNotEmpty) ? own : 'RDAMVM${track.videoId}';
+  }
+
+  /// Drops [seed] from [tracks] (the seed is already playing or queued
+  /// separately).
+  static List<Track> _withoutSeed(List<Track> tracks, Track seed) =>
+      tracks.where((t) => t.videoId != seed.videoId).toList();
+
+  /// The artist's full songs playlist, or null when it has none or the
+  /// fetch fails.
+  Future<List<Track>?> _fullArtistSongs(ArtistDetail artist) async {
+    final pid = artist.songsPlaylistId;
+    if (pid == null) return null;
+    try {
+      return (await _tube.playlist(
+        pid,
+        params: artist.songsPlaylistParams,
+      ))?.tracks.takeIfNotEmpty();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Plays [track] immediately, then appends its radio mix behind it.
   ///
   /// Used for single taps (search results, single-track releases):
@@ -1135,16 +1159,15 @@ class AppState extends ChangeNotifier {
     _player.playTracks([track], 0);
     List<Track> upcoming;
     try {
-      final radio =
-          (track.radioPlaylistId != null && track.radioPlaylistId!.isNotEmpty)
-          ? track.radioPlaylistId!
-          : 'RDAMVM${track.videoId}';
-      upcoming = await _tube.upNext(track.videoId, playlistId: radio);
+      upcoming = await _tube.upNext(
+        track.videoId,
+        playlistId: _radioPlaylistId(track),
+      );
     } catch (_) {
       return;
     }
     if (_player.state.current?.videoId != track.videoId) return;
-    upcoming = upcoming.where((t) => t.videoId != track.videoId).toList();
+    upcoming = _withoutSeed(upcoming, track);
     _player.appendRadio(upcoming);
   }
 
@@ -1164,32 +1187,16 @@ class AppState extends ChangeNotifier {
     // the full playlist (when available) lands in the background and swaps
     // the queue in without restarting the song.
     playSongs(preview, index);
-    try {
-      final pid = artist.songsPlaylistId;
-      if (pid == null) return;
-      final full = (await _tube.playlist(
-        pid,
-        params: artist.songsPlaylistParams,
-      ))?.tracks.takeIfNotEmpty();
-      if (full == null) return;
-      if (_player.state.current?.videoId != tapped.videoId) return;
-      _player.replaceQueue(full, 0);
-    } catch (_) {}
+    final full = await _fullArtistSongs(artist);
+    if (full == null) return;
+    if (_player.state.current?.videoId != tapped.videoId) return;
+    _player.replaceQueue(full, 0);
   }
 
   /// Plays an artist's full top-songs playlist, optionally shuffled.
   Future<void> playArtistSongs(ArtistDetail artist, bool shuffled) async {
-    List<Track> tracks = artist.topSongs;
-    try {
-      final pid = artist.songsPlaylistId;
-      if (pid != null) {
-        final full = (await _tube.playlist(
-          pid,
-          params: artist.songsPlaylistParams,
-        ))?.tracks.takeIfNotEmpty();
-        if (full != null) tracks = full;
-      }
-    } catch (_) {}
+    final full = await _fullArtistSongs(artist);
+    final tracks = full ?? artist.topSongs;
     if (tracks.isEmpty) return;
     if (shuffled) {
       playShuffled(tracks);
@@ -1212,34 +1219,31 @@ class AppState extends ChangeNotifier {
     if (_player.state.current?.videoId == track.videoId) {
       List<Track> upcoming;
       try {
-        final radio =
-            (track.radioPlaylistId != null && track.radioPlaylistId!.isNotEmpty)
-            ? track.radioPlaylistId!
-            : 'RDAMVM${track.videoId}';
-        upcoming = await _tube.upNext(track.videoId, playlistId: radio);
+        upcoming = await _tube.upNext(
+          track.videoId,
+          playlistId: _radioPlaylistId(track),
+        );
       } catch (_) {
         return (queued: 0, loaded: false);
       }
       if (_player.state.current?.videoId != track.videoId) {
         return (queued: 0, loaded: false);
       }
-      upcoming = upcoming.where((t) => t.videoId != track.videoId).toList();
-      final fresh = _player.replaceUpcoming(upcoming);
+      final fresh = _player.replaceUpcoming(_withoutSeed(upcoming, track));
       return (queued: fresh, loaded: true);
     }
-    final radio =
-        (track.radioPlaylistId != null && track.radioPlaylistId!.isNotEmpty)
-        ? track.radioPlaylistId!
-        : 'RDAMVM${track.videoId}';
     List<Track> upcoming;
     var loaded = true;
     try {
-      upcoming = await _tube.upNext(track.videoId, playlistId: radio);
+      upcoming = await _tube.upNext(
+        track.videoId,
+        playlistId: _radioPlaylistId(track),
+      );
     } catch (_) {
       upcoming = [];
       loaded = false;
     }
-    upcoming = upcoming.where((t) => t.videoId != track.videoId).toList();
+    upcoming = _withoutSeed(upcoming, track);
     final seen = {track.videoId};
     upcoming = upcoming.where((t) => seen.add(t.videoId)).toList();
     _player.playTracks([track, ...upcoming], 0);

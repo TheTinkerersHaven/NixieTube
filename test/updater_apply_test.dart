@@ -12,7 +12,6 @@ import 'package:nixietube/sys/updater.dart';
 const _info = UpdateInfo(
   version: '9.9.9',
   downloadUrl: 'https://example.com/NixieTube-x86_64.AppImage',
-  body: '',
 );
 
 List<int> _elf(int size) {

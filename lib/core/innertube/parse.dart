@@ -165,7 +165,7 @@ RatingStatus parseLikeRating(dynamic item) {
 final _durationRe = RegExp(r'\d{1,3}:\d{2}(:\d{2})?');
 
 final _viewsRe = RegExp(
-  r'\d[\d.,\s]*(mila|mln|k|m|b)?\s*(views|views|riproduzioni|'
+  r'\d[\d.,\s]*(mila|mln|k|m|b)?\s*(views|riproduzioni|'
   r'visualizzazioni|vues|vistas|aufrufe|weergaven|reproducciones|visualiza|'
   r'visualizações|streams?|plays|再生|조회수|просмотров)',
   caseSensitive: false,
@@ -409,6 +409,19 @@ List<List> _listItemColumns(dynamic li) {
     if (runs is List) cols.add(runs);
   }
   return cols;
+}
+
+/// Adds the artist channels in [items] to [out]'s "Artists" section,
+/// skipping ids that are already listed.
+void _surfaceArtists(Map<String, List<ShelfItem>> out, List<ShelfItem> items) {
+  for (final it in items) {
+    if (it is! BrowseItem || !it.browseId.startsWith('UC')) continue;
+    final artists = out.putIfAbsent('Artists', () => []);
+    if (artists.any((a) => a is BrowseItem && a.browseId == it.browseId)) {
+      continue;
+    }
+    artists.add(it);
+  }
 }
 
 /// The video id of a list row, and the playlist it belongs to.
@@ -1040,17 +1053,7 @@ void addAlbumSearchResult(
 
 /// Parses a list row into a browse entry, or null when it has no browse id.
 BrowseItem? parseBrowseItem(dynamic li) {
-  final flex = nav(li, const ['flexColumns']);
-  if (flex is! List) return null;
-  final cols = <List>[];
-  for (final col in flex) {
-    final runs = nav(col, const [
-      'musicResponsiveListItemFlexColumnRenderer',
-      'text',
-      'runs',
-    ]);
-    if (runs is List) cols.add(runs);
-  }
+  final cols = _listItemColumns(li);
   if (cols.isEmpty) return null;
   final title = runsText(cols[0]);
   // Prefer the item-level endpoint: rows embed related entities' ids in
@@ -1116,14 +1119,7 @@ void parseSearchShelf(
     // Surface any artist channel (browseId UC*) as an Artists entry too,
     // so an artist match shows in the main results instead of only
     // behind the Artists chip.
-    for (final it in items) {
-      if (it is BrowseItem && it.browseId.startsWith('UC')) {
-        final artists = out.putIfAbsent('Artists', () => []);
-        if (!artists.any((a) => a is BrowseItem && a.browseId == it.browseId)) {
-          artists.add(it);
-        }
-      }
-    }
+    _surfaceArtists(out, items);
   }
   final card = obj['musicCardShelfRenderer'];
   if (card is Map) {
@@ -1167,14 +1163,7 @@ void parseSearchShelf(
       // category shelves below.
       out.putIfAbsent('Exact Match', () => []).addAll(items);
     }
-    for (final it in items) {
-      if (it is BrowseItem && it.browseId.startsWith('UC')) {
-        final artists = out.putIfAbsent('Artists', () => []);
-        if (!artists.any((a) => a is BrowseItem && a.browseId == it.browseId)) {
-          artists.add(it);
-        }
-      }
-    }
+    _surfaceArtists(out, items);
     // Exact-match cards sometimes carry no rows at all, just the entity
     // header. Surface a linked album the same way so exact album searches
     // never come back empty.
@@ -1308,19 +1297,7 @@ AlbumDetail? buildAlbum(dynamic res, String browseId) {
   if (description.isEmpty) description = subtitle;
   if (description == subtitle) description = '';
   final headerThumbs = parseThumbnails(header);
-  final headerArtist =
-      channelRefFromRuns([
-        nav(header, const ['subtitle', 'runs']),
-        nav(header, const ['straplineTextOne', 'runs']),
-        nav(header, const ['straplineTextTwo', 'runs']),
-        nav(header, const ['secondSubtitle', 'runs']),
-      ]) ??
-      plainRefFromRuns([
-        nav(header, const ['subtitle', 'runs']),
-        nav(header, const ['straplineTextOne', 'runs']),
-        nav(header, const ['straplineTextTwo', 'runs']),
-        nav(header, const ['secondSubtitle', 'runs']),
-      ]);
+  final headerArtist = _headerArtist(header);
   final kind = detectReleaseKind(subtitle) ?? detectReleaseKind(description);
   final year = detectReleaseYear(subtitle);
   final tracks = <Track>[];
@@ -1557,9 +1534,9 @@ ArtistDetail? buildArtist(dynamic res) {
   );
 }
 
-/// Builds a playlist detail from a `browse` response, or null when the
-/// track shelf is missing.
-PlaylistDetail? buildPlaylist(dynamic res) {
+/// The playlist page's header, plus the editable-header renderer it came
+/// from (which decides whether the playlist can be edited).
+({dynamic header, dynamic editable}) _playlistHeader(dynamic res) {
   final editable = findFirst(res, 'musicEditablePlaylistDetailHeaderRenderer');
   final editableHeader = editable is Map
       ? nav(editable, const ['header'])
@@ -1571,6 +1548,26 @@ PlaylistDetail? buildPlaylist(dynamic res) {
       findFirst(res, 'musicDetailHeaderRenderer') ??
       findFirst(res, 'musicHeaderRenderer') ??
       editable;
+  return (header: header, editable: editable);
+}
+
+/// The artist ref a detail header carries: a linked channel first, then
+/// a plain-text credit.
+ArtistRef? _headerArtist(dynamic header) {
+  final runs = [
+    nav(header, const ['subtitle', 'runs']),
+    nav(header, const ['straplineTextOne', 'runs']),
+    nav(header, const ['straplineTextTwo', 'runs']),
+    nav(header, const ['secondSubtitle', 'runs']),
+  ];
+  return channelRefFromRuns(runs) ?? plainRefFromRuns(runs);
+}
+
+/// Builds a playlist detail from a `browse` response, or null when the
+/// track shelf is missing.
+PlaylistDetail? buildPlaylist(dynamic res) {
+  final page = _playlistHeader(res);
+  final header = page.header;
   final shelf =
       findFirst(res, 'musicPlaylistShelfRenderer') ??
       findFirst(res, 'musicShelfRenderer');
@@ -1627,44 +1624,21 @@ PlaylistDetail? buildPlaylist(dynamic res) {
   if (thumbnails.isEmpty && tracks.isNotEmpty) {
     thumbnails = tracks.first.thumbnails;
   }
-  final author = header is Map
-      ? (channelRefFromRuns([
-              nav(header, const ['subtitle', 'runs']),
-              nav(header, const ['straplineTextOne', 'runs']),
-              nav(header, const ['straplineTextTwo', 'runs']),
-              nav(header, const ['secondSubtitle', 'runs']),
-            ]) ??
-            plainRefFromRuns([
-              nav(header, const ['subtitle', 'runs']),
-              nav(header, const ['straplineTextOne', 'runs']),
-              nav(header, const ['straplineTextTwo', 'runs']),
-              nav(header, const ['secondSubtitle', 'runs']),
-            ]))
-      : null;
+  final author = header is Map ? _headerArtist(header) : null;
   return PlaylistDetail(
     title: title,
     subtitle: subtitle,
     thumbnails: thumbnails,
     tracks: tracks,
     author: author,
-    editable: editable is Map,
+    editable: page.editable is Map,
   );
 }
 
 /// First non-empty artwork from the playlist header/background/microformat,
 /// trying the PL/VL id variants is the caller's job.
 List<Thumbnail> playlistArtworkThumbs(dynamic res) {
-  final editable = findFirst(res, 'musicEditablePlaylistDetailHeaderRenderer');
-  final editableHeader = editable is Map
-      ? nav(editable, const ['header'])
-      : null;
-  final header =
-      findFirst(editableHeader, 'musicResponsiveHeaderRenderer') ??
-      findFirst(editableHeader, 'musicDetailHeaderRenderer') ??
-      findFirst(res, 'musicResponsiveHeaderRenderer') ??
-      findFirst(res, 'musicDetailHeaderRenderer') ??
-      findFirst(res, 'musicHeaderRenderer') ??
-      editable;
+  final header = _playlistHeader(res).header;
   var thumbs = header is Map ? parseThumbnails(header) : <Thumbnail>[];
   if (thumbs.isEmpty) {
     thumbs = parseThumbnails(
@@ -1725,21 +1699,16 @@ List<Track> panelsOf(dynamic res) {
   return out;
 }
 
-/// Full tracks from a `FEmusic_history` browse response, most recent
-/// first, deduplicated by video id. Unparseable entries are skipped.
-/// Stops after [maxItems] entries. Used for the quick-picks pool so
-/// heavy rotation from other sessions can surface on this device.
-List<Track> parseHistoryTracks(dynamic res, {int maxItems = 500}) {
-  final tracks = <Track>[];
-  final seen = <String>{};
+/// Visits every `musicResponsiveListItemRenderer` in [res], depth-first
+/// in document order, stopping after [maxItems] rows.
+void _walkListItems(dynamic res, int maxItems, void Function(Map item) visit) {
   var total = 0;
-  bool done() => total >= maxItems;
   void walk(dynamic node) {
-    if (done() || node == null) return;
+    if (node == null || total >= maxItems) return;
     if (node is List) {
       for (final e in node) {
         walk(e);
-        if (done()) return;
+        if (total >= maxItems) return;
       }
       return;
     }
@@ -1747,19 +1716,31 @@ List<Track> parseHistoryTracks(dynamic res, {int maxItems = 500}) {
     final item = node['musicResponsiveListItemRenderer'];
     if (item is Map) {
       total++;
-      final t = parseListItem(item);
-      if (t != null && t.videoId.isNotEmpty && seen.add(t.videoId)) {
-        tracks.add(t);
-      }
+      visit(item);
       return;
     }
     for (final v in node.values) {
       walk(v);
-      if (done()) return;
+      if (total >= maxItems) return;
     }
   }
 
   walk(res);
+}
+
+/// Full tracks from a `FEmusic_history` browse response, most recent
+/// first, deduplicated by video id. Unparseable entries are skipped.
+/// Stops after [maxItems] entries. Used for the quick-picks pool so
+/// heavy rotation from other sessions can surface on this device.
+List<Track> parseHistoryTracks(dynamic res, {int maxItems = 500}) {
+  final tracks = <Track>[];
+  final seen = <String>{};
+  _walkListItems(res, maxItems, (item) {
+    final t = parseListItem(item);
+    if (t != null && t.videoId.isNotEmpty && seen.add(t.videoId)) {
+      tracks.add(t);
+    }
+  });
   return tracks;
 }
 
@@ -1771,33 +1752,11 @@ List<Track> parseHistoryTracks(dynamic res, {int maxItems = 500}) {
 /// unexpected shape — callers keep existing counts then.
 Map<String, int> parseHistoryCounts(dynamic res, {int maxItems = 500}) {
   final counts = <String, int>{};
-  var total = 0;
-  bool done() => total >= maxItems;
-  void walk(dynamic node) {
-    if (done() || node == null) return;
-    if (node is List) {
-      for (final e in node) {
-        walk(e);
-        if (done()) return;
-      }
-      return;
+  _walkListItems(res, maxItems, (item) {
+    final id = str(nav(item, const ['playlistItemData', 'videoId']));
+    if (id != null && id.isNotEmpty) {
+      counts[id] = (counts[id] ?? 0) + 1;
     }
-    if (node is! Map) return;
-    final item = node['musicResponsiveListItemRenderer'];
-    if (item is Map) {
-      final id = str(nav(item, const ['playlistItemData', 'videoId']));
-      total++;
-      if (id != null && id.isNotEmpty) {
-        counts[id] = (counts[id] ?? 0) + 1;
-      }
-      return;
-    }
-    for (final v in node.values) {
-      walk(v);
-      if (done()) return;
-    }
-  }
-
-  walk(res);
+  });
   return counts;
 }

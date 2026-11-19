@@ -10,9 +10,6 @@ import '../models/models.dart';
 /// YouTube topic id for music.
 const musicTopicId = '/m/04rlf';
 
-/// The deleted/private video stub id, never a real track.
-const deletedVideoId = 'UCBR8-60-B28hp2BmDPdntcQ';
-
 /// Lowercases, maps every non-alphanumeric run to a single space, trims.
 String canonical(String value) {
   final buf = StringBuffer();

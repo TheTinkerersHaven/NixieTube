@@ -27,6 +27,10 @@ import 'secure_store.dart';
 /// Built-in Discord application id used when none is configured.
 const defaultDiscordAppId = '1552404006498869318';
 
+/// Minutes a paused track stays on Discord before its presence is
+/// withdrawn, when the user has not chosen another value.
+const defaultDiscordPauseHideMinutes = 15;
+
 /// Unescapes Java-properties escape sequences from a raw value string:
 /// `\uXXXX` → the Unicode code point, then `\n` → newline, `\t` → tab,
 /// `\\` → backslash.
@@ -160,14 +164,11 @@ bool _isRetiredOAuthKey(String key) =>
 /// ([loadCredentials]) and written back there on every change.
 class SysConfig {
   SysConfig({String? configPath, SecureStore? secure})
-    : _appFile = File(configPath ?? '${configDir().path}/config.properties'),
+    : _appFile = File(_settingsPath(configPath)),
       // The legacy credential file lives next to the settings file, so
       // a custom [configPath] (tests) keeps both files inside the same
       // sandbox instead of touching the real user credentials.
-      _authFile = File(
-        '${File(configPath ?? '${configDir().path}/config.properties').parent.path}'
-        '/auth.properties',
-      ),
+      _authFile = File('${_settingsDir(configPath)}/auth.properties'),
       // A custom config path means a sandbox, which must never touch
       // the real keyring.
       _secure =
@@ -183,6 +184,15 @@ class SysConfig {
   }
 
   final File _appFile;
+
+  /// The settings file path: [configPath] when given (tests), else the
+  /// `config.properties` in the app config dir.
+  static String _settingsPath(String? configPath) =>
+      configPath ?? '${configDir().path}/config.properties';
+
+  /// The directory holding the settings file.
+  static String _settingsDir(String? configPath) =>
+      configPath == null ? configDir().path : File(configPath).parent.path;
 
   /// The plain-text credential file of older versions: read once for
   /// the migration, then deleted.
@@ -267,17 +277,8 @@ class SysConfig {
   /// lose the value: it stays in the legacy file until the store
   /// works again.
   Future<void> setCredential(String key, String value) async {
-    _values[key] = value;
-    final done = _writes.then((_) async {
-      try {
-        await _secure.write(key, value);
-        _dropLegacyAuthFile();
-      } catch (_) {
-        writeProperties(_authFile, _legacyValues, restrictive: true);
-      }
-    });
-    _writes = done;
-    await done;
+    set(key, value);
+    await _writes;
   }
 
   /// Waits for the queued credential writes to reach the secret store.
@@ -370,7 +371,8 @@ class SysConfig {
 
   /// Minutes a paused track stays on Discord before being withdrawn.
   int get discordPauseHideMinutes =>
-      int.tryParse(get('discord.pauseHideMinutes', '15')) ?? 15;
+      int.tryParse(get('discord.pauseHideMinutes')) ??
+      defaultDiscordPauseHideMinutes;
   set discordPauseHideMinutes(int v) => set('discord.pauseHideMinutes', '$v');
 
   /// MPRIS media-keys integration (Linux only, on by default).
@@ -415,28 +417,32 @@ class SysConfig {
   String get themeSource => get('theme.source', 'custom');
   set themeSource(String v) => set('theme.source', v);
 
-  /// Seed color for the custom source, as 32-bit ARGB.
-  int get themeSeedColor =>
-      int.tryParse(get('theme.seedColor', 'ffff0000'), radix: 16) ?? 0xffff0000;
-  set themeSeedColor(int v) => set(
-    'theme.seedColor',
-    (v & 0xffffffff).toRadixString(16).padLeft(8, '0'),
-  );
+  /// Formats [value] as an 8-digit ARGB hex string (as stored in
+  /// `config.properties`).
+  static String _formatArgb(int value) =>
+      (value & 0xffffffff).toRadixString(16).padLeft(8, '0');
 
-  /// Manual role overrides, applied on top of either source.
-  /// Null (absent key) means "follow the scheme".
-  int? _themeOverride(String role) {
-    final raw = get('theme.$role', '');
+  /// Parses an 8-digit ARGB hex string, or null when absent or invalid.
+  static int? _parseArgb(String raw) {
     if (raw.isEmpty) return null;
     final v = int.tryParse(raw, radix: 16);
     return v == null ? null : v & 0xffffffff;
   }
 
+  /// Seed color for the custom source, as 32-bit ARGB.
+  int get themeSeedColor =>
+      int.tryParse(get('theme.seedColor', 'ffff0000'), radix: 16) ?? 0xffff0000;
+  set themeSeedColor(int v) => set('theme.seedColor', _formatArgb(v));
+
+  /// Manual role overrides, applied on top of either source.
+  /// Null (absent key) means "follow the scheme".
+  int? _themeOverride(String role) => _parseArgb(get('theme.$role', ''));
+
   void _setThemeOverride(String role, int? v) {
     if (v == null) {
       remove('theme.$role');
     } else {
-      set('theme.$role', (v & 0xffffffff).toRadixString(16).padLeft(8, '0'));
+      set('theme.$role', _formatArgb(v));
     }
   }
 

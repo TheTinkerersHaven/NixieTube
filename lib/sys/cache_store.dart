@@ -6,8 +6,8 @@
 // a wall of escaped JSON.
 //
 // The caches used to be properties (`home.trackMeta` and friends) in
-// `config.properties`; [CacheStore.migrate] moves those into their
-// files once and drops the properties.
+// `config.properties`; [AppState] moves those into their files once and
+// drops the properties.
 
 import 'dart:io' show File;
 

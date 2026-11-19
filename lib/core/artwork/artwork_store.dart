@@ -18,7 +18,10 @@ import 'package:image/image.dart' as img;
 import '../../sys/http_client.dart';
 import '../../sys/paths.dart';
 
-const maxFailureKeys = 2000;
+/// Legacy format suffix written by earlier releases (`{sha}.img4`).
+const _legacyImg4 = '.img4';
+
+const maxMemoKeys = 2000;
 
 /// Age after which a cached artwork file no longer earns its disk
 /// space: files older than this are deleted on the next startup's
@@ -143,55 +146,58 @@ const _headerReadMax = 128 << 10;
 /// list (baseline and progressive). WebP and unknown containers return
 /// null — the callers decode those unbounded rather than guess an
 /// aspect ratio.
-(int, int)? _sizeFromHeader(List<int> bytes) {
-  int read16(int i) => (bytes[i] << 8) | bytes[i + 1];
-  int read32(int i) =>
-      (bytes[i] << 24) |
-      (bytes[i + 1] << 16) |
-      (bytes[i + 2] << 8) |
-      bytes[i + 3];
-  // PNG: signature, then the IHDR chunk header (length 13, "IHDR",
-  // then two big-endian 32-bit words: width, height) at 16..24.
-  if (bytes.length >= 24) {
-    var isPng = true;
-    for (var i = 0; i < _pngSignature.length; i++) {
-      if (bytes[i] != _pngSignature[i]) {
-        isPng = false;
-        break;
-      }
-    }
-    if (isPng) {
-      final width = read32(16);
-      final height = read32(20);
-      if (width > 0 && height > 0) return (width, height);
-    }
+(int, int)? _sizeFromHeader(List<int> bytes) =>
+    _pngSize(bytes) ?? _jpegSize(bytes);
+
+/// Width/height from a PNG IHDR chunk: the signature, then the chunk
+/// header (length 13, "IHDR") and two big-endian 32-bit words at 16..24.
+/// Null when [bytes] is not a PNG or the chunk is malformed.
+(int, int)? _pngSize(List<int> bytes) {
+  if (bytes.length < 24) return null;
+  for (var i = 0; i < _pngSignature.length; i++) {
+    if (bytes[i] != _pngSignature[i]) return null;
   }
-  // JPEG: skip the SOI, walk each marker's length until a SOFn; the
-  // height then width sit two bytes into the segment header.
-  if (bytes.length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8) {
-    var i = 2;
-    while (i + 9 <= bytes.length) {
-      if (bytes[i] != 0xFF) break;
-      final marker = (bytes[i] << 8) | bytes[i + 1];
-      if (marker >= 0xFFC0 && marker <= 0xFFCF) {
-        // SOF0..SOF15 except DHT/C4, JPG/C8, DAC/CC carry dimensions.
-        if (marker != 0xFFC4 && marker != 0xFFC8 && marker != 0xFFCC) {
-          final height = read16(i + 5);
-          final width = read16(i + 7);
-          if (width > 0 && height > 0) return (width, height);
-          break;
-        }
-      }
-      // APPn/COM and segment framing skip by declared length.
-      if (marker == 0xFFD8 || marker == 0xFFD9 || (marker & 0x00F8) == 0xFFD0) {
-        i += 2; // standalone markers carry no length
-        continue;
-      }
-      i += 2 + read16(i + 2);
+  final width = _read32(bytes, 16);
+  final height = _read32(bytes, 20);
+  return (width > 0 && height > 0) ? (width, height) : null;
+}
+
+/// Width/height from a JPEG SOFn segment, found by walking the marker
+/// list (baseline and progressive). Null when [bytes] is not a JPEG or
+/// carries no frame header.
+(int, int)? _jpegSize(List<int> bytes) {
+  if (bytes.length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8) return null;
+  var i = 2;
+  while (i + 9 <= bytes.length) {
+    if (bytes[i] != 0xFF) return null;
+    final marker = _read16(bytes, i);
+    // SOF0..SOF15 except DHT/C4, JPG/C8, DAC/CC carry dimensions.
+    if (marker >= 0xFFC0 &&
+        marker <= 0xFFCF &&
+        marker != 0xFFC4 &&
+        marker != 0xFFC8 &&
+        marker != 0xFFCC) {
+      final height = _read16(bytes, i + 5);
+      final width = _read16(bytes, i + 7);
+      return (width > 0 && height > 0) ? (width, height) : null;
     }
+    // APPn/COM and segment framing skip by declared length.
+    if (marker == 0xFFD8 || marker == 0xFFD9 || (marker & 0x00F8) == 0xFFD0) {
+      i += 2; // standalone markers carry no length
+      continue;
+    }
+    i += 2 + _read16(bytes, i + 2);
   }
   return null;
 }
+
+int _read16(List<int> bytes, int i) => (bytes[i] << 8) | bytes[i + 1];
+
+int _read32(List<int> bytes, int i) =>
+    (bytes[i] << 24) |
+    (bytes[i + 1] << 16) |
+    (bytes[i + 2] << 8) |
+    bytes[i + 3];
 
 /// Decodes image bytes exactly as served — no client-side crop and no
 /// bar trimming. A cover that ships with its own black frame (square
@@ -467,7 +473,7 @@ class ArtworkStore {
     final stem = _stem(url);
     final hit = _resolved[stem];
     if (hit != null && hit.isNotEmpty) return hit;
-    for (final path in _variants(stem, '$stem.img4')) {
+    for (final path in _variants(stem, '$stem$_legacyImg4')) {
       try {
         if (File(path).existsSync()) {
           _resolved[stem] = path;
@@ -476,7 +482,7 @@ class ArtworkStore {
         }
       } catch (_) {}
     }
-    return '$stem.img4';
+    return '$stem$_legacyImg4';
   }
 
   /// Suffixes a stored file may carry, tried in read order.
@@ -490,7 +496,7 @@ class ArtworkStore {
   ];
 
   void _capResolved() {
-    while (_resolved.length > maxFailureKeys) {
+    while (_resolved.length > maxMemoKeys) {
       _resolved.remove(_resolved.keys.first);
     }
   }
@@ -556,47 +562,63 @@ class ArtworkStore {
     try {
       final dir = Directory(_dirPath);
       if (!dir.existsSync()) return;
-      final cutoff = DateTime.now().subtract(maxAge);
-      final keep = <(File, DateTime, int)>[];
-      await for (final entry in dir.list()) {
-        if (entry is! File) continue;
+      final keep = await _deleteOlderThan(dir, DateTime.now().subtract(maxAge));
+      await _evictToCap(keep);
+    } catch (_) {}
+  }
+
+  /// Deletes the files in [dir] older than [cutoff], returning the
+  /// survivors as `(file, modified, size)`. A file that vanishes under
+  /// the pass is skipped, not reported.
+  Future<List<(File, DateTime, int)>> _deleteOlderThan(
+    Directory dir,
+    DateTime cutoff,
+  ) async {
+    final keep = <(File, DateTime, int)>[];
+    await for (final entry in dir.list()) {
+      if (entry is! File) continue;
+      try {
+        final modified = entry.lastModifiedSync();
+        if (modified.isBefore(cutoff)) {
+          try {
+            await entry.delete();
+          } catch (_) {}
+          continue;
+        }
+        keep.add((entry, modified, await entry.length()));
+      } catch (_) {}
+    }
+    return keep;
+  }
+
+  /// Deletes the oldest of [entries] until their total size is back
+  /// under [maxBytes].
+  Future<void> _evictToCap(List<(File, DateTime, int)> entries) async {
+    var total = 0;
+    for (final (_, _, size) in entries) {
+      total += size;
+    }
+    if (total <= maxBytes) return;
+    entries.sort((a, b) => a.$2.compareTo(b.$2));
+    for (final (file, _, size) in entries) {
+      if (total <= maxBytes) break;
+      try {
+        await file.delete();
+        total -= size;
+      } catch (_) {
+        // Deleted by a concurrent clear or prune pass under us: treat a
+        // vanished file as removed, or its phantom bytes would keep
+        // evicting newer files than needed.
         try {
-          final modified = entry.lastModifiedSync();
-          if (modified.isBefore(cutoff)) {
-            try {
-              await entry.delete();
-            } catch (_) {}
-            continue;
-          }
-          keep.add((entry, modified, await entry.length()));
+          if (!file.existsSync()) total -= size;
         } catch (_) {}
       }
-      var total = 0;
-      for (final (_, _, size) in keep) {
-        total += size;
-      }
-      if (total <= maxBytes) return;
-      keep.sort((a, b) => a.$2.compareTo(b.$2));
-      for (final (file, _, size) in keep) {
-        if (total <= maxBytes) break;
-        try {
-          await file.delete();
-          total -= size;
-        } catch (_) {
-          // Deleted by a concurrent clear or prune pass under us:
-          // treat a vanished file as removed, or its phantom bytes
-          // would keep evicting newer files than needed.
-          try {
-            if (!file.existsSync()) total -= size;
-          } catch (_) {}
-        }
-      }
-    } catch (_) {}
+    }
   }
 
   void _noteFailure(Map<String, int> failures, String url) {
     failures[url] = (failures[url] ?? 0) + 1;
-    while (failures.length > maxFailureKeys) {
+    while (failures.length > maxMemoKeys) {
       failures.remove(failures.keys.first);
     }
   }
@@ -696,7 +718,7 @@ class ArtworkStore {
     if ((_failures[url] ?? 0) >= maxFailures) return Future.value();
     return _keyed('img:$url', () async {
       final stem = _stem(url);
-      final legacy = '$stem.img4';
+      final legacy = '$stem$_legacyImg4';
       var bytes = await _readCached(stem, legacy);
       if (bytes == null) {
         bytes = await _download(url);
@@ -802,7 +824,7 @@ class ArtworkStore {
     if (url.trim().isEmpty) return Future.value();
     return _keyed('file:$url', () async {
       final stem = _stem(url);
-      final legacy = '$stem.img4';
+      final legacy = '$stem$_legacyImg4';
       final cachedPath = await _cachedPath(stem, legacy);
       if (cachedPath != null) {
         final target = File(cachedPath);
@@ -835,7 +857,7 @@ class ArtworkStore {
   Future<File?> cachedFile(String url) async {
     if (url.trim().isEmpty) return null;
     final stem = _stem(url);
-    final path = await _cachedPath(stem, '$stem.img4');
+    final path = await _cachedPath(stem, '$stem$_legacyImg4');
     if (path == null) return null;
     return File(path);
   }
@@ -856,7 +878,7 @@ class ArtworkStore {
     final stem = _stem(url);
     final hit = _sizes[stem];
     if (hit != null) return hit;
-    final path = await _cachedPath(stem, '$stem.img4');
+    final path = await _cachedPath(stem, '$stem$_legacyImg4');
     if (path == null) return null;
     try {
       final raf = await File(path).open();
@@ -869,7 +891,7 @@ class ArtworkStore {
         final dims = _sizeFromHeader(bytes);
         if (dims != null) {
           _sizes[stem] = dims;
-          while (_sizes.length > maxFailureKeys) {
+          while (_sizes.length > maxMemoKeys) {
             _sizes.remove(_sizes.keys.first);
           }
         }

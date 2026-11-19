@@ -197,6 +197,9 @@ class PlayerController implements PlayerEngineListener {
 
   Timer? _ticker;
 
+  /// How often a playing session is written back to disk, in ms.
+  static const _sessionSaveIntervalMs = 15000;
+
   /// Fencing token: stale resolve/ticker work aborts when it no longer matches.
   int _playToken = 0;
   int _lastSessionSaveMs = 0;
@@ -1019,6 +1022,26 @@ class PlayerController implements PlayerEngineListener {
     refreshPrefetch();
   }
 
+  /// Applies [update] to the current track and every queue entry,
+  /// returning the resulting state and how many tracks changed (by
+  /// returning a different instance).
+  ({PlayerState state, int changed}) _mapTracks(Track Function(Track) update) {
+    var changed = 0;
+    Track apply(Track track) {
+      final next = update(track);
+      if (!identical(next, track)) changed++;
+      return next;
+    }
+
+    final current = _state.current;
+    final fixedCurrent = current == null ? null : apply(current);
+    final queue = _state.queue.map(apply).toList();
+    return (
+      state: _state.copyWith(current: () => fixedCurrent, queue: queue),
+      changed: changed,
+    );
+  }
+
   /// Merges late-arriving release metadata into the matching queue/current
   /// track (from LRCLIB or InnerTube) so downstream consumers pick it up.
   void updateTrackMetadata(
@@ -1052,26 +1075,20 @@ class PlayerController implements PlayerEngineListener {
     // follows the shared panel merge (fuller artists, preferred album,
     // unioned thumbnails, fill-if-missing duration, OR-ed explicit).
     const mergeOptions = TrackMerge(title: TitleMerge.incomingWins);
-    Track fix(Track t) =>
-        t.videoId != videoId ? t : mergeTrack(t, incoming, mergeOptions);
-
     _update(
-      _state.copyWith(
-        current: () => _state.current == null ? null : fix(_state.current!),
-        queue: _state.queue.map(fix).toList(),
-      ),
+      _mapTracks(
+        (t) => t.videoId != videoId ? t : mergeTrack(t, incoming, mergeOptions),
+      ).state,
     );
   }
 
   /// Updates the rating of the track with [videoId] in queue and current.
   void updateTrackRating(String videoId, RatingStatus rating) {
-    Track update(Track track) =>
-        track.videoId == videoId ? track.copyWith(rating: rating) : track;
     _update(
-      _state.copyWith(
-        current: () => _state.current == null ? null : update(_state.current!),
-        queue: _state.queue.map(update).toList(),
-      ),
+      _mapTracks(
+        (track) =>
+            track.videoId == videoId ? track.copyWith(rating: rating) : track,
+      ).state,
     );
   }
 
@@ -1081,20 +1098,14 @@ class PlayerController implements PlayerEngineListener {
   /// never churn the player stream.
   int updateTrackRatings(Map<String, RatingStatus> ratings) {
     if (ratings.isEmpty) return 0;
-    var changed = 0;
-    Track update(Track track) {
+    final result = _mapTracks((track) {
       final rating = ratings[track.videoId];
       if (rating == null || rating == track.rating) return track;
-      changed++;
       return track.copyWith(rating: rating);
-    }
-
-    final current = _state.current;
-    final queue = _state.queue.map(update).toList();
-    final fixedCurrent = current == null ? null : update(current);
-    if (changed == 0) return 0;
-    _update(_state.copyWith(current: () => fixedCurrent, queue: queue));
-    return changed;
+    });
+    if (result.changed == 0) return 0;
+    _update(result.state);
+    return result.changed;
   }
 
   /// Stamps known track lengths (seconds) into current/queue entries that
@@ -1104,38 +1115,27 @@ class PlayerController implements PlayerEngineListener {
   /// never overwrites a catalog one.
   int updateTrackDurations(Map<String, int> durations) {
     if (durations.isEmpty) return 0;
-    var changed = 0;
-    Track update(Track track) {
+    final result = _mapTracks((track) {
       final secs = durations[track.videoId];
       if (secs == null || secs <= 0 || track.durationSec > 0) return track;
-      changed++;
       return track.copyWith(durationSec: secs);
-    }
-
-    final current = _state.current;
-    final queue = _state.queue.map(update).toList();
-    final fixedCurrent = current == null ? null : update(current);
-    if (changed == 0) return 0;
-    _update(_state.copyWith(current: () => fixedCurrent, queue: queue));
-    return changed;
+    });
+    if (result.changed == 0) return 0;
+    _update(result.state);
+    return result.changed;
   }
 
   /// Updates like/dislike counters; -1 values never overwrite known counts.
   void updateTrackStats(String videoId, int likeCount, int dislikeCount) {
     if (likeCount < 0 && dislikeCount < 0) return;
-    Track update(Track track) {
-      if (track.videoId != videoId) return track;
-      return track.copyWith(
-        likeCount: likeCount >= 0 ? likeCount : track.likeCount,
-        dislikeCount: dislikeCount >= 0 ? dislikeCount : track.dislikeCount,
-      );
-    }
-
     _update(
-      _state.copyWith(
-        current: () => _state.current == null ? null : update(_state.current!),
-        queue: _state.queue.map(update).toList(),
-      ),
+      _mapTracks((track) {
+        if (track.videoId != videoId) return track;
+        return track.copyWith(
+          likeCount: likeCount >= 0 ? likeCount : track.likeCount,
+          dislikeCount: dislikeCount >= 0 ? dislikeCount : track.dislikeCount,
+        );
+      }).state,
     );
   }
 
@@ -1520,7 +1520,8 @@ class PlayerController implements PlayerEngineListener {
       ),
     );
     if (playing &&
-        DateTime.now().millisecondsSinceEpoch - _lastSessionSaveMs > 15000) {
+        DateTime.now().millisecondsSinceEpoch - _lastSessionSaveMs >
+            _sessionSaveIntervalMs) {
       saveSession();
     }
   }

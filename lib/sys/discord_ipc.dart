@@ -23,8 +23,6 @@ import 'dart:io'
     show InternetAddress, InternetAddressType, Platform, Socket, pid;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
-
 /// Trims [text] to [limit] characters; blank becomes null so the field is
 /// left out of the payload entirely.
 String? _clipText(String? text, int limit) {
@@ -112,7 +110,8 @@ class DiscordButton {
   Map<String, dynamic> toJson() => {'label': label, 'url': url};
 }
 
-const int _textLimit = 128;
+/// Discord caps these fields at 128 characters.
+const int discordTextLimit = 128;
 
 /// The presence we push, mirroring the documented activity object. Only
 /// the fields NixieTube uses are modelled.
@@ -125,8 +124,8 @@ class DiscordActivity {
     this.assets,
     List<DiscordButton>? buttons,
     this.type = DiscordActivityType.listening,
-  }) : details = _clipText(details, _textLimit),
-       state = _clipText(state, _textLimit),
+  }) : details = _clipText(details, discordTextLimit),
+       state = _clipText(state, discordTextLimit),
        // Discord renders at most two buttons.
        buttons = buttons == null || buttons.isEmpty
            ? const []
@@ -552,7 +551,6 @@ class DiscordIpcClient implements DiscordRpc {
   /// The `discord-ipc-{0..9}` paths in the order the protocol documents:
   /// `XDG_RUNTIME_DIR`, `TMPDIR`, `TMP`, `TEMP`, then `/tmp`, each probed
   /// for every index before moving on to the next directory.
-  @visibleForTesting
   static List<String> defaultSocketPaths([Map<String, String>? env]) {
     final environment = env ?? Platform.environment;
     final dirs = <String>[

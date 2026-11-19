@@ -98,7 +98,6 @@ class _MprisObject extends DBusObject {
   PlayerState get _s => _controller.state;
 
   /// Local file:// art when already rendered, else the remote URL.
-  /// Fallback sync version for compatibility - checks file existence synchronously.
   String? _artUrl(Track track) {
     final remote = track.bestArtwork;
     if (remote == null || remote.isEmpty) return null;
@@ -661,12 +660,14 @@ class MprisService extends ChangeNotifier {
     final snapshot = _snapshot();
     final changed = <String, DBusValue>{};
     for (final entry in _decodeProps(snapshot).entries) {
+      // A playing position is re-emitted at most twice a second: MPRIS
+      // clients interpolate it themselves, so a per-tick update is noise.
+      if (entry.key == 'Position' &&
+          playing &&
+          now - _lastPositionEmitMs < 2000) {
+        continue;
+      }
       if (_lastProps[entry.key] != _encode(entry.value)) {
-        if (entry.key == 'Position' &&
-            playing &&
-            now - _lastPositionEmitMs < 2000) {
-          continue;
-        }
         changed[entry.key] = entry.value;
       }
     }

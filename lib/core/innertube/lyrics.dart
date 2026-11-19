@@ -167,10 +167,9 @@ _Candidate? _candidateFrom(dynamic el) {
       ? (el['artistName'] as String).trim()
       : '');
   if (title.isEmpty || artist.isEmpty) return null;
-  var album = el['albumName'] is String
+  final album = el['albumName'] is String
       ? (el['albumName'] as String).trim()
       : '';
-  if (album.isEmpty) album = '';
   final duration = el['duration'];
   final durationSec = duration is num
       ? duration.toInt()

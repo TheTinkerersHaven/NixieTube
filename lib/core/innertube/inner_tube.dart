@@ -26,10 +26,6 @@ const _origin = 'https://music.youtube.com';
 const _userAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0';
 
-/// API key bundled with the WEB_REMIX client shape (sent on no request;
-//  kept for beacon URL parity).
-const innertubeApiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
-
 /// Per-playback watchtime contexts kept (one entry per track playback).
 const _watchtimeContextCacheSize = 16;
 
@@ -99,9 +95,6 @@ class WatchtimeBeacon {
 
   /// The playlist the track played from, when known.
   final String? playlistId;
-
-  /// True when the beacon opens a new playback.
-  bool get startsPlayback => state == WatchtimeState.playing && startSec == 0.0;
 }
 
 /// Per-playback watchtime session tokens from the InnerTube player
@@ -571,9 +564,42 @@ class InnerTube {
   };
 
   Map<String, dynamic> _bodyWith(Map<String, dynamic> extra) => {
-    'context': _contextBlock()['context'],
+    'context': _context(),
     ...extra,
   };
+
+  /// The InnerTube request context shared by every request body.
+  Map<String, dynamic> _context() =>
+      _contextBlock()['context'] as Map<String, dynamic>;
+
+  /// Runs [call] over [items] in batches of at most [concurrency],
+  /// preserving order. Each batch is awaited as a whole, so at most
+  /// [concurrency] calls are in flight.
+  static Future<List<R>> _inBatches<T, R>(
+    List<T> items,
+    int concurrency,
+    Future<R> Function(T item) call,
+  ) async {
+    final size = concurrency < 1 ? 1 : concurrency;
+    final out = <R>[];
+    for (var i = 0; i < items.length; i += size) {
+      final end = (i + size < items.length) ? i + size : items.length;
+      out.addAll(await Future.wait(items.sublist(i, end).map(call)));
+    }
+    return out;
+  }
+
+  /// Trims [ids], drops blanks and duplicates, preserving order.
+  static List<String> _uniqueIds(List<String> ids) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final raw in ids) {
+      final id = raw.trim();
+      if (id.isEmpty) continue;
+      if (seen.add(id)) out.add(id);
+    }
+    return out;
+  }
 
   static bool _isErrorResponse(dynamic res) =>
       res is Map && res.containsKey('error');
@@ -863,7 +889,7 @@ class InnerTube {
   Future<List<Track>> _globalChartTracks(String? globalKey) async {
     if (globalKey == null) return const [];
     final res = await post('browse', {
-      'context': _contextBlock()['context'],
+      'context': _context(),
       'browseId': _chartsBrowseId,
       'formData': {
         'selectedValues': [globalKey],
@@ -1214,6 +1240,11 @@ class InnerTube {
     return buildArtist(res);
   }
 
+  /// The browse ids a playlist page may answer to: the raw `PL…` id
+  /// (which answers HTTP 400) plus its canonical `VL…` form.
+  static List<String> _playlistBrowseIds(String browseId) =>
+      browseId.startsWith('PL') ? [browseId, 'VL$browseId'] : [browseId];
+
   /// Opens a playlist page. Raw `PL…` ids answer HTTP 400, so the canonical
   /// `VL…` form is tried as well, keeping the first non-error response.
   /// A browsed playlist, with every one of its songs.
@@ -1222,9 +1253,7 @@ class InnerTube {
   /// next ones, so the rest of the playlist is paged in: a long
   /// playlist lists all of its songs, not just the first page.
   Future<PlaylistDetail?> playlist(String browseId, {String? params}) async {
-    final ids = browseId.startsWith('PL')
-        ? [browseId, 'VL$browseId']
-        : [browseId];
+    final ids = _playlistBrowseIds(browseId);
     for (final id in ids) {
       final extra = {'browseId': id};
       if (params != null && params.isNotEmpty) extra['params'] = params;
@@ -1324,9 +1353,7 @@ class InnerTube {
     String? params,
   }) async {
     if (browseId.trim().isEmpty) return [];
-    final ids = browseId.startsWith('PL')
-        ? [browseId, 'VL$browseId']
-        : [browseId];
+    final ids = _playlistBrowseIds(browseId);
     for (final id in ids) {
       final extra = {'browseId': id};
       if (params != null && params.isNotEmpty) extra['params'] = params;
@@ -1566,17 +1593,9 @@ class InnerTube {
   ({List<dynamic> rows, String? token})? _likedShelf(dynamic res) {
     // A continued page arrives as appended items: the row list and
     // its trailing continuation row in one place.
-    final actions = nav(res, const ['onResponseReceivedActions']);
-    if (actions is List) {
-      for (final action in actions) {
-        final items = nav(action, const [
-          'appendContinuationItemsAction',
-          'continuationItems',
-        ]);
-        if (items is List && items.isNotEmpty) {
-          return (rows: items, token: _tokenInRows(items));
-        }
-      }
+    final appended = _appendedItems(res);
+    if (appended != null) {
+      return (rows: appended, token: _tokenInRows(appended));
     }
     // The shelf page: the playlist shelf when there is one (the
     // "Liked Music" playlist), else the plain music shelf (the
@@ -1871,7 +1890,6 @@ class InnerTube {
           nav(r, const ['navigationEndpoint', 'browseEndpoint', 'browseId']),
         ) ??
         '';
-    if (!id.startsWith('UC')) return (text, id);
     return (text, id);
   }
 
@@ -2056,27 +2074,20 @@ class InnerTube {
   }
 
   /// Subscribes to a channel. Returns true when YouTube confirms it.
-  Future<bool> subscribeTo(String channelId) async {
-    if (channelId.trim().isEmpty) return false;
-    try {
-      final res = await post(
-        'subscription/subscribe',
-        _bodyWith({
-          'channelIds': [channelId],
-        }),
-      );
-      return !_isErrorResponse(res);
-    } catch (_) {
-      return false;
-    }
-  }
+  Future<bool> subscribeTo(String channelId) =>
+      _setSubscription('subscription/subscribe', channelId);
 
   /// Unsubscribes from a channel.
-  Future<bool> unsubscribeFrom(String channelId) async {
+  Future<bool> unsubscribeFrom(String channelId) =>
+      _setSubscription('subscription/unsubscribe', channelId);
+
+  /// Posts a subscription change for [channelId]; false when the id is
+  /// blank, YouTube reports an error, or the call fails.
+  Future<bool> _setSubscription(String path, String channelId) async {
     if (channelId.trim().isEmpty) return false;
     try {
       final res = await post(
-        'subscription/unsubscribe',
+        path,
         _bodyWith({
           'channelIds': [channelId],
         }),
@@ -2274,19 +2285,23 @@ class InnerTube {
     return _fillAlbumDetails(result);
   }
 
+  /// The `likeStatus` a watch-next/player response's overlay carries, or
+  /// null when it has none.
+  static String? _overlayLikeStatus(dynamic res) => str(
+    nav(res, const [
+      'playerOverlays',
+      'playerOverlayRenderer',
+      'actions',
+      0,
+      'likeButtonRenderer',
+      'likeStatus',
+    ]),
+  );
+
   /// The rating a watch-next response carries for the track.
   RatingStatus _fetchedRating(dynamic res, Track? panel) {
     if (res == null) return RatingStatus.unknown;
-    final overlay = str(
-      nav(res, const [
-        'playerOverlays',
-        'playerOverlayRenderer',
-        'actions',
-        0,
-        'likeButtonRenderer',
-        'likeStatus',
-      ]),
-    );
+    final overlay = _overlayLikeStatus(res);
     final overlayRating = overlay == null
         ? RatingStatus.unknown
         : RatingStatus.fromValue(overlay);
@@ -2328,23 +2343,14 @@ class InnerTube {
     int concurrency = 8,
   }) async {
     if (tracks.isEmpty) return tracks;
-    final c = concurrency < 1 ? 1 : concurrency;
-    final enriched = <String, Track>{};
-    for (var i = 0; i < tracks.length; i += c) {
-      final end = (i + c < tracks.length) ? i + c : tracks.length;
-      final results = await Future.wait(
-        tracks.sublist(i, end).map((t) async {
-          try {
-            return MapEntry(t.videoId, await enrichTrack(t));
-          } catch (_) {
-            return MapEntry(t.videoId, t);
-          }
-        }),
-      );
-      for (final e in results) {
-        enriched[e.key] = e.value;
+    final results = await _inBatches(tracks, concurrency, (t) async {
+      try {
+        return MapEntry(t.videoId, await enrichTrack(t));
+      } catch (_) {
+        return MapEntry(t.videoId, t);
       }
-    }
+    });
+    final enriched = {for (final e in results) e.key: e.value};
     return tracks.map((t) => enriched[t.videoId] ?? t).toList();
   }
 
@@ -2381,16 +2387,7 @@ class InnerTube {
       if (t.durationSec > 0) durations[t.videoId] = t.durationSec;
       if (t.videoId == videoId) rating = t.rating;
     }
-    final overlay = str(
-      nav(res, const [
-        'playerOverlays',
-        'playerOverlayRenderer',
-        'actions',
-        0,
-        'likeButtonRenderer',
-        'likeStatus',
-      ]),
-    );
+    final overlay = _overlayLikeStatus(res);
     if (overlay != null && overlay.trim().isNotEmpty) {
       rating = RatingStatus.fromValue(overlay);
     }
@@ -2402,25 +2399,17 @@ class InnerTube {
   /// their current state instead of caching a gap.
   Future<Map<String, ({RatingStatus rating, Map<String, int> durations})>>
   watchInfos(List<String> videoIds, {int concurrency = 8}) async {
-    final seen = <String>{};
-    final ids = <String>[];
-    for (final id in videoIds.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-      if (seen.add(id)) ids.add(id);
-    }
+    final ids = _uniqueIds(videoIds);
     final out = <String, ({RatingStatus rating, Map<String, int> durations})>{};
     if (ids.isEmpty) return out;
-    final c = concurrency < 1 ? 1 : concurrency;
-    for (var i = 0; i < ids.length; i += c) {
-      final end = (i + c < ids.length) ? i + c : ids.length;
-      final values = await Future.wait(
-        ids
-            .sublist(i, end)
-            .map((id) async => MapEntry(id, await watchInfo(id))),
-      );
-      for (final e in values) {
-        final info = e.value;
-        if (info != null) out[e.key] = info;
-      }
+    final values = await _inBatches(
+      ids,
+      concurrency,
+      (id) async => MapEntry(id, await watchInfo(id)),
+    );
+    for (final e in values) {
+      final info = e.value;
+      if (info != null) out[e.key] = info;
     }
     return out;
   }
@@ -2434,22 +2423,16 @@ class InnerTube {
     List<String> videoIds, {
     int concurrency = 8,
   }) async {
-    final seen = <String>{};
-    final ids = <String>[];
-    for (final id in videoIds.map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-      if (seen.add(id)) ids.add(id);
-    }
+    final ids = _uniqueIds(videoIds);
     if (ids.isEmpty) return {};
     final out = <String, RatingStatus>{};
-    final c = concurrency < 1 ? 1 : concurrency;
-    for (var i = 0; i < ids.length; i += c) {
-      final end = (i + c < ids.length) ? i + c : ids.length;
-      final values = await Future.wait(
-        ids.sublist(i, end).map((id) async => MapEntry(id, await rating(id))),
-      );
-      for (final e in values) {
-        if (e.value != RatingStatus.unknown) out[e.key] = e.value;
-      }
+    final values = await _inBatches(
+      ids,
+      concurrency,
+      (id) async => MapEntry(id, await rating(id)),
+    );
+    for (final e in values) {
+      if (e.value != RatingStatus.unknown) out[e.key] = e.value;
     }
     return out;
   }
@@ -2468,7 +2451,7 @@ class InnerTube {
     if (endpoint == null) return false;
     try {
       final res = await post(endpoint, {
-        'context': _contextBlock()['context'],
+        'context': _context(),
         'target': {'videoId': videoId},
       });
       return !_isErrorResponse(res);
@@ -2493,7 +2476,7 @@ class InnerTube {
         if (cpn.isNotEmpty) 'cpn': cpn,
       };
       final res = await post('feedback', {
-        'context': _contextBlock()['context'],
+        'context': _context(),
         'actions': [
           {'action': 'playerEvent', 'playerEvent': event},
         ],
@@ -2512,12 +2495,12 @@ class InnerTube {
     if (videoId.trim().isEmpty) return 0;
     try {
       final res = await post('player', {
-        'context': _contextBlock()['context'],
+        'context': _context(),
         'videoId': videoId,
         'racyCheckOk': true,
         'contentCheckOk': true,
       });
-      if (res is Map && res.containsKey('error')) return 0;
+      if (_isErrorResponse(res)) return 0;
       final vc = str(nav(res, const ['videoDetails', 'viewCount']));
       return int.tryParse(vc ?? '') ?? 0;
     } catch (_) {
@@ -2532,7 +2515,7 @@ class InnerTube {
     if (videoId.trim().isEmpty) return null;
     try {
       final res = await post('player', {
-        'context': _contextBlock()['context'],
+        'context': _context(),
         'videoId': videoId,
         'playbackContext': {
           'contentPlaybackContext': {'html5Preference': 'HTML5_PREF_WANTS'},
@@ -2540,7 +2523,7 @@ class InnerTube {
         'racyCheckOk': true,
         'contentCheckOk': true,
       });
-      if (res is Map && res.containsKey('error')) return null;
+      if (_isErrorResponse(res)) return null;
       final base =
           str(
             nav(res, const [
@@ -2729,7 +2712,7 @@ class InnerTube {
 
   /// The timing counters of one watchtime beacon: lactMs, rtn, rti.
   ///
-  /// rtn chains the previous per-cpn value; rti = rtn - 10.
+  /// rtn chains the previous per-cpn value; rti lags it by one step.
   ({int lactMs, int rti, int rtn}) _beaconTiming(String cpn) {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final startMs = _watchtimeStartMs.putIfAbsent(cpn, () => nowMs);
@@ -2737,7 +2720,7 @@ class InnerTube {
     if (lactMs < 0) lactMs = 0;
     final rtn =
         (_watchtimeLastRtn[cpn] ?? _watchtimeInitialRtn) + _watchtimeRtnStep;
-    final rti = rtn - 10;
+    final rti = rtn - _watchtimeRtnStep;
     _watchtimeLastRtn[cpn] = rtn;
     return (lactMs: lactMs, rtn: rtn, rti: rti);
   }
@@ -3025,7 +3008,7 @@ class InnerTube {
         'browse',
         _bodyWith({'browseId': 'FEmusic_library_landing'}),
       );
-      if (res is Map && res.containsKey('error')) {
+      if (_isErrorResponse(res)) {
         _log.d(
           'library: top-level error: '
           '${_clip(res.toString(), 200)}',

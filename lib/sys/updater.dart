@@ -13,7 +13,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 
-import '../sys/version.dart';
+import 'version.dart';
 import 'http_client.dart';
 import 'log.dart';
 
@@ -22,22 +22,18 @@ const _log = TaggedLog('updater');
 const _githubOwner = 'TheTinkerersHaven';
 const _githubRepo = 'NixieTube';
 
+/// The four magic bytes every ELF binary starts with (`0x7f E L F`).
+const _elfMagic = [0x7f, 0x45, 0x4c, 0x46];
+
 /// A newer release is available at [downloadUrl].
 class UpdateInfo {
-  const UpdateInfo({
-    required this.version,
-    required this.downloadUrl,
-    required this.body,
-  });
+  const UpdateInfo({required this.version, required this.downloadUrl});
 
   /// Release version without the leading `v`.
   final String version;
 
   /// Direct download URL for the x86_64 AppImage asset.
   final String downloadUrl;
-
-  /// Release notes body.
-  final String body;
 }
 
 /// Checks GitHub releases and applies AppImage updates.
@@ -85,39 +81,42 @@ class Updater {
       }
 
       final data = res.data;
-      final json = data is String ? jsonDecode(data) as Map? : data as Map?;
-      if (json == null) return null;
+      final release = data is String ? jsonDecode(data) as Map? : data as Map?;
+      if (release == null) return null;
 
-      final tagName = json['tag_name'] as String? ?? '';
-      final version = tagName.startsWith('v') ? tagName.substring(1) : tagName;
-      final local = appVersion.split('+').first;
-      if (version.isEmpty || !_isNewer(version, local)) {
+      final version = _releaseVersion(release);
+      if (version == null || !_isNewer(version, appVersion.split('+').first)) {
         return null;
       }
-
-      String? assetUrl;
-      final assets = json['assets'];
-      if (assets is List) {
-        for (final a in assets) {
-          if (a is! Map) continue;
-          final name = a['name'] as String? ?? '';
-          if (name.endsWith('-x86_64.AppImage')) {
-            assetUrl = a['browser_download_url'] as String?;
-            break;
-          }
-        }
-      }
-      if (assetUrl == null || assetUrl.isEmpty) return null;
-
-      return UpdateInfo(
-        version: version,
-        downloadUrl: assetUrl,
-        body: json['body'] as String? ?? '',
-      );
+      final assetUrl = _appImageAssetUrl(release);
+      if (assetUrl == null) return null;
+      return UpdateInfo(version: version, downloadUrl: assetUrl);
     } catch (e) {
       _log.w('Update check failed: $e');
       return null;
     }
+  }
+
+  /// The release's version without the leading `v`, or null when the
+  /// tag is missing.
+  static String? _releaseVersion(Map release) {
+    final tagName = release['tag_name'] as String? ?? '';
+    final version = tagName.startsWith('v') ? tagName.substring(1) : tagName;
+    return version.isEmpty ? null : version;
+  }
+
+  /// The x86_64 AppImage asset of [release], or null when it has none.
+  static String? _appImageAssetUrl(Map release) {
+    final assets = release['assets'];
+    if (assets is! List) return null;
+    for (final a in assets) {
+      if (a is! Map) continue;
+      final name = a['name'] as String? ?? '';
+      if (!name.endsWith('-x86_64.AppImage')) continue;
+      final url = a['browser_download_url'] as String?;
+      if (url != null && url.isNotEmpty) return url;
+    }
+    return null;
   }
 
   /// Returns true when [remote] is a higher version than [local]. Both
@@ -173,13 +172,7 @@ class Updater {
       // payload is an ELF binary before replacing a working AppImage.
       final downloaded = await newFile.length();
       final magic = downloaded >= 4 ? await _readMagic(newFile) : const <int>[];
-      final isElf =
-          magic.length == 4 &&
-          magic[0] == 0x7f &&
-          magic[1] == 0x45 &&
-          magic[2] == 0x4c &&
-          magic[3] == 0x46;
-      if (downloaded < 1024 * 1024 || !isElf) {
+      if (downloaded < 1024 * 1024 || !_isElf(magic)) {
         _log.w(
           'Downloaded update is not an AppImage binary '
           '($downloaded bytes); discarding',
@@ -237,6 +230,15 @@ class Updater {
           },
         )
         .timeout(const Duration(minutes: 10));
+  }
+
+  /// True when [magic] is the four-byte ELF header.
+  static bool _isElf(List<int> magic) {
+    if (magic.length != _elfMagic.length) return false;
+    for (var i = 0; i < _elfMagic.length; i++) {
+      if (magic[i] != _elfMagic[i]) return false;
+    }
+    return true;
   }
 
   /// The first four bytes of [file], used to check the ELF magic.

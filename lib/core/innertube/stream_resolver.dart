@@ -110,6 +110,11 @@ class StreamResolver {
   /// so the TTL is deliberately short.
   static const cacheTtl = Duration(minutes: 5);
 
+  /// Where the throwaway Netscape cookie file for `yt-dlp` is written.
+  static final _ytDlpCookieFile = File(
+    '${Directory.systemTemp.path}/nixietube_yt_dlp_cookies.txt',
+  );
+
   /// Cached resolved streams keyed by video id. Only successful resolves
   /// are stored; a track that currently resolves to null is retried fresh
   /// each time in case it becomes playable later.
@@ -279,9 +284,7 @@ class StreamResolver {
       String? cookieFile;
       final cookie = _cookie;
       if (cookie != null && cookie.isNotEmpty) {
-        final file = File(
-          '${Directory.systemTemp.path}/nixietube_yt_dlp_cookies.txt',
-        );
+        final file = _ytDlpCookieFile;
         final netscape = _cookieToNetscape(cookie);
         await file.writeAsString(netscape);
         cookieFile = file.path;
@@ -318,8 +321,7 @@ class StreamResolver {
       return null;
     } finally {
       try {
-        await File('${Directory.systemTemp.path}/nixietube_yt_dlp_cookies.txt')
-            .delete();
+        await _ytDlpCookieFile.delete();
       } catch (_) {}
     }
   }

@@ -16,7 +16,6 @@ import 'package:nixietube/ui/app_state.dart';
 const _info = UpdateInfo(
   version: '9.9.9',
   downloadUrl: 'https://example.com/NixieTube-x86_64.AppImage',
-  body: '',
 );
 
 class _FakeUpdater extends Updater {

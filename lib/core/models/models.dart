@@ -770,13 +770,3 @@ class LyricLine {
   final int timeMs;
   final String text;
 }
-
-/// Search section filter.
-enum SearchFilter {
-  songs('Songs'),
-  releases('Albums/EP/Singles'),
-  artists('Artists');
-
-  const SearchFilter(this.label);
-  final String label;
-}
