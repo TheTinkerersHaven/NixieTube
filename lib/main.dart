@@ -2,6 +2,7 @@ import 'dart:async' show unawaited;
 import 'dart:io' show Platform, exit;
 
 import 'package:dynamic_color/dynamic_color.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:provider/provider.dart';
@@ -16,8 +17,11 @@ import 'core/player/just_audio_player_engine.dart';
 import 'core/player/player_controller.dart';
 import 'sys/discord.dart';
 import 'sys/lastfm.dart';
+import 'sys/listenbrainz.dart';
 import 'sys/log.dart';
 import 'sys/mpris.dart';
+import 'sys/musicbrainz.dart';
+import 'sys/paths.dart' show initPlatformPaths;
 import 'sys/sleep_inhibit.dart';
 import 'sys/sys_config.dart';
 import 'sys/tray_service.dart';
@@ -61,8 +65,18 @@ class _ImageCachePressureObserver extends WidgetsBindingObserver {
 /// App entrypoint: wires services (player, auth, tray, MPRIS,
 /// Discord, Last.fm), restores the session, and runs the app. All
 /// service startups are best-effort so none can break launch.
-void main(List<String> args) {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Phones draw behind the status and navigation bars. Android 14 does
+  // not force this on its own, so opt in explicitly; the transparent
+  // bar colours live in the root AnnotatedRegion (ui/app.dart), which
+  // survives MaterialApp/AppBar re-applying the default styles.
+  if (Platform.isAndroid || Platform.isIOS) {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+  // Mobile apps have no writable HOME/XDG dirs: resolve the sandbox
+  // before anything (logging, settings, caches) asks for a path.
+  await initPlatformPaths();
   WidgetsBinding.instance.addObserver(_ImageCachePressureObserver());
   _configureImageCache();
   JustAudioMediaKit.ensureInitialized();
@@ -132,6 +146,9 @@ void main(List<String> args) {
 
   final lastfm = LastFmService(config: config);
   unawaited(player.states.forEach(lastfm.update));
+  final listenbrainz = ListenBrainzService(config: config);
+  unawaited(player.states.forEach(listenbrainz.update));
+  final musicbrainz = MusicBrainzService();
 
   // The credentials live in the platform secret store: load them in
   // the background (the legacy plain-text file is migrated into the
@@ -156,7 +173,14 @@ void main(List<String> args) {
   unawaited(state.checkForUpdates());
   unawaited(state.loadHome());
   runApp(
-    NixieTubeApp(state: state, mpris: mpris, discord: discord, lastfm: lastfm),
+    NixieTubeApp(
+      state: state,
+      mpris: mpris,
+      discord: discord,
+      lastfm: lastfm,
+      musicbrainz: musicbrainz,
+      listenbrainz: listenbrainz,
+    ),
   );
 }
 
@@ -178,12 +202,16 @@ class NixieTubeApp extends StatelessWidget {
     required this.mpris,
     required this.discord,
     required this.lastfm,
+    this.musicbrainz,
+    this.listenbrainz,
   });
 
   final AppState state;
   final MprisService mpris;
   final DiscordPresence discord;
   final LastFmService lastfm;
+  final MusicBrainzService? musicbrainz;
+  final ListenBrainzService? listenbrainz;
 
   @override
   Widget build(BuildContext context) {
@@ -193,6 +221,10 @@ class NixieTubeApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: mpris),
         ChangeNotifierProvider.value(value: discord),
         ChangeNotifierProvider.value(value: lastfm),
+        if (musicbrainz != null)
+          Provider<MusicBrainzService>.value(value: musicbrainz!),
+        if (listenbrainz != null)
+          ChangeNotifierProvider.value(value: listenbrainz!),
       ],
       child: const _ThemedApp(),
     );
@@ -315,10 +347,36 @@ class _ThemedMaterialAppState extends State<_ThemedMaterialApp> {
       theme: theme,
       // The menu coordinator sits above the navigator, so every track
       // row and rail card can swap the open menu in one gesture.
-      builder: (context, child) => TrackMenuScope(
-        coordinator: _menus,
-        child: child ?? const SizedBox.shrink(),
-      ),
+      //
+      // The overlay style is an AnnotatedRegion (not a one-shot
+      // SystemChrome call) so it participates in the per-frame
+      // hit-test: MaterialApp, Scaffolds and AppBars can re-apply their
+      // default light/dark style, but this region stays on top and
+      // keeps the status and navigation bars transparent. The builder
+      // sits below the app's AnimatedTheme, so the brightness (and
+      // therefore the icon colours) follows the live theme.
+      builder: (context, child) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
+            statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+            systemNavigationBarColor: Colors.transparent,
+            systemNavigationBarDividerColor: Colors.transparent,
+            systemNavigationBarContrastEnforced: false,
+            systemNavigationBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
+          ),
+          child: TrackMenuScope(
+            coordinator: _menus,
+            child: child ?? const SizedBox.shrink(),
+          ),
+        );
+      },
       home: _SkeletonConfig(
         reducedMotion: reducedMotion,
         child: const Scaffold(body: AppShell()),

@@ -13,7 +13,8 @@
 //   the platform secret store — credentials only:
 //     cookie, sapisidHash, sessionToken (YouTube Music auth),
 //     lastfm.enabled, lastfm.apiKey, lastfm.secret, lastfm.sessionKey,
-//     lastfm.username (Last.fm scrobbling).
+//     lastfm.username (Last.fm scrobbling), listenbrainz.token (ListenBrainz
+//     scrobbling).
 //
 // The credentials used to live in a plain-text `auth.properties` next
 // to the settings; that file is migrated into the secret store on the
@@ -147,7 +148,8 @@ bool _isAuthKey(String key) =>
     key == 'cookie' ||
     key == 'sapisidHash' ||
     key == 'sessionToken' ||
-    key.startsWith('lastfm.');
+    key.startsWith('lastfm.') ||
+    key == 'listenbrainz.token';
 
 /// Keys the retired OAuth sign-in wrote; they are dropped on load.
 bool _isRetiredOAuthKey(String key) =>
@@ -392,6 +394,14 @@ class SysConfig {
   set lastfmSecret(String v) => set('lastfm.secret', v);
   set lastfmSessionKey(String v) => set('lastfm.sessionKey', v);
   set lastfmUsername(String v) => set('lastfm.username', v);
+
+  /// ListenBrainz scrobbling: the toggle is a plain setting, the user
+  /// token is a credential and lands in the secret store.
+  bool get listenbrainzEnabled => getBool('listenbrainz.enabled');
+  String get listenbrainzToken => get('listenbrainz.token');
+
+  set listenbrainzEnabled(bool v) => setBool('listenbrainz.enabled', v);
+  set listenbrainzToken(String v) => set('listenbrainz.token', v);
 
   /// Whether plays report watchtime beacons to YouTube history.
   bool get reportPlayback => getBool('reportPlayback');

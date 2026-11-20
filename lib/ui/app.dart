@@ -8,6 +8,8 @@ import 'package:provider/provider.dart';
 
 import 'app_state.dart';
 import 'a11y.dart';
+import 'app_shell_desktop.dart';
+import 'app_shell_mobile.dart';
 import 'screens/detail_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
@@ -15,7 +17,7 @@ import 'screens/now_playing_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
-import 'widgets/player_bar.dart';
+import 'theme.dart';
 import 'widgets/playlist_dialog.dart';
 import '../sys/updater.dart' show UpdateInfo;
 
@@ -30,126 +32,188 @@ class AppShell extends StatelessWidget {
     if (context.select<AppState, bool>((s) => s.needsOnboarding)) {
       return const OnboardingScreen();
     }
-    return Focus(
-      autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape) {
-          final state = context.read<AppState>();
-          if (state.lyricsFull) {
-            state.collapseLyrics();
-            return KeyEventResult.handled;
-          }
+    final compact = isCompactLayout(context);
+    final screen = context.select<AppState, Screen>((s) => s.screen);
+    final canGoBack = context.select<AppState, bool>((s) => s.canGoBack);
+    final nowOpen = context.select<AppState, bool>((s) => s.nowOpen);
+    final lyricsFull = context.select<AppState, bool>((s) => s.lyricsFull);
+    final playlistOpen = context.select<AppState, bool>(
+      (s) => s.openedPlaylist != null,
+    );
+    // A playlist opened from search or home makes the library screen a
+    // pushed view too, so back has to close it before leaving the app.
+    final playlistOverlay = playlistOpen && screen == Screen.library;
+    // On phones the bar keeps the section the pushed screen belongs to
+    // highlighted; on desktop a pushed screen leaves the rail unselected.
+    final navIndex = compact
+        ? _mobileNavIndex(screen, context.read<AppState>().parentScreen)
+        : _navIndex(screen);
+    final shell = compact
+        ? AppShellMobile(
+            body: const _ScreenWithBanners(),
+            navIndex: navIndex,
+            onNavTap: _onNavTap,
+          )
+        : AppShellDesktop(
+            body: const _ScreenWithBanners(),
+            navIndex: navIndex,
+            onNavTap: _onNavTap,
+          );
+    // Android's back gesture should close the phone overlays first and
+    // pop the in-app stack otherwise; root destinations stay popped so
+    // back still exits from a tab.
+    final atRoot =
+        screen == Screen.home ||
+        screen == Screen.search ||
+        screen == Screen.library;
+    // Overlays that back closes before navigating: the phone Now Playing
+    // view, fullscreen lyrics, and a playlist covering the library.
+    final hasOverlay = nowOpen || lyricsFull || playlistOverlay;
+    return PopScope(
+      canPop: !hasOverlay && (atRoot || !canGoBack),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final state = context.read<AppState>();
+        if (state.lyricsFull) {
+          state.collapseLyrics();
+          return;
         }
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.space) {
-          final focused = FocusManager.instance.primaryFocus;
-          final editing =
-              focused?.context?.findAncestorWidgetOfExactType<EditableText>() !=
-              null;
-          if (!editing) {
+        if (state.nowOpen) {
+          state.closeNow();
+          return;
+        }
+        if (state.screen == Screen.library && state.openedPlaylist != null) {
+          state.closePlaylist();
+          return;
+        }
+        state.goBack();
+      },
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.escape) {
             final state = context.read<AppState>();
-            if (state.playerState.current != null) {
-              state.player.togglePlayPause();
+            if (state.lyricsFull) {
+              state.collapseLyrics();
               return KeyEventResult.handled;
             }
           }
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Stack(
-        children: [
-          // Full-height content as the Stack's sizing child; the player
-          // bar floats above it (see below), so screens extend behind
-          // the bar's transparent gap.
-          Column(
-            children: [
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    NavigationRail(
-                      selectedIndex: _railIndex(
-                        context.select<AppState, Screen>((s) => s.screen),
-                      ),
-                      onDestinationSelected: (i) => _onRailTap(context, i),
-                      labelType: NavigationRailLabelType.all,
-                      destinations: const [
-                        NavigationRailDestination(
-                          icon: Icon(Icons.home_rounded),
-                          label: Text('Home'),
-                        ),
-                        NavigationRailDestination(
-                          icon: Icon(Icons.search_rounded),
-                          label: Text('Search'),
-                        ),
-                        NavigationRailDestination(
-                          icon: Icon(Icons.library_music_rounded),
-                          label: Text('Library'),
-                        ),
-                      ],
-                    ),
-                    Expanded(
-                      child: Stack(
-                        children: [
-                          Column(children: [Expanded(child: _Body())]),
-                          // Banners overlay the content (never push the
-                          // layout), stacked so session + backend notes
-                          // can show together.
-                          Positioned(
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                _SessionBanner(),
-                                _AudioBackendBanner(),
-                                _UpdateBanner(),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const Positioned(left: 0, right: 0, bottom: 0, child: PlayerBar()),
-          _NowPlayingOverlay(),
-          const _DialogWatcher(),
-          const _ErrorWatcher(),
-        ],
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.space) {
+            final focused = FocusManager.instance.primaryFocus;
+            final editing =
+                focused?.context
+                    ?.findAncestorWidgetOfExactType<EditableText>() !=
+                null;
+            if (!editing) {
+              final state = context.read<AppState>();
+              if (state.playerState.current != null) {
+                state.player.togglePlayPause();
+                return KeyEventResult.handled;
+              }
+            }
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Stack(
+          children: [
+            shell,
+            _NowPlayingOverlay(),
+            const _DialogWatcher(),
+            const _ErrorWatcher(),
+          ],
+        ),
       ),
     );
   }
+}
 
-  int? _railIndex(Screen screen) {
-    switch (screen) {
-      case Screen.home:
-      case Screen.detail:
-        return 0;
-      case Screen.search:
-        return 1;
-      case Screen.library:
-        return 2;
-      case Screen.settings:
-        return null;
-    }
+int? _navIndex(Screen screen) {
+  switch (screen) {
+    case Screen.home:
+    case Screen.detail:
+      return 0;
+    case Screen.search:
+      return 1;
+    case Screen.library:
+      return 2;
+    case Screen.settings:
+      return null;
   }
+}
 
-  void _onRailTap(BuildContext context, int index) {
-    final state = context.read<AppState>();
-    switch (index) {
-      case 0:
-        state.go(Screen.home);
-      case 1:
-        state.go(Screen.search);
-      case 2:
+/// Mobile bar selection: a pushed screen keeps the destination it was
+/// opened from highlighted, so Settings under the library and a detail
+/// page under Search never leave the bar on the wrong tab.
+int _mobileNavIndex(Screen screen, Screen? parent) {
+  switch (screen) {
+    case Screen.home:
+      return 0;
+    case Screen.search:
+      return 1;
+    case Screen.library:
+      return 2;
+    case Screen.detail:
+    case Screen.settings:
+      return switch (parent) {
+        Screen.search => 1,
+        Screen.library => 2,
+        _ => 0,
+      };
+  }
+}
+
+void _onNavTap(BuildContext context, int index) {
+  final state = context.read<AppState>();
+  switch (index) {
+    case 0:
+      state.go(Screen.home);
+    case 1:
+      state.go(Screen.search);
+    case 2:
+      // The library hosts the open-playlist view; tapping its tab while
+      // one is open returns to the library list instead of re-pushing
+      // the same screen.
+      if (state.openedPlaylist != null) {
+        state.closePlaylistToLibrary();
+      }
+      if (state.screen != Screen.library) {
         state.go(Screen.library);
-    }
+      }
+  }
+}
+
+/// The screen body plus the banners that float above it.
+class _ScreenWithBanners extends StatelessWidget {
+  const _ScreenWithBanners();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Column(children: [Expanded(child: _Body())]),
+        // Banners overlay the content (never push the layout), stacked
+        // so session + backend notes can show together. On phones they
+        // start below the status bar.
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                _SessionBanner(),
+                _AudioBackendBanner(),
+                _UpdateBanner(),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -162,6 +226,10 @@ class _Body extends StatelessWidget {
     // sink down, always over a fade. Only the incoming child stays
     // mounted (the outgoing one drops at once), so lists never
     // double-mount mid-transition.
+    //
+    // No SafeArea here: each screen owns its own top inset so its
+    // backdrop (the home gradient, the library/detail wash) can run
+    // behind the transparent status bar while its content stays clear.
     return AnimatedSwitcher(
       duration: motionDuration(context, const Duration(milliseconds: 220)),
       switchInCurve: Curves.easeOut,

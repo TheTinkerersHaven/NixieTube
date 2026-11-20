@@ -7,6 +7,7 @@ import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../a11y.dart';
+import '../theme.dart';
 import 'cards.dart';
 
 /// Section header with title plus scroll-left/right buttons, mirroring
@@ -200,10 +201,13 @@ class _BrowseRailState extends State<BrowseRail> {
     return LayoutBuilder(
       builder: (context, c) {
         const gap = 16.0;
+        final compact = isCompactLayout(context);
         final count = (c.maxWidth / 220).round().clamp(3, 10);
-        final cardW = (c.maxWidth - gap * (count - 1)) / count;
-        final needsScroll = widget.items.length > count;
-        final height = widget.circular ? 210.0 : 300.0;
+        final cardW = compact ? 152.0 : (c.maxWidth - gap * (count - 1)) / count;
+        final needsScroll = compact
+            ? (widget.items.length * (cardW + gap) > c.maxWidth)
+            : widget.items.length > count;
+        final height = widget.circular ? 210.0 : (compact ? 224.0 : 300.0);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -211,7 +215,7 @@ class _BrowseRailState extends State<BrowseRail> {
               title: widget.title,
               controller: _ctrl,
               trailing: widget.trailing,
-              showArrows: needsScroll,
+              showArrows: !compact && needsScroll,
             ),
             SizedBox(
               height: height,
@@ -290,6 +294,7 @@ class _CardRailState extends State<CardRail> {
           title: widget.title,
           controller: _ctrl,
           trailing: widget.trailing,
+          showArrows: !isCompactLayout(context),
         ),
         SizedBox(
           height: widget.height,

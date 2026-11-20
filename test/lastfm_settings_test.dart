@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fakes.dart';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
 import 'package:nixietube/core/artwork/artwork_store.dart';
@@ -110,8 +111,8 @@ void main() {
   Future<void> openKeysModal(WidgetTester tester) async {
     final cog = find.descendant(
       of: find.ancestor(
-        of: find.text('Scrobble plays'),
-        matching: find.byType(Card),
+        of: find.text('Last.fm'),
+        matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byTooltip('Advanced settings'),
     );
@@ -126,15 +127,15 @@ void main() {
   ) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Last.fm scrobbling'));
+    await reveal(tester, find.text('Scrobbling'));
 
     // Section header + card body present, disabled by default. The
     // Discord card also carries a "Status:" line, so scope to this card.
-    expect(find.text('Last.fm scrobbling'), findsOneWidget);
-    expect(find.text('Scrobble plays'), findsOneWidget);
+    expect(find.text('Scrobbling'), findsOneWidget);
+    expect(find.text('Last.fm'), findsOneWidget);
     final lastfmCard = find.ancestor(
-      of: find.text('Scrobble plays'),
-      matching: find.byType(Card),
+      of: find.text('Last.fm'),
+      matching: find.byType(M3ESegmentedItem),
     );
     expect(
       find.descendant(
@@ -147,8 +148,8 @@ void main() {
     // Toggle scrobbling on.
     final switchFinder = find.descendant(
       of: find.ancestor(
-        of: find.text('Scrobble plays'),
-        matching: find.byType(Card),
+        of: find.text('Last.fm'),
+        matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byType(Switch),
     );
@@ -179,13 +180,13 @@ void main() {
   ) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Last.fm scrobbling'));
+    await reveal(tester, find.text('Scrobbling'));
 
     // Enable + fill credentials so Connect is actionable.
     final switchFinder = find.descendant(
       of: find.ancestor(
-        of: find.text('Scrobble plays'),
-        matching: find.byType(Card),
+        of: find.text('Last.fm'),
+        matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byType(Switch),
     );
@@ -256,13 +257,13 @@ void main() {
   ) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Last.fm scrobbling'));
+    await reveal(tester, find.text('Scrobbling'));
 
     // Toggle on, leave both credential fields empty.
     final switchFinder = find.descendant(
       of: find.ancestor(
-        of: find.text('Scrobble plays'),
-        matching: find.byType(Card),
+        of: find.text('Last.fm'),
+        matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byType(Switch),
     );
@@ -283,7 +284,7 @@ void main() {
   testWidgets('cog opens the custom-credentials modal', (tester) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Last.fm scrobbling'));
+    await reveal(tester, find.text('Scrobbling'));
 
     // Fields live behind the Last.fm card's cog, not inline.
     expect(find.widgetWithText(TextField, 'Last.fm API key'), findsNothing);

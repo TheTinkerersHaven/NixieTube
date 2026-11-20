@@ -34,8 +34,16 @@ Widget screenList({
 ///
 /// Unlike [screenList], the whole column is built at once, so a section
 /// can be scrolled to by its key even before it has been on screen.
+///
+/// The top inset keeps the first row below the transparent status bar
+/// (edge-to-edge); the scaffold colour fills the area behind it. Pass
+/// [topInset] false when the caller already clears the status bar with
+/// its own header or [SafeArea]; [topPadding] is then the gap under it.
 Widget screenColumn({
+  required BuildContext context,
   required List<Widget> children,
+  bool topInset = true,
+  double topPadding = screenPadding,
   double bottomClearance = playerBarClearance,
 }) {
   return SilkySingleChildScrollView(
@@ -44,7 +52,7 @@ Widget screenColumn({
     animationCurve: Curves.easeOutQuart,
     padding: EdgeInsets.fromLTRB(
       screenPadding,
-      screenPadding,
+      topPadding + (topInset ? MediaQuery.viewPaddingOf(context).top : 0),
       screenPadding,
       screenPadding + bottomClearance,
     ),

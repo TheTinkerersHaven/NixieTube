@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/sys/lastfm.dart';
+import 'package:nixietube/sys/musicbrainz.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/widgets/album_info.dart';
 import 'package:provider/provider.dart';
@@ -159,7 +160,12 @@ void main() {
           jsonEncode({
             'album': {
               'wiki': {'summary': 'A landmark record.'},
-              'tags': {'tag': [{'name': 'electronic'}, {'name': 'disco'}]},
+              'tags': {
+                'tag': [
+                  {'name': 'electronic'},
+                  {'name': 'disco'},
+                ],
+              },
             },
           }),
         );
@@ -202,5 +208,59 @@ void main() {
     expect(find.text('Type'), findsOneWidget);
     expect(find.text('Tracks'), findsOneWidget);
     expect(find.text('Artist'), findsOneWidget);
+  });
+
+  testWidgets('MusicBrainz facts render once the lookup lands', (tester) async {
+    final lastfm = LastFmService(
+      config: _emptyConfig(),
+      dio: mockDio((_) async => (404, '')),
+    );
+    addTearDown(lastfm.dispose);
+    final musicbrainz = MusicBrainzService(
+      dio: mockDio(
+        (_) async => (
+          200,
+          jsonEncode({
+            'releases': [
+              {'title': 'Random Access Memories', 'date': '2023-05-12'},
+              {
+                'title': 'Random Access Memories',
+                'date': '2013-05-17',
+                'country': 'GB',
+                'label-info': [
+                  {
+                    'label': {'name': 'Columbia'},
+                  },
+                ],
+                'release-group': {'primary-type': 'Album'},
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<LastFmService>.value(value: lastfm),
+          Provider<MusicBrainzService>.value(value: musicbrainz),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: AlbumInfoView(album: album, artist: album.artist),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('Released'), findsOneWidget);
+    expect(find.text('17 May 2013'), findsOneWidget);
+    expect(find.text('Label'), findsOneWidget);
+    expect(find.text('Columbia'), findsOneWidget);
+    expect(find.text('Country'), findsOneWidget);
+    expect(find.text('GB'), findsOneWidget);
   });
 }

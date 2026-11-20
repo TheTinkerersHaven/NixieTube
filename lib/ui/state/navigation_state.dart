@@ -49,6 +49,19 @@ class NavigationState {
   /// The detail item being displayed, null outside detail screens.
   BrowseItem? get detailItem => _detailItem;
 
+  /// The most recent top-level destination before the current pushed
+  /// screen (detail or settings), so the mobile bottom bar can keep the
+  /// section the user came from highlighted. Null on a root destination.
+  Screen? get parentScreen {
+    for (var i = _history.length - 1; i >= 0; i--) {
+      final screen = _history[i].screen;
+      if (screen != Screen.detail && screen != Screen.settings) {
+        return screen;
+      }
+    }
+    return null;
+  }
+
   /// Whether the user can navigate back.
   bool get canGoBack => _canGoBack;
 

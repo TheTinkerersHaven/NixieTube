@@ -1,7 +1,8 @@
 // Album info dialog: the album's summary (YouTube Music or Last.fm), plus
-// year, release type, runtime, track count, artist and genre. Opened
-// from the album page's ⋮ menu or the card right-click menu; same
-// AlertDialog shell the song-info panel uses.
+// year, release type, runtime, track count, artist and genre, with
+// MusicBrainz release facts (date, label, country) when the release is
+// known. Opened from the album page's ⋮ menu or the card right-click
+// menu; same AlertDialog shell the song-info panel uses.
 
 import 'dart:async' show unawaited;
 
@@ -13,6 +14,7 @@ import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../../sys/lastfm.dart';
+import '../../sys/musicbrainz.dart';
 
 /// Everything the dialog shows besides the album itself: the Last.fm
 /// summary and genre tags, when Last.fm has them.
@@ -66,6 +68,7 @@ class AlbumInfoView extends StatefulWidget {
 
 class _AlbumInfoViewState extends State<AlbumInfoView> {
   Future<_LastFmAlbum>? _future;
+  Future<MusicBrainzRelease?>? _mbFuture;
 
   @override
   void initState() {
@@ -88,21 +91,45 @@ class _AlbumInfoViewState extends State<AlbumInfoView> {
     final album = widget.album.title.trim();
     if (artist.isEmpty || album.isEmpty) {
       _future = null;
+      _mbFuture = null;
       return;
     }
-    // The dialog can be opened in tests that don't wire a LastFmService;
-    // skip the lookup rather than throwing.
+    _future = _lastFmFuture(artist, album);
+    _mbFuture = _musicBrainzFuture(artist, album);
+  }
+
+  /// The Last.fm summary/tags lookup, or null when the service isn't
+  /// wired (some tests and the first frame before providers settle).
+  Future<_LastFmAlbum>? _lastFmFuture(String artist, String album) {
     final LastFmService? lastfm;
     try {
       lastfm = context.read<LastFmService>();
     } catch (_) {
-      _future = null;
-      return;
+      return null;
     }
-    _future = _start(lastfm, artist, album);
+    final future = _start(lastfm, artist, album);
     // Mark the future handled so a failure can't surface as an
     // uncaught error; the FutureBuilder falls back to its empty state.
-    unawaited(_future!.catchError((_) => (wiki: '', tags: <String>[])));
+    unawaited(future.catchError((_) => (wiki: '', tags: <String>[])));
+    return future;
+  }
+
+  /// MusicBrainz release lookup, or null when the service isn't wired.
+  Future<MusicBrainzRelease?>? _musicBrainzFuture(String artist, String album) {
+    final MusicBrainzService? musicbrainz;
+    try {
+      musicbrainz = context.read<MusicBrainzService>();
+    } catch (_) {
+      return null;
+    }
+    final future = _startMusicBrainz(
+      musicbrainz,
+      artist,
+      album,
+      widget.album.year,
+    );
+    unawaited(future.catchError((_) => null));
+    return future;
   }
 
   Future<_LastFmAlbum> _start(
@@ -132,6 +159,23 @@ class _AlbumInfoViewState extends State<AlbumInfoView> {
       }
     }
     return (wiki: wiki, tags: tags);
+  }
+
+  /// MusicBrainz lookup with the same deadline as the Last.fm one, so a
+  /// slow service can never hold the panel open.
+  Future<MusicBrainzRelease?> _startMusicBrainz(
+    MusicBrainzService musicbrainz,
+    String artist,
+    String album,
+    String year,
+  ) async {
+    try {
+      return await musicbrainz
+          .lookupRelease(artist, album, year: year)
+          .timeout(_lookupTimeout);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Strips the Last.fm wiki markup down to readable text. Last.fm
@@ -166,39 +210,7 @@ class _AlbumInfoViewState extends State<AlbumInfoView> {
     ThemeData theme,
     String label,
     String value,
-  ) {
-    final scheme = theme.colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              fm.SelectableRegion(
-                selectionControls: emptyTextSelectionControls,
-                child: Text(
-                  label,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value.isEmpty ? 'Unknown' : value,
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: scheme.onSurface,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Divider(color: scheme.surfaceContainerHigh, height: 1),
-      ],
-    );
-  }
+  ) => _infoRow(theme, label, value);
 
   @override
   Widget build(BuildContext context) {
@@ -238,6 +250,7 @@ class _AlbumInfoViewState extends State<AlbumInfoView> {
         if (ytDescription.isNotEmpty) buildAbout(ytDescription),
       ];
       _appendFacts(album, rows, theme);
+      _appendMusicBrainz(rows, theme);
       return _buildBody(theme, rows, false);
     }
 
@@ -261,6 +274,7 @@ class _AlbumInfoViewState extends State<AlbumInfoView> {
           rows.add(_row(context, theme, 'Tags', info.tags.take(12).join(', ')));
         }
         _appendFacts(album, rows, theme);
+        _appendMusicBrainz(rows, theme);
         return _buildBody(
           theme,
           rows,
@@ -321,6 +335,20 @@ class _AlbumInfoViewState extends State<AlbumInfoView> {
     }
   }
 
+  /// Adds the MusicBrainz facts (release date, label, country, type) when
+  /// the lookup found a release.
+  void _appendMusicBrainz(List<Widget> rows, ThemeData theme) {
+    final future = _mbFuture;
+    if (future == null) return;
+    rows.add(
+      _MusicBrainzRows(
+        future: future,
+        theme: theme,
+        showType: widget.album.kind == null,
+      ),
+    );
+  }
+
   Widget _list(ThemeData theme, List<Widget> rows) {
     return fm.SelectableRegion(
       selectionControls: emptyTextSelectionControls,
@@ -333,4 +361,119 @@ class _AlbumInfoViewState extends State<AlbumInfoView> {
       ),
     );
   }
+}
+
+/// One fact row: small label over a selectable value, separated by a rule.
+Widget _infoRow(ThemeData theme, String label, String value) {
+  final scheme = theme.colorScheme;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            fm.SelectableRegion(
+              selectionControls: emptyTextSelectionControls,
+              child: Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              value.isEmpty ? 'Unknown' : value,
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: scheme.onSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
+      Divider(color: scheme.surfaceContainerHigh, height: 1),
+    ],
+  );
+}
+
+/// MusicBrainz facts appended once the release lookup lands.
+class _MusicBrainzRows extends StatelessWidget {
+  const _MusicBrainzRows({
+    required this.future,
+    required this.theme,
+    this.showType = false,
+  });
+
+  final Future<MusicBrainzRelease?> future;
+  final ThemeData theme;
+
+  /// Whether to show a Type row: only when YouTube Music didn't classify
+  /// the album itself.
+  final bool showType;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<MusicBrainzRelease?>(
+      future: future,
+      builder: (context, snapshot) {
+        final release = snapshot.data;
+        if (release == null) return const SizedBox.shrink();
+        final type = [
+          if (release.primaryType.isNotEmpty) release.primaryType,
+          ...release.secondaryTypes,
+        ].join(' · ');
+        final rows = <Widget>[
+          if (release.date.isNotEmpty)
+            _infoRow(theme, 'Released', _formatReleaseDate(release.date)),
+          if (release.label.isNotEmpty) _infoRow(theme, 'Label', release.label),
+          if (release.country.isNotEmpty)
+            _infoRow(theme, 'Country', release.country),
+          if (showType && type.isNotEmpty) _infoRow(theme, 'Type', type),
+        ];
+        if (rows.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: rows,
+        );
+      },
+    );
+  }
+}
+
+const _months = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/// Formats a MusicBrainz date (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`) for
+/// display, leaving anything unexpected as-is.
+String _formatReleaseDate(String date) {
+  final parts = date.split('-');
+  if (parts.length == 3) {
+    final day = int.tryParse(parts[2]);
+    final month = int.tryParse(parts[1]);
+    if (day != null && month != null && month >= 1 && month <= 12) {
+      return '$day ${_months[month - 1]} ${parts[0]}';
+    }
+    return date;
+  }
+  if (parts.length == 2) {
+    final month = int.tryParse(parts[1]);
+    if (month != null && month >= 1 && month <= 12) {
+      return '${_months[month - 1]} ${parts[0]}';
+    }
+  }
+  return date;
 }

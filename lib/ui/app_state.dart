@@ -584,6 +584,9 @@ class AppState extends ChangeNotifier {
   /// The detail item shown by the detail screen.
   BrowseItem? get detailItem => _nav.detailItem;
 
+  /// The last top-level destination before the current pushed screen.
+  Screen? get parentScreen => _nav.parentScreen;
+
   /// Whether the user can navigate back.
   bool get canGoBack => _nav.canGoBack;
 
@@ -2682,6 +2685,16 @@ class AppState extends ChangeNotifier {
     } else {
       _safeNotify();
     }
+  }
+
+  /// Closes the open playlist and keeps the library root in place,
+  /// used when the library tab is tapped while a playlist covers it.
+  void closePlaylistToLibrary() {
+    ++_openPlaylistGen;
+    _openPlaylist = null;
+    _libraryLoading = false;
+    _openedPlaylistFromLibrary = true;
+    _safeNotify();
   }
 
   // ---------- Playlist dialog ----------

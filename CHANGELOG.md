@@ -6,12 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.4.6] — 2026-11-18
 
+### Fixed
+
+- **Android builds now start from the app's own storage.** Config, cache and log directories use the platform app-support directory on Android/iOS instead of XDG paths under the read-only working directory.
+- **Installed mobile builds can reach the network.** The internet permission now lives in the Android main manifest instead of only the debug one, and the macOS release entitlement allows outgoing connections, so login, the library and playback work outside a development run.
+- **Songs leave the loading state when they start.** The playback engine reports playing as soon as the stream opens instead of waiting for the backend's play call to return at the end of the track, which kept the spinner up over already-playing audio and re-opened the stream mid-song.
+
 ### Changed
 
+- **Phone layouts use dedicated mobile views.** Narrow windows and phone screens use dedicated views separated from desktop: a bottom navigation bar with a compact mini player, a full-screen Now Playing view with large artwork and drawer access to lyrics and queue, and vertically stacked album headers with full-width tracks; desktop preserves its rail and split views.
+- **The phone views are tuned for the narrow screen.** Liked songs now live in the library's "Liked songs" playlist instead of taking a column on the home screen, the album sort options sit in two centered pairs so all four fit, Now Playing packs its cover, title and controls closer together, the Up next and Lyrics sheet keeps its rows off the screen edge, and fullscreen lyrics dismisses that sheet on the way in.
+- **Phone screens opened on top of another screen can go back.** Settings now has a back button in its title bar, and Android's back gesture closes the phone overlays and pops the in-app stack (a detail page, an open playlist or Settings) instead of leaving the app; the bottom navigation keeps the section the screen was opened from highlighted, and tapping the library tab returns from an open playlist to the library list.
+- **Phone spacing follows the smaller screen.** Headers sit closer to the status bar with a single-line title, the artist page's back button clears the status bar, the album header no longer adds a second inset inside the already-padded track list, and the Now Playing sheet keeps its last rows clear of the gesture pill.
+- **The phone layout draws behind the system bars.** The status and navigation bars are transparent and the app fills the screen behind them, so the home gradient and the library and album washes run edge-to-edge; the bottom bar continues behind the gesture pill while its icons stay above it, and the Now Playing controls clear both bars.
+- **Settings use M3 segmented lists.** Sections now render their controls as connected segments instead of separate cards with divider-separated rows; the Scrobbling section holds both services in one group.
 - **Vivid cover colors no longer fight the accent.** The tinted backdrop now mutes and darkens saturated covers before blending them into the surface, so a bright red or yellow sleeve reads as a muted maroon or olive wash behind a blue accent; neutral and already-dark covers keep their color.
 
 ### Added
 
+- **ListenBrainz scrobbling.** Settings now has a ListenBrainz card: enter the user token from listenbrainz.org/settings and plays are sent there alongside Last.fm, with the same half-track/4-minute threshold. The token lives in the platform secret store, not in the settings file.
+- **Album info now includes MusicBrainz release data.** When MusicBrainz knows the release, the album panel adds its release date, label and country, and falls back to MusicBrainz's release type when YouTube Music doesn't classify the album.
 - **Album and playlist cards have a right-click menu with shuffle.** Right-clicking an album or playlist card now opens Play, Shuffle, Open and Copy link, so a full album can be started in order or shuffled without opening the album page first; the same menu also lists the album's info.
 - **The album info panel shows more than a description.** It now lists the album's year, release type, song count, total runtime and artist, and falls back to the Last.fm summary and genre tags when YouTube Music has no description; open it from the album page's ⋮ menu or a card's right-click menu. Opening it from a card shows a loading note while the album page is fetched, and the album is remembered so a second look is instant.
 

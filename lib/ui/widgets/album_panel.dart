@@ -6,18 +6,13 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
-import 'package:skeletonizer/skeletonizer.dart';
 
 import '../../core/models/models.dart';
-
-import 'package:m3e_core/m3e_core.dart';
-
 import '../app_state.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
-import '../format.dart';
-import 'loading_placeholders.dart';
-import 'track_row.dart';
+import 'album_panel_desktop.dart';
+import 'album_panel_mobile.dart';
 
 /// Album-style header reused for albums, playlists and the open library
 /// playlist: art column + owner row with creator avatar.
@@ -125,13 +120,7 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.read<AppState>();
-    final playingId = context.select<AppState, String?>(
-      (s) => s.playerState.current?.videoId,
-    );
-    final account = context.select<AppState, String?>((s) => s.account);
     final tracks = _sorted;
-    final totalSec = widget.tracks.fold(0, (n, t) => n + t.durationSec);
 
     final trackCovers = widget.tracks
         .map((t) => t.displayArtwork)
@@ -147,246 +136,55 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
               ? trackCovers.take(4).toList()
               : const <String>[]);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        SizedBox(
-          width: 320,
-          height: double.infinity,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: screenPadding,
-                  vertical: 16,
-                ),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight > 32
-                        ? constraints.maxHeight - 32
-                        : 0,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      _PlaylistArt(
-                        art: effectiveArt,
-                        arts: effectiveArts,
-                        size: 280,
-                        tracks: widget.tracks,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        widget.title,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                        textAlign: TextAlign.center,
-                      ),
-                      if (widget.owner != null &&
-                          widget.owner!.name.trim().isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        _OwnerRow(
-                          owner: widget.owner,
-                          fallbackAvatarUrl: widget.ownerAvatarUrl,
-                        ),
-                      ],
-                      if (widget.subtitle.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          widget.subtitle,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        '${widget.tracks.length} songs'
-                        '${totalSec > 0 ? ' • ${formatDuration(totalSec)}' : ''}',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      if (widget.description.trim().isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          widget.description.length > 280
-                              ? '${widget.description.substring(0, 280)}…'
-                              : widget.description,
-                          maxLines: 5,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          M3EFilledButton.icon(
-                            onPressed: tracks.isEmpty
-                                ? null
-                                : () => state.playSongs(tracks, 0),
-                            icon: const Icon(
-                              Icons.play_arrow_rounded,
-                              size: 32,
-                            ),
-                            label: const Text('Play'),
-                          ),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            icon: const Icon(Icons.shuffle_rounded),
-                            tooltip: 'Shuffle',
-                            onPressed: tracks.isEmpty
-                                ? null
-                                : () => state.playShuffled(tracks),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        Expanded(
-          child: Column(
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  screenPadding,
-                  widget.topPadding,
-                  screenPadding,
-                  0,
-                ),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: Builder(
-                    builder: (context) {
-                      final scheme = Theme.of(context).colorScheme;
-                      return M3EToggleButtonGroup(
-                        type: M3EButtonGroupType.connected,
-                        size: M3EButtonSize.sm,
-                        semanticLabel: 'Sort order',
-                        selectedIndex: _sort,
-                        onSelectedIndexChanged: (i) {
-                          // Selection-required: tapping the active sort
-                          // keeps it.
-                          if (i == null) return;
-                          setState(() => _sort = i);
-                        },
-                        actions: const [
-                          M3EToggleButtonGroupAction(
-                            label: Text(
-                              'Default',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          M3EToggleButtonGroupAction(
-                            label: Text(
-                              'Title',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          M3EToggleButtonGroupAction(
-                            label: Text(
-                              'Artist',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          M3EToggleButtonGroupAction(
-                            label: Text(
-                              'Duration',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                        decoration: toggleButtonGroupDecoration(scheme),
-                      );
-                    },
-                  ),
-                ),
-              ),
-              Expanded(
-                child: widget.listLoading && tracks.isEmpty
-                    // Songs on their way: skeleton rows in the same
-                    // list, so they reveal in place.
-                    ? Skeletonizer(
-                        enabled: true,
-                        enableSwitchAnimation: true,
-                        child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(
-                            screenPadding,
-                            0,
-                            screenPadding,
-                            screenPadding + playerBarClearance,
-                          ),
-                          itemCount: placeholderTracks.length,
-                          itemBuilder: (context, i) {
-                            final t = placeholderTracks[i];
-                            return TrackRow(
-                              track: t,
-                              index: widget.numbered ? i + 1 : null,
-                              onPlay: () {},
-                              rateable: account != null,
-                              showPlaylists: true,
-                              removable: widget.removable,
-                            );
-                          },
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(
-                          screenPadding,
-                          0,
-                          screenPadding,
-                          screenPadding + playerBarClearance,
-                        ),
-                        itemCount: tracks.length,
-                        itemBuilder: (context, i) {
-                          final t = tracks[i];
-                          var idx = tracks.indexWhere(
-                            (e) => e.videoId == t.videoId,
-                          );
-                          if (idx < 0) idx = 0;
-                          return TrackRow(
-                            track: t,
-                            index: widget.numbered ? i + 1 : null,
-                            playing: t.videoId == playingId,
-                            onPlay: () => state.playSongs(tracks, idx),
-                            rateable: account != null,
-                            showPlaylists: true,
-                            showViews: widget.showViews,
-                            removable: widget.removable,
-                            onRemove: widget.onRemoveTrack == null
-                                ? null
-                                : () => widget.onRemoveTrack!(t),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ],
+    final compact = isCompactLayout(context);
+    if (compact) {
+      return AlbumPlaylistViewMobile(
+        title: widget.title,
+        subtitle: widget.subtitle,
+        description: widget.description,
+        effectiveArt: effectiveArt,
+        effectiveArts: effectiveArts,
+        owner: widget.owner,
+        ownerAvatarUrl: widget.ownerAvatarUrl,
+        tracks: widget.tracks,
+        sortedTracks: tracks,
+        sort: _sort,
+        onSortChanged: (i) => setState(() => _sort = i),
+        numbered: widget.numbered,
+        listLoading: widget.listLoading,
+        removable: widget.removable,
+        onRemoveTrack: widget.onRemoveTrack,
+        showViews: widget.showViews,
+      );
+    }
+
+    return AlbumPlaylistViewDesktop(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      description: widget.description,
+      effectiveArt: effectiveArt,
+      effectiveArts: effectiveArts,
+      owner: widget.owner,
+      ownerAvatarUrl: widget.ownerAvatarUrl,
+      tracks: widget.tracks,
+      sortedTracks: tracks,
+      sort: _sort,
+      onSortChanged: (i) => setState(() => _sort = i),
+      numbered: widget.numbered,
+      topPadding: widget.topPadding,
+      listLoading: widget.listLoading,
+      removable: widget.removable,
+      onRemoveTrack: widget.onRemoveTrack,
+      showViews: widget.showViews,
     );
   }
 }
 
 /// Playlist artwork: 2x2 collage when several arts are given, single
 /// artwork otherwise.
-class _PlaylistArt extends StatelessWidget {
-  const _PlaylistArt({
+class PlaylistArt extends StatelessWidget {
+  const PlaylistArt({
+    super.key,
     required this.art,
     required this.arts,
     required this.size,
@@ -473,17 +271,17 @@ class _PlaylistArt extends StatelessWidget {
 /// Creator row: channel avatar + name, clickable only for verified artist
 /// pages. Plain names, own channel and non-channel credits (compilations)
 /// render as static text.
-class _OwnerRow extends StatefulWidget {
-  const _OwnerRow({required this.owner, required this.fallbackAvatarUrl});
+class OwnerRow extends StatefulWidget {
+  const OwnerRow({super.key, required this.owner, required this.fallbackAvatarUrl});
 
   final ArtistRef? owner;
   final String? fallbackAvatarUrl;
 
   @override
-  State<_OwnerRow> createState() => _OwnerRowState();
+  State<OwnerRow> createState() => _OwnerRowState();
 }
 
-class _OwnerRowState extends State<_OwnerRow> {
+class _OwnerRowState extends State<OwnerRow> {
   String? _avatar;
   bool _clickable = false;
   String? _resolvedId;
@@ -500,7 +298,7 @@ class _OwnerRowState extends State<_OwnerRow> {
   }
 
   @override
-  void didUpdateWidget(_OwnerRow old) {
+  void didUpdateWidget(OwnerRow old) {
     super.didUpdateWidget(old);
     if (old.owner?.browseId != widget.owner?.browseId ||
         old.fallbackAvatarUrl != widget.fallbackAvatarUrl) {

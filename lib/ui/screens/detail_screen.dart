@@ -129,18 +129,23 @@ class DetailScreen extends StatelessWidget {
                   PaletteBackdrop(palette: _paletteFor(state, detail, item)),
             ),
           ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DetailHeader(
-              title: title,
-              onBack: state.goBack,
-              trailing: item != null && detail.album != null
-                  ? DetailMenuButton(item: item, album: detail.album!)
-                  : null,
-            ),
-            Expanded(child: body),
-          ],
+        // The palette wash is the Stack's own backdrop and stays
+        // full-bleed; the header and content clear the status bar.
+        SafeArea(
+          bottom: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DetailHeader(
+                title: title,
+                onBack: state.goBack,
+                trailing: item != null && detail.album != null
+                    ? DetailMenuButton(item: item, album: detail.album!)
+                    : null,
+              ),
+              Expanded(child: body),
+            ],
+          ),
         ),
       ],
     );
@@ -254,7 +259,9 @@ class _ArtistDetailView extends StatelessWidget {
         _ArtistAppBar(artist: artist, bannerUrl: banner),
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
+            padding: EdgeInsets.symmetric(
+              horizontal: isCompactLayout(context) ? screenPadding : gutter,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -507,6 +514,10 @@ class _ArtistFlexibleSpace extends StatelessWidget {
       bannerOpacity,
     );
 
+    final effectiveGutter = isCompactLayout(context) ? screenPadding : gutter;
+    // The flexible space spans the status bar (SliverAppBar's primary
+    // inset does not apply to it), so the controls are pushed below it.
+    final topPadding = MediaQuery.viewPaddingOf(context).top;
     return Stack(
       children: [
         Positioned(
@@ -554,8 +565,8 @@ class _ArtistFlexibleSpace extends StatelessWidget {
         // Big title + subscriber count: part of the hero, so they simply
         // scroll up with it.
         Positioned(
-          left: gutter,
-          right: gutter,
+          left: effectiveGutter,
+          right: effectiveGutter,
           bottom: 0,
           child: Opacity(
             opacity: bigTitleOpacity,
@@ -586,10 +597,10 @@ class _ArtistFlexibleSpace extends StatelessWidget {
         // up from just below the toolbar's edge.
         if (showBarTitle)
           Positioned(
-            top: 0,
+            top: topPadding,
             left: _collapsedTitleInset,
-            right: gutter,
-            height: barHeight,
+            right: effectiveGutter,
+            height: barHeight - topPadding,
             child: IgnorePointer(
               child: ClipRect(
                 child: Align(
@@ -614,7 +625,7 @@ class _ArtistFlexibleSpace extends StatelessWidget {
             ),
           ),
         Positioned(
-          top: _lerp(4, 8, t),
+          top: topPadding + _lerp(4, 8, t),
           left: 8,
           child: CircleAvatar(
             radius: 24,

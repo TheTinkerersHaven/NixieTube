@@ -2,9 +2,9 @@
 // listening-history toggle, accessibility options, and desktop
 // integration toggles.
 //
-// Every section shares the same chrome: a [_SectionTitle] heading,
-// a [_SettingsCard] surface, and [_ToggleRow] for any switch, so
-// the whole screen reads as one uniform list.
+// Every section shares the same chrome: a [_SectionTitle] heading and
+// an [_SettingsSegments] group built from M3ESegmentedList, so the whole
+// screen reads as one uniform list without card surfaces or dividers.
 
 import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 
 import '../../sys/discord.dart';
 import '../../sys/lastfm.dart';
+import '../../sys/listenbrainz.dart';
 import '../../sys/mpris.dart';
 import '../../sys/sys_config.dart';
 import '../../sys/updater.dart';
@@ -22,6 +23,7 @@ import '../../sys/version.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/screen_list.dart';
+import '../widgets/detail_header.dart';
 import '../widgets/browser_login_dialog.dart';
 import '../widgets/lastfm_auth_actions.dart';
 
@@ -39,7 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _appearanceKey = GlobalKey();
   final _accessibilityKey = GlobalKey();
   final _integrationsKey = GlobalKey();
-  final _lastfmKey = GlobalKey();
+  final _scrobblingKey = GlobalKey();
   final _updatesKey = GlobalKey();
   final _debugKey = GlobalKey();
   final _setupKey = GlobalKey();
@@ -85,37 +87,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
         context.read<AppState>().clearAppUpdatesFocus();
       });
     }
-    return screenColumn(
-      children: [
+    final compact = isCompactLayout(context);
+    final sections = <Widget>[
+      if (!compact) ...[
         Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 16),
-        Container(
-          key: _accountKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Account',
-                subtitle: 'Sign in to YouTube Music and manage your session.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(child: const _AccountCard()),
-            ],
-          ),
+      ],
+      Container(
+        key: _accountKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'Account',
+              subtitle: 'Sign in to YouTube Music and manage your session.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(children: [const _AccountCard()]),
+          ],
         ),
-        const SizedBox(height: 24),
-        Container(
-          key: _playbackKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Playback',
-                subtitle: 'Listening history reporting.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(
-                child: _ToggleRow(
+      ),
+      const SizedBox(height: 24),
+      Container(
+        key: _playbackKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'Playback',
+              subtitle: 'Listening history reporting.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(
+              children: [
+                _ToggleRow(
                   title: 'Report listening history',
                   subtitle:
                       'Send watchtime beacons so plays appear in your '
@@ -126,81 +131,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     state.refreshConfig();
                   },
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ),
-        const SizedBox(height: 24),
-        Container(
-          key: _appearanceKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Appearance',
-                subtitle: 'Color source, seed and manual overrides.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(child: const _ThemeCard()),
-            ],
-          ),
+      ),
+      const SizedBox(height: 24),
+      Container(
+        key: _appearanceKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'Appearance',
+              subtitle: 'Color source, seed and manual overrides.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(children: [const _ThemeCard()]),
+          ],
         ),
-        const SizedBox(height: 24),
-        Container(
-          key: _accessibilityKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Accessibility',
-                subtitle: 'Contrast, motion and link styling.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _ToggleRow(
-                      title: 'High contrast',
-                      subtitle:
-                          'Brighter text, stronger borders and more '
-                          'distinct surfaces.',
-                      value: highContrast,
-                      onChanged: (v) {
-                        state.config.highContrast = v;
-                        state.refreshConfig();
-                      },
-                    ),
-                    const Divider(),
-                    _ToggleRow(
-                      title: 'Reduce motion',
-                      subtitle:
-                          'Freezes the shimmer, crossfades and slide '
-                          'transitions.',
-                      value: reducedMotion,
-                      onChanged: (v) {
-                        state.config.reducedMotion = v;
-                        state.refreshConfig();
-                      },
-                    ),
-                    const Divider(),
-                    _ToggleRow(
-                      title: 'Underline links',
-                      subtitle:
-                          'Underlines tappable links in the info tab. '
-                          'Off keeps them plain primary-colored text.',
-                      value: underlineLinks,
-                      onChanged: (v) {
-                        state.config.underlineLinks = v;
-                        state.refreshConfig();
-                      },
-                    ),
-                  ],
+      ),
+      const SizedBox(height: 24),
+      Container(
+        key: _accessibilityKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'Accessibility',
+              subtitle: 'Contrast, motion and link styling.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(
+              children: [
+                _ToggleRow(
+                  title: 'High contrast',
+                  subtitle:
+                      'Brighter text, stronger borders and more '
+                      'distinct surfaces.',
+                  value: highContrast,
+                  onChanged: (v) {
+                    state.config.highContrast = v;
+                    state.refreshConfig();
+                  },
                 ),
-              ),
-            ],
-          ),
+                _ToggleRow(
+                  title: 'Reduce motion',
+                  subtitle:
+                      'Freezes the shimmer, crossfades and slide '
+                      'transitions.',
+                  value: reducedMotion,
+                  onChanged: (v) {
+                    state.config.reducedMotion = v;
+                    state.refreshConfig();
+                  },
+                ),
+                _ToggleRow(
+                  title: 'Underline links',
+                  subtitle:
+                      'Underlines tappable links in the info tab. '
+                      'Off keeps them plain primary-colored text.',
+                  value: underlineLinks,
+                  onChanged: (v) {
+                    state.config.underlineLinks = v;
+                    state.refreshConfig();
+                  },
+                ),
+              ],
+            ),
+          ],
         ),
+      ),
+      if (!compact) ...[
         const SizedBox(height: 24),
         Container(
           key: _integrationsKey,
@@ -212,53 +214,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: 'MPRIS media keys and Discord Rich Presence.',
               ),
               const SizedBox(height: 8),
-              _SettingsCard(child: const _IntegrationsCard()),
+              _IntegrationsSegments(),
             ],
           ),
         ),
-        const SizedBox(height: 24),
-        Container(
-          key: _lastfmKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Last.fm scrobbling',
-                subtitle: 'Scrobble plays and manage credentials.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(child: const _LastFmCard()),
-            ],
-          ),
+      ],
+      const SizedBox(height: 24),
+      Container(
+        key: _scrobblingKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'Scrobbling',
+              subtitle: 'Send your plays to Last.fm and ListenBrainz.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(
+              children: [
+                const _ScrobblerSegment(label: 'Last.fm', child: _LastFmCard()),
+                const _ScrobblerSegment(
+                  label: 'ListenBrainz',
+                  child: _ListenBrainzCard(),
+                ),
+              ],
+            ),
+          ],
         ),
-        const SizedBox(height: 24),
-        Container(
-          key: _updatesKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'App updates',
-                subtitle: 'Check for and install new releases.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(child: const _AppUpdatesCard()),
-            ],
-          ),
+      ),
+      const SizedBox(height: 24),
+      Container(
+        key: _updatesKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'App updates',
+              subtitle: 'Check for and install new releases.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(children: [const _AppUpdatesCard()]),
+          ],
         ),
-        const SizedBox(height: 24),
-        Container(
-          key: _debugKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Debug',
-                subtitle: 'Cache and diagnostic actions.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(
-                child: _DebugCard(
+      ),
+      const SizedBox(height: 24),
+      Container(
+        key: _debugKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'Debug',
+              subtitle: 'Cache and diagnostic actions.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(
+              children: [
+                _DebugCard(
                   onClearArtwork: () {
                     state.clearArtworkCache();
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -266,35 +278,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                 ),
-              ),
-            ],
+              ],
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 24),
+      Container(
+        key: _setupKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionTitle(
+              'Setup',
+              subtitle: 'Run the first-run wizard again.',
+            ),
+            const SizedBox(height: 8),
+            _SettingsSegments(children: [const _OnboardingCard()]),
+          ],
+        ),
+      ),
+      const SizedBox(height: 24),
+      Text(
+        '${_shortVersion(appVersionLabel)} - build ${_buildNumber(appVersionLabel)}',
+        style: Theme.of(context).textTheme.bodySmall
+            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+      ),
+      Text(
+        'Made with ♥  by TheTinkerersHaven :3',
+        style: Theme.of(context).textTheme.bodySmall
+            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+      ),
+    ];
+    if (!compact) {
+      return screenColumn(context: context, children: sections);
+    }
+    // Pushed from the library or a banner: phones get a back button and
+    // a compact top bar instead of the desktop's free-floating title.
+    return Column(
+      children: [
+        SafeArea(
+          bottom: false,
+          child: DetailHeader(
+            title: 'Settings',
+            onBack: state.canGoBack ? () => state.goBack() : null,
           ),
         ),
-        const SizedBox(height: 24),
-        Container(
-          key: _setupKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Setup',
-                subtitle: 'Run the first-run wizard again.',
-              ),
-              const SizedBox(height: 8),
-              _SettingsCard(child: const _OnboardingCard()),
-            ],
+        Expanded(
+          child: screenColumn(
+            context: context,
+            topInset: false,
+            topPadding: 8,
+            children: sections,
           ),
-        ),
-        const SizedBox(height: 24),
-        Text(
-          '${_shortVersion(appVersionLabel)} - build ${_buildNumber(appVersionLabel)}',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-        Text(
-          'Made with ♥  by TheTinkerersHaven :3',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ],
     );
@@ -333,15 +369,37 @@ class _SectionTitle extends StatelessWidget {
 /// Uniform card chrome for every settings section: a Material
 /// card with a constant inset, so all sections share the same
 /// surface and padding.
-class _SettingsCard extends StatelessWidget {
-  const _SettingsCard({required this.child});
+/// A settings group drawn as one M3 segmented list: each child is a
+/// segment, so related controls share a surface without divider lines.
+class _SettingsSegments extends StatelessWidget {
+  const _SettingsSegments({required this.children});
 
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => M3ESegmentedList(
+    itemCount: children.length,
+    itemBuilder: (context, i) => children[i],
+    outerRadius: 16,
+  );
+}
+
+/// A named scrobbler inside the shared Scrobbling segmented list.
+class _ScrobblerSegment extends StatelessWidget {
+  const _ScrobblerSegment({required this.label, required this.child});
+
+  final String label;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(padding: const EdgeInsets.all(16), child: child),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        child,
+      ],
     );
   }
 }
@@ -360,6 +418,7 @@ class _ToggleRow extends StatelessWidget {
     this.subtitleColor,
     this.enabled = true,
     this.onSettings,
+    this.action,
   });
 
   final String title;
@@ -371,6 +430,9 @@ class _ToggleRow extends StatelessWidget {
 
   /// Opens the advanced-fields modal, or null when the row has none.
   final VoidCallback? onSettings;
+
+  /// An inline action (e.g. Sign out) placed before the cog.
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -394,6 +456,7 @@ class _ToggleRow extends StatelessWidget {
             ],
           ),
         ),
+        ?action,
         if (onSettings != null)
           IconButton(
             icon: const Icon(Icons.settings_rounded),
@@ -721,23 +784,18 @@ class _DebugCard extends StatelessWidget {
   }
 }
 
-/// MPRIS media-keys service + Discord Rich Presence toggles.
-class _IntegrationsCard extends StatefulWidget {
-  const _IntegrationsCard();
+/// MPRIS media-keys and Discord Rich Presence toggles, each its own
+/// segment in the Desktop integrations group.
+class _IntegrationsSegments extends StatelessWidget {
+  const _IntegrationsSegments();
 
-  @override
-  State<_IntegrationsCard> createState() => _IntegrationsCardState();
-}
-
-class _IntegrationsCardState extends State<_IntegrationsCard> {
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
     final mpris = context.watch<MprisService>();
     final discord = context.watch<DiscordPresence>();
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return _SettingsSegments(
       children: [
         _ToggleRow(
           title: 'MPRIS (media keys, playerctl)',
@@ -760,7 +818,6 @@ class _IntegrationsCardState extends State<_IntegrationsCard> {
             state.refreshConfig();
           },
         ),
-        const Divider(),
         _ToggleRow(
           title: 'Discord Rich Presence',
           subtitle: 'Status: ${discord.status}',
@@ -1006,31 +1063,47 @@ class _AccountCardState extends State<_AccountCard> {
         ],
         if (!connected) ...[
           const SizedBox(height: 12),
-          Text(
-            'Method 1 — Built-in browser',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Opens a login window right here — sign in with Google '
-            'and the session is picked up when you confirm.',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 8),
-          M3EFilledButton.icon(
-            onPressed: loginBusy ? null : _loginWithBrowserWindow,
-            icon: const Icon(Icons.login_rounded),
-            label: Text(loginBusy ? 'Verifying…' : 'Log in with browser'),
-          ),
-          const SizedBox(height: 12),
-          const Divider(),
-          const SizedBox(height: 4),
-          Text(
-            'Method 2 — Manual import',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 6),
+          // The built-in login window is desktop-only; phones sign in by
+          // importing a cookie from a browser.
+          if (!Platform.isAndroid && !Platform.isIOS) ...[
+            Text(
+              'Method 1 — Built-in browser',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Opens a login window right here — sign in with Google '
+              'and the session is picked up when you confirm.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            M3EFilledButton.icon(
+              onPressed: loginBusy ? null : _loginWithBrowserWindow,
+              icon: const Icon(Icons.login_rounded),
+              label: Text(loginBusy ? 'Verifying…' : 'Log in with browser'),
+            ),
+            const SizedBox(height: 12),
+            const Divider(),
+            const SizedBox(height: 4),
+            Text(
+              'Method 2 — Manual import',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 6),
+          ] else ...[
+            Text(
+              'Sign in from a browser',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Sign in at music.youtube.com in a browser, then import its '
+              'cookie below.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
           M3EButton.icon(
             style: M3EButtonStyle.outlined,
             onPressed: loginBusy ? null : _openSystemBrowser,
@@ -1039,10 +1112,16 @@ class _AccountCardState extends State<_AccountCard> {
           ),
           const SizedBox(height: 8),
           Text(
-            '1. In your browser, open music.youtube.com while logged in.\n'
-            '2. Open DevTools (F12) → Network tab, then play any song.\n'
-            '3. Click any youtubei/v1/ request → Headers → view source → '
-            'copy the whole Cookie value.',
+            Platform.isAndroid || Platform.isIOS
+                ? '1. On a computer, open music.youtube.com in a browser '
+                      'and sign in.\n'
+                      '2. Open DevTools (F12) → Network, then play any song.\n'
+                      '3. Copy the whole Cookie header from a youtubei/v1 '
+                      'request and paste it below.'
+                : '1. In your browser, open music.youtube.com while logged in.\n'
+                      '2. Open DevTools (F12) → Network tab, then play any song.\n'
+                      '3. Click any youtubei/v1/ request → Headers → view '
+                      'source → copy the whole Cookie value.',
             style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: scheme.onSurfaceVariant),
           ),
@@ -1187,21 +1266,20 @@ class _LastFmCardState extends State<_LastFmCard> {
             context: context,
             builder: (context) => const _LastFmKeysDialog(),
           ),
+          action: signedIn
+              ? M3ETextButton(
+                  onPressed: () {
+                    lastfm.logout();
+                    setState(() {});
+                  },
+                  child: const Text('Sign out'),
+                )
+              : null,
         ),
-        const SizedBox(height: 12),
-        if (signedIn)
-          Align(
-            alignment: Alignment.centerRight,
-            child: M3ETextButton(
-              onPressed: () {
-                lastfm.logout();
-                setState(() {});
-              },
-              child: const Text('Sign out'),
-            ),
-          )
-        else
+        if (!signedIn) ...[
+          const SizedBox(height: 12),
           const LastFmAuthActions(),
+        ],
       ],
     );
   }
@@ -1274,6 +1352,140 @@ class _LastFmKeysDialogState extends State<_LastFmKeysDialog> {
           ),
           obscureText: true,
           onChanged: (v) => _save(secret: v),
+        ),
+      ],
+    );
+  }
+}
+
+/// ListenBrainz scrobbling card: enable toggle, token status, and a
+/// dialog for the user token from listenbrainz.org/settings.
+class _ListenBrainzCard extends StatefulWidget {
+  const _ListenBrainzCard();
+
+  @override
+  State<_ListenBrainzCard> createState() => _ListenBrainzCardState();
+}
+
+class _ListenBrainzCardState extends State<_ListenBrainzCard> {
+  late bool _enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = context.read<AppState>().config.listenbrainzEnabled;
+  }
+
+  /// Persists the toggle.
+  void _save({bool? enabled}) {
+    final config = context.read<AppState>().config;
+    if (enabled != null) {
+      _enabled = enabled;
+      config.listenbrainzEnabled = enabled;
+    }
+    _service(context)?.refreshStatus();
+    setState(() {});
+  }
+
+  /// The service when it is wired; Settings also runs in tests and
+  /// previews without it, where the card still edits the config.
+  ListenBrainzService? _service(BuildContext context) {
+    try {
+      return context.read<ListenBrainzService>();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final config = context.read<AppState>().config;
+    final scheme = Theme.of(context).colorScheme;
+    final hasToken = config.listenbrainzToken.trim().isNotEmpty;
+    final status = !config.listenbrainzEnabled
+        ? 'disabled'
+        : hasToken
+        ? 'token set'
+        : 'token needed';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ToggleRow(
+          title: 'Scrobble to ListenBrainz',
+          subtitle: 'Status: $status',
+          subtitleColor: status == 'token needed' ? scheme.error : null,
+          value: _enabled,
+          onChanged: (v) => _save(enabled: v),
+          onSettings: () => showDialog(
+            context: context,
+            builder: (context) => const _ListenBrainzTokenDialog(),
+          ),
+          action: hasToken
+              ? M3ETextButton(
+                  onPressed: () {
+                    context.read<AppState>().config.listenbrainzToken = '';
+                    _service(context)?.logout();
+                    setState(() {});
+                  },
+                  child: const Text('Remove token'),
+                )
+              : null,
+        ),
+      ],
+    );
+  }
+}
+
+/// ListenBrainz user token, kept behind the card's cog. The token lives
+/// in the secret store, not in `config.properties`.
+class _ListenBrainzTokenDialog extends StatefulWidget {
+  const _ListenBrainzTokenDialog();
+
+  @override
+  State<_ListenBrainzTokenDialog> createState() =>
+      _ListenBrainzTokenDialogState();
+}
+
+class _ListenBrainzTokenDialogState extends State<_ListenBrainzTokenDialog> {
+  late final TextEditingController _token;
+
+  @override
+  void initState() {
+    super.initState();
+    final config = context.read<AppState>().config;
+    _token = TextEditingController(text: config.listenbrainzToken);
+  }
+
+  @override
+  void dispose() {
+    _token.dispose();
+    super.dispose();
+  }
+
+  void _save(String value) {
+    final config = context.read<AppState>().config;
+    config.listenbrainzToken = value.trim();
+    try {
+      context.read<ListenBrainzService>().refreshStatus();
+    } catch (_) {
+      // Sandbox settings without the service: the config write is enough.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsModal(
+      title: 'ListenBrainz token',
+      children: [
+        TextField(
+          controller: _token,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: 'User token',
+            helperText: 'From listenbrainz.org/settings',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: _save,
         ),
       ],
     );

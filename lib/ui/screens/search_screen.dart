@@ -72,7 +72,14 @@ class _SearchScreenState extends State<SearchScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(screenPadding),
+          // The top inset keeps the field below the transparent status
+          // bar; the scaffold colour fills the area behind it.
+          padding: EdgeInsets.only(
+            left: screenPadding,
+            top: screenPadding + MediaQuery.viewPaddingOf(context).top,
+            right: screenPadding,
+            bottom: screenPadding,
+          ),
           child: TextField(
             controller: _controller,
             focusNode: _focus,

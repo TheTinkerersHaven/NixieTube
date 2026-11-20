@@ -104,7 +104,11 @@ class JustAudioPlayerEngine implements PlayerEngine {
       // the backend refusing the stream.
       final outcome = await Future.any<Object?>([opened, failure.future]);
       if (outcome != null) return '$outcome';
-      await _player.play();
+      // just_audio's play() future completes when playback *ends* (paused,
+      // stopped or finished), not when audio starts. Awaiting it kept the
+      // controller in its loading state for the whole song and let the
+      // open timeout fire mid-playback, restarting the track.
+      unawaited(_player.play().catchError((Object _) {}));
       _lastError = null;
       return null;
     } catch (error) {

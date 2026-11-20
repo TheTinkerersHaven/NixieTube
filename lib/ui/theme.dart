@@ -84,6 +84,13 @@ const double playerRadius = ExpressiveCorners.largeIncreased;
 /// which now overlays full-height content (bar + its transparent margins).
 const double playerBarClearance = 150.0;
 
+/// Height reserved for the mobile bottom navigation bar.
+const double mobileNavHeight = 80.0;
+
+/// Narrow (phone) layout: bottom navigation instead of the desktop rail.
+bool isCompactLayout(BuildContext context) =>
+    MediaQuery.sizeOf(context).width < 600;
+
 const _ytmRed = Color(0xFFFF0000);
 
 /// Default custom seed (YTM red): the custom source with this

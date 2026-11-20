@@ -21,10 +21,10 @@ import '../widgets/rails.dart';
 import '../widgets/track_row.dart';
 
 /// Home screen with greeting, mood chips, the personal block (quick-picks
-/// grid + liked songs), and then the pinned sections: Discover, Listen
-/// Again, Forgotten favorites, New releases, Albums made for you and the
-/// remaining personalized feed rows, with the trending rows (the user's
-/// country, then worldwide) last.
+/// grid, plus the liked-songs column on wide windows), and then the pinned
+/// sections: Discover, Listen Again, Forgotten favorites, New releases,
+/// Albums made for you and the remaining personalized feed rows, with the
+/// trending rows (the user's country, then worldwide) last.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -165,9 +165,11 @@ class HomeScreen extends StatelessWidget {
           silkyScrollDuration: const Duration(milliseconds: 700),
           animationCurve: Curves.easeOutQuart,
           // Bottom clearance for the floating player bar overlay.
-          padding: const EdgeInsets.fromLTRB(
+          // The top inset keeps the greeting below the transparent
+          // status bar while the gradient above runs behind it.
+          padding: EdgeInsets.fromLTRB(
             screenPadding,
-            screenPadding,
+            screenPadding + MediaQuery.viewPaddingOf(context).top,
             screenPadding,
             screenPadding + playerBarClearance,
           ),
@@ -176,8 +178,9 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: homeSectionSpacing),
             _moods(context, state),
             // Personal block next, no matter what: the quick-picks
-            // grid + liked list (or the jump-back-in fallback on
-            // sparse accounts) always render above the fixed sections.
+            // grid (and the liked list on wide windows) or the
+            // jump-back-in fallback on sparse accounts always render
+            // above the fixed sections.
             if (showGrid) ...[
               // Own skeleton scope: the grid keeps shimmering until its
               // own data (library) is ready, independent of the shelves.
@@ -446,7 +449,11 @@ class HomeScreen extends StatelessWidget {
         final wide = constraints.maxWidth >= 900;
         final grid = _QuickPicksGrid(songs: songs, pins: pins);
         if (!wide) {
-          // Narrow: liked list capped at 400px, scrolling inside.
+          // Phones keep just the grid: liked songs live in the
+          // library's "Liked songs" playlist there.
+          if (isCompactLayout(context)) return grid;
+          // Narrow desktop windows: liked list capped at 400px, scrolling
+          // inside.
           return Column(
             children: [
               grid,

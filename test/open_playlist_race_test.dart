@@ -154,6 +154,23 @@ void main() {
     expect(state.openedPlaylist, isNull);
   });
 
+  test('the library tab clears an open playlist without popping', () async {
+    final env = await _boot();
+    final state = env.state;
+    env.api.gates['plA'] = Completer<List<Track>>();
+
+    unawaited(state.openPlaylist(_plA));
+    await _settle();
+    expect(state.openedPlaylist?.playlist.id, 'plA');
+    expect(state.screen, Screen.library);
+
+    // Tapping the library tab returns to the library list; it must not
+    // pop back to the screen the playlist was opened from.
+    state.closePlaylistToLibrary();
+    expect(state.openedPlaylist, isNull);
+    expect(state.screen, Screen.library);
+  });
+
   test('any surface opens the same playlist view', () async {
     final env = await _boot();
     final state = env.state;

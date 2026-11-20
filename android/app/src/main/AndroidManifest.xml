@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Playback, the library and login all talk to YouTube Music, and
+         the update check hits GitHub: release builds need the network
+         permission too (debug/profile manifests only add it for tooling). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="nixietube"
         android:name="${applicationName}"

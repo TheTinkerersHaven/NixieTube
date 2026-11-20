@@ -27,6 +27,8 @@ import '../widgets/track_menu_scope.dart';
 import '../widgets/track_row.dart';
 import '../widgets/song_info.dart';
 import '../widgets/volume_slider.dart';
+import 'now_playing_desktop.dart';
+import 'now_playing_mobile.dart';
 
 /// Full Now Playing view with cover, transport and tabs.
 class NowPlayingScreen extends StatelessWidget {
@@ -63,6 +65,7 @@ class NowPlayingScreen extends StatelessWidget {
         backdrop: backdrop,
       );
     }
+    final compact = isCompactLayout(context);
     return Scaffold(
       backgroundColor: backdrop,
       body: Stack(
@@ -71,137 +74,32 @@ class NowPlayingScreen extends StatelessWidget {
           // Own layer: the 600ms palette wash animation repaints here
           // without touching the cover and transport above it.
           RepaintBoundary(child: PaletteBackdrop(palette: palette)),
+          // The backdrop still fills behind the bars; the transport and
+          // tabs stay clear of the status bar and the gesture pill.
           Padding(
-            padding: const EdgeInsets.all(screenPadding),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                      tooltip: 'Close',
-                      onPressed: context.read<AppState>().closeNow,
-                    ),
-                    Expanded(
-                      child: Text(
-                        'Now playing',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
-                    M3EPopupMenuButton<_NowMenuAction>(
-                      tooltip: 'More actions',
-                      style: const M3EMenuStyle(maxWidth: 360),
-                      icon: const Icon(Icons.more_vert_rounded),
-                      onSelected: (action) =>
-                          unawaited(_handleNowMenu(context, action, track)),
-                      itemBuilder: (context) => [
-                        M3EPopupMenuItem<_NowMenuAction>(
-                          value: _NowMenuAction.shareLink,
-                          child: const Row(
-                            children: [
-                              Icon(Icons.link_rounded),
-                              SizedBox(width: 12),
-                              Text('Share link'),
-                            ],
-                          ),
-                        ),
-                        M3EPopupMenuItem<_NowMenuAction>(
-                          value: _NowMenuAction.openYoutube,
-                          child: const Row(
-                            children: [
-                              Icon(Icons.open_in_new_rounded),
-                              SizedBox(width: 12),
-                              Text('Open in YouTube'),
-                            ],
-                          ),
-                        ),
-                        if (signedIn && libraryAvailable)
-                          M3EPopupMenuItem<_NowMenuAction>(
-                            onTap: () => context
-                                .read<AppState>()
-                                .openPlaylistDialog(track),
-                            child: const Row(
-                              children: [
-                                Icon(Icons.playlist_add_rounded),
-                                SizedBox(width: 12),
-                                Text('Add to playlist'),
-                              ],
-                            ),
-                          ),
-                        if (hasQueue)
-                          M3EPopupMenuItem<_NowMenuAction>(
-                            value: _NowMenuAction.clearUpNext,
-                            child: const Row(
-                              children: [
-                                Icon(Icons.delete_sweep_outlined),
-                                SizedBox(width: 12),
-                                Text('Clear up next'),
-                              ],
-                            ),
-                          ),
-                        M3EPopupMenuItem<_NowMenuAction>(
-                          value: _NowMenuAction.sleepTimer,
-                          child: Row(
-                            children: [
-                              Icon(
-                                sleepMode != SleepTimerMode.off
-                                    ? Icons.bedtime_rounded
-                                    : Icons.bedtime_outlined,
-                              ),
-                              const SizedBox(width: 12),
-                              Flexible(
-                                child: Text(
-                                  _sleepMenuLabel(sleepMode, sleepEndsAt),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final rawSize = [
-                        constraints.maxWidth * 0.44,
-                        (constraints.maxHeight - 320)
-                            .clamp(180.0, double.infinity)
-                            .toDouble(),
-                        360.0,
-                      ].reduce((a, b) => a < b ? a : b);
-                      // Snap to 32px steps: the size feeds the image
-                      // cache key, so a continuous size would re-decode
-                      // the cover on every pixel of a window-resize drag.
-                      final artSize = ((rawSize / 32).round() * 32)
-                          .clamp(64, 360)
-                          .toDouble();
-                      return Row(
-                        children: [
-                          Expanded(
-                            // Transport repaints (slider ticks) stay out
-                            // of the backdrop wash layer and vice versa.
-                            child: RepaintBoundary(
-                              child: _TransportColumn(
-                                track: track,
-                                artSize: artSize,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 24),
-                          const Expanded(
-                            child: RepaintBoundary(child: _TabsColumn()),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
+            padding: EdgeInsets.only(
+              left: screenPadding,
+              top: screenPadding + MediaQuery.viewPaddingOf(context).top,
+              right: screenPadding,
+              bottom: screenPadding + MediaQuery.viewPaddingOf(context).bottom,
             ),
+            child: compact
+                ? NowPlayingMobile(
+                    track: track,
+                    signedIn: signedIn,
+                    libraryAvailable: libraryAvailable,
+                    hasQueue: hasQueue,
+                    sleepMode: sleepMode,
+                    sleepEndsAt: sleepEndsAt,
+                  )
+                : NowPlayingDesktop(
+                    track: track,
+                    signedIn: signedIn,
+                    libraryAvailable: libraryAvailable,
+                    hasQueue: hasQueue,
+                    sleepMode: sleepMode,
+                    sleepEndsAt: sleepEndsAt,
+                  ),
           ),
         ],
       ),
@@ -210,22 +108,26 @@ class NowPlayingScreen extends StatelessWidget {
 }
 
 /// Vertical wash following the cover's top/middle/bottom bands.
-class _TransportColumn extends StatefulWidget {
-  const _TransportColumn({required this.track, required this.artSize});
+class TransportColumn extends StatefulWidget {
+  const TransportColumn({
+    super.key,
+    required this.track,
+    required this.artSize,
+  });
 
   final Track track;
   final double artSize;
 
   @override
-  State<_TransportColumn> createState() => _TransportColumnState();
+  State<TransportColumn> createState() => _TransportColumnState();
 }
 
-class _TransportColumnState extends State<_TransportColumn> {
+class _TransportColumnState extends State<TransportColumn> {
   RatingStatus? _pendingRating;
   String? _pendingVideoId;
 
   @override
-  void didUpdateWidget(_TransportColumn old) {
+  void didUpdateWidget(TransportColumn old) {
     super.didUpdateWidget(old);
     if (old.track.videoId != widget.track.videoId) {
       _pendingRating = null;
@@ -301,7 +203,7 @@ class _TransportColumnState extends State<_TransportColumn> {
           const SizedBox(height: 16),
           _TrackHeader(track: track, state: state),
           const SizedBox(height: 16),
-          if (hasDuration) _TransportProgress(state: state),
+          if (hasDuration) TransportProgress(state: state),
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -560,8 +462,8 @@ class _LinkText extends StatelessWidget {
 /// The column itself is static: the slider and the labels own separate
 /// listeners (and repaint boundaries), so a tick never rebuilds — or
 /// repaints — the artwork, texts and buttons above.
-class _TransportProgress extends StatelessWidget {
-  const _TransportProgress({required this.state});
+class TransportProgress extends StatelessWidget {
+  const TransportProgress({super.key, required this.state});
 
   final AppState state;
 
@@ -620,8 +522,8 @@ class _TimeLabels extends StatelessWidget {
   }
 }
 
-class _TabsColumn extends StatelessWidget {
-  const _TabsColumn();
+class TabsColumn extends StatelessWidget {
+  const TabsColumn({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -732,20 +634,20 @@ class _TabsContentState extends State<_TabsContent>
 }
 
 /// Actions in the Now Playing title-row overflow menu.
-enum _NowMenuAction { shareLink, openYoutube, clearUpNext, sleepTimer }
+enum NowMenuAction { shareLink, openYoutube, clearUpNext, sleepTimer }
 
 /// Actions in a queue row's right-click menu.
 enum _QueueRowAction { playNext, addToPlaylist, copyLink, remove }
 
 /// Runs a title-row menu action for the current [track].
-Future<void> _handleNowMenu(
+Future<void> handleNowMenu(
   BuildContext context,
-  _NowMenuAction action,
+  NowMenuAction action,
   Track track,
 ) async {
   final state = context.read<AppState>();
   switch (action) {
-    case _NowMenuAction.shareLink:
+    case NowMenuAction.shareLink:
       // The short `youtu.be` link is the canonical shareable form.
       await Clipboard.setData(
         ClipboardData(text: 'https://youtu.be/${track.videoId}'),
@@ -755,11 +657,11 @@ Future<void> _handleNowMenu(
           const SnackBar(content: Text('Link copied to clipboard.')),
         );
       }
-    case _NowMenuAction.openYoutube:
+    case NowMenuAction.openYoutube:
       await state.openUrl('https://www.youtube.com/watch?v=${track.videoId}');
-    case _NowMenuAction.clearUpNext:
+    case NowMenuAction.clearUpNext:
       if (context.mounted) unawaited(_confirmClearQueue(context, state));
-    case _NowMenuAction.sleepTimer:
+    case NowMenuAction.sleepTimer:
       if (context.mounted) unawaited(_showSleepTimerSheet(context));
   }
 }
@@ -767,7 +669,7 @@ Future<void> _handleNowMenu(
 /// Menu label for the sleep timer entry: remaining time while a
 /// duration timer is armed, the mode otherwise. Computed when the
 /// menu opens, so no ticking timers are involved.
-String _sleepMenuLabel(SleepTimerMode mode, int? endsAtMs) {
+String sleepMenuLabel(SleepTimerMode mode, int? endsAtMs) {
   switch (mode) {
     case SleepTimerMode.duration:
       if (endsAtMs == null) return 'Sleep timer';
@@ -1192,7 +1094,15 @@ class _LyricsTabState extends State<_LyricsTab> {
                   tooltip: 'Fullscreen lyrics',
                   // Always enabled: lyrics may still be fetching, and the
                   // fullscreen view follows them live when they land.
-                  onPressed: state.expandLyrics,
+                  onPressed: () {
+                    state.expandLyrics();
+                    // On phones the tab sits in a bottom sheet, which
+                    // would cover the fullscreen view; dismiss it. The
+                    // desktop tab lives inline and has nothing to pop.
+                    if (ModalRoute.of(context) is PopupRoute) {
+                      Navigator.of(context).pop();
+                    }
+                  },
                 ),
               ),
             ),
@@ -1335,7 +1245,12 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
         children: [
           RepaintBoundary(child: PaletteBackdrop(palette: widget.palette)),
           Padding(
-            padding: const EdgeInsets.fromLTRB(0, screenPadding, 0, 0),
+            padding: EdgeInsets.fromLTRB(
+              0,
+              screenPadding + MediaQuery.viewPaddingOf(context).top,
+              0,
+              MediaQuery.viewPaddingOf(context).bottom,
+            ),
             child: Column(
               children: [
                 Padding(

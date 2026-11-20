@@ -35,15 +35,22 @@ class BrowseCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final art = item.thumbnails.isEmpty ? null : item.bestArtwork;
+    final cardW = width ?? 208.0;
+    final artSize = width != null ? (width! - 8).clamp(40.0, 200.0) : 200.0;
     final card = InkWell(
       onTap: onTap,
       child: Container(
-        width: width ?? 208,
+        width: cardW,
         padding: const EdgeInsets.all(4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ArtworkImage(art, size: 200, radius: cardRadius, iconSize: 48),
+            ArtworkImage(
+              art,
+              size: artSize,
+              radius: cardRadius,
+              iconSize: (artSize / 4).clamp(16.0, 48.0),
+            ),
             const SizedBox(height: 8),
             Text(
               item.title,

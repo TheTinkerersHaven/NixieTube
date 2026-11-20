@@ -21,8 +21,13 @@ class DetailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = isCompactLayout(context);
     return Padding(
-      padding: const EdgeInsets.all(screenPadding),
+      // A phone top bar hugs its buttons: the icon button already carries
+      // its own 12px inset, so the header only adds a little on top of it.
+      padding: compact
+          ? const EdgeInsets.fromLTRB(4, 4, 8, 4)
+          : const EdgeInsets.all(screenPadding),
       child: Row(
         children: [
           if (onBack != null)
@@ -34,7 +39,11 @@ class DetailHeader extends StatelessWidget {
           Expanded(
             child: Text(
               title,
-              style: Theme.of(context).textTheme.headlineMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: compact
+                  ? Theme.of(context).textTheme.titleLarge
+                  : Theme.of(context).textTheme.headlineMedium,
             ),
           ),
           ?trailing,

@@ -57,21 +57,26 @@ class LibraryScreen extends StatelessWidget {
                   PaletteBackdrop(palette: _paletteFor(state, opened)),
             ),
           ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DetailHeader(
-              title: opened?.playlist.title ?? 'Library',
-              onBack: opened == null ? null : state.closePlaylist,
-              trailing: _headerTrailing(context, state, opened),
-            ),
-            if (opened != null)
-              Expanded(child: _openPlaylist(context, state, opened))
-            else if (account == null)
-              _signInPrompt(context, state)
-            else
-              Expanded(child: _tabs(context, state)),
-          ],
+        // The wash behind stays full-bleed (it is the Stack's own
+        // backdrop); only the header + content clear the status bar.
+        SafeArea(
+          bottom: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DetailHeader(
+                title: opened?.playlist.title ?? 'Library',
+                onBack: opened == null ? null : state.closePlaylist,
+                trailing: _headerTrailing(context, state, opened),
+              ),
+              if (opened != null)
+                Expanded(child: _openPlaylist(context, state, opened))
+              else if (account == null)
+                _signInPrompt(context, state)
+              else
+                Expanded(child: _tabs(context, state)),
+            ],
+          ),
         ),
         if (account != null && opened == null)
           Positioned(
