@@ -15,6 +15,7 @@ import '../core/artwork/artwork_store.dart';
 import '../core/models/models.dart';
 import '../core/player/player_controller.dart';
 import '../core/player/player_state.dart';
+import 'platform_features.dart';
 
 const _log = TaggedLog('mpris');
 
@@ -396,7 +397,8 @@ class MprisService extends ChangeNotifier {
     ArtworkStore? artworkStore,
     MprisClientFactory? clientFactory,
     this.retryInterval = mprisRetryInterval,
-  }) {
+    bool? supported,
+  }) : _supported = supported ?? supportsMpris(currentPlatform()) {
     _controller = controller;
     _artworkStore = artworkStore;
     _newClient = clientFactory ?? DBusClient.session;
@@ -407,6 +409,12 @@ class MprisService extends ChangeNotifier {
   ArtworkStore? _artworkStore;
   late final MprisClientFactory _newClient;
   late final StreamSubscription<PlayerState> _sub;
+
+  /// Whether this host can export MPRIS at all (a Linux session bus).
+  /// False elsewhere: the service stays off rather than retrying a bus
+  /// that will never exist, and the settings row is dropped.
+  final bool _supported;
+  bool get supported => _supported;
 
   /// How often a failed connect is re-attempted and an owned connection
   /// is pinged, while the service is enabled.
@@ -454,6 +462,7 @@ class MprisService extends ChangeNotifier {
   /// connection that drops later is claimed again. Returns whether the
   /// name is ours at this moment.
   Future<bool> start() async {
+    if (!_supported) return false;
     final gen = ++_connectGen;
     final active = await _connect(gen);
     if (_enabled && gen == _connectGen) _armRetry();

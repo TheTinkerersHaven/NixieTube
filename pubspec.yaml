@@ -1,7 +1,7 @@
 name: nixietube
 description: "NixieTube - Material 3 Expressive YouTube Music desktop client."
 publish_to: 'none'
-version: 0.4.6+31
+version: 0.4.7+33
 
 environment:
   sdk: ^3.14.0
@@ -49,6 +49,8 @@ dependencies:
   # Embedded Google-login window (system WebKit).
   desktop_webview_window: ^0.4.2
   silky_scroll: ^2.6.4
+  audio_service: ^0.18.19
+  webview_flutter: ^4.14.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -465,6 +465,15 @@ class AppState extends ChangeNotifier {
   /// section; the screen scrolls there and clears the flag.
   bool get focusAppUpdates => _focusAppUpdates;
 
+  /// Whether this build can install an update itself (the Linux
+  /// AppImage). False on a phone, where there is no executable to
+  /// replace and updates come from the release page instead.
+  bool get canInstallUpdates => _updater.canInstallInPlace;
+
+  /// Opens the latest release in the system browser, for builds that
+  /// cannot replace themselves.
+  Future<void> openReleasesPage() => _openUrl(_updater.releasesPageUrl);
+
   /// Whether the user dismissed the update-available banner this session.
   bool get updateBannerDismissed => _dismissedUpdateBanner;
 

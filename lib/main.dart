@@ -19,9 +19,11 @@ import 'sys/discord.dart';
 import 'sys/lastfm.dart';
 import 'sys/listenbrainz.dart';
 import 'sys/log.dart';
+import 'sys/media_session.dart';
 import 'sys/mpris.dart';
 import 'sys/musicbrainz.dart';
 import 'sys/paths.dart' show initPlatformPaths;
+import 'sys/platform_features.dart';
 import 'sys/sleep_inhibit.dart';
 import 'sys/sys_config.dart';
 import 'sys/tray_service.dart';
@@ -67,11 +69,13 @@ class _ImageCachePressureObserver extends WidgetsBindingObserver {
 /// service startups are best-effort so none can break launch.
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // One reading of the host, reused by every integration decision below.
+  final platform = currentPlatform();
   // Phones draw behind the status and navigation bars. Android 14 does
   // not force this on its own, so opt in explicitly; the transparent
   // bar colours live in the root AnnotatedRegion (ui/app.dart), which
   // survives MaterialApp/AppBar re-applying the default styles.
-  if (Platform.isAndroid || Platform.isIOS) {
+  if (supportsBackgroundAudio(platform)) {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
   // Mobile apps have no writable HOME/XDG dirs: resolve the sandbox
@@ -94,6 +98,15 @@ void main(List<String> args) async {
     resetStream: streamResolver.reset,
     createEngine: JustAudioPlayerEngine.new,
   );
+  // Phones suspend a backgrounded app, so playback has to be attached to
+  // an OS media session (a foreground service on Android, the audio
+  // background mode on iOS) to survive the screen locking. The same
+  // session draws the notification and lock-screen controls and serves
+  // Android Auto, Wear and headset buttons. Desktop has no such thing to
+  // attach to — MPRIS and the tray cover it — so nothing is started.
+  if (supportsBackgroundAudio(platform)) {
+    unawaited(startBackgroundAudio(player));
+  }
   final state = AppState(
     tube: tube,
     player: player,
@@ -113,6 +126,7 @@ void main(List<String> args) async {
     enabled: config.discordEnabled,
     statusText: discordStatusTextFromKey(config.discordStatusText),
     pauseHideAfter: Duration(minutes: config.discordPauseHideMinutes),
+    supported: supportsDiscordRpc(platform),
   );
   unawaited(player.states.forEach(discord.update));
 
@@ -134,7 +148,7 @@ void main(List<String> args) async {
 
   final mpris = MprisService(controller: player, artworkStore: state.art)
     ..onQuit = () => unawaited(quitApp());
-  if (Platform.isLinux && config.mprisEnabled) {
+  if (config.mprisEnabled && supportsMpris(platform)) {
     unawaited(mpris.start());
   }
   final tray = TrayService(
@@ -166,11 +180,19 @@ void main(List<String> args) async {
   // Probe the native audio backend before the user plays anything: a
   // missing mpv otherwise fails on first play with console noise and
   // a 20s hang that reads as a freeze. Best-effort; the UI reports it.
-  unawaited(_probeAudioBackend(state));
+  // Phones have no mpv to probe — their player is the platform one — and
+  // probing would only ask them to install a Linux package.
+  if (isDesktop(platform)) {
+    unawaited(_probeAudioBackend(state));
+  }
 
   unawaited(player.restoreSession());
   unawaited(state.loadAuth());
-  unawaited(state.checkForUpdates());
+  // Only an AppImage build can do anything with a found release, so a
+  // phone never pays for a GitHub round trip it cannot act on.
+  if (state.canInstallUpdates) {
+    unawaited(state.checkForUpdates());
+  }
   unawaited(state.loadHome());
   runApp(
     NixieTubeApp(

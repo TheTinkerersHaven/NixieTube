@@ -257,7 +257,7 @@ void main() {
         openUrl: (_) async {},
       );
       addTearDown(state.dispose);
-      final mpris = MprisService(controller: player);
+      final mpris = MprisService(controller: player, supported: false);
       addTearDown(mpris.dispose);
       final discord = DiscordPresence();
       addTearDown(discord.dispose);
@@ -283,8 +283,11 @@ void main() {
       expect(find.text('Settings'), findsOneWidget);
       expect(find.byTooltip('Back'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      // MPRIS and Discord are desktop integrations, not phone settings.
+      // A phone has no session bus: the MPRIS row is gone and the
+      // section drops its "Desktop" title.
       expect(find.text('Desktop integrations'), findsNothing);
+      expect(find.text('Integrations'), findsOneWidget);
+      expect(find.text('MPRIS (media keys, playerctl)'), findsNothing);
       // Settings belongs to the library tab it was opened from.
       final nav = tester.widget<NavigationBar>(find.byType(NavigationBar));
       expect(nav.selectedIndex, 2);

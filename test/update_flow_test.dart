@@ -19,11 +19,18 @@ const _info = UpdateInfo(
 );
 
 class _FakeUpdater extends Updater {
-  _FakeUpdater(this.info);
+  _FakeUpdater(this.info, {this.installable = true});
 
   final UpdateInfo? info;
+
+  /// Whether this build can replace its own binary. Phones cannot, and
+  /// the UI then offers the release page instead of an install button.
+  final bool installable;
   int checks = 0;
   UpdateInfo? applied;
+
+  @override
+  bool get canInstallInPlace => installable;
 
   @override
   Future<UpdateInfo?> checkForUpdates() async {
@@ -39,10 +46,20 @@ class _FakeUpdater extends Updater {
 }
 
 /// Boots the app shell with a fake updater and registers the usual
-/// teardowns.
-Future<(AppState, _FakeUpdater)> _pumpApp(WidgetTester tester) async {
-  final updater = _FakeUpdater(_info);
-  final state = await bootAppState(tester, tube: FakeTube(), updater: updater);
+/// teardowns. [opened] collects every URL the app hands to the system
+/// browser, so a download link can be asserted.
+Future<(AppState, _FakeUpdater)> _pumpApp(
+  WidgetTester tester, {
+  bool installable = true,
+  List<String>? opened,
+}) async {
+  final updater = _FakeUpdater(_info, installable: installable);
+  final state = await bootAppState(
+    tester,
+    tube: FakeTube(),
+    updater: updater,
+    openUrl: (url) async => opened?.add(url),
+  );
   final mpris = MprisService(controller: state.player);
   addTearDown(mpris.dispose);
   final discord = DiscordPresence();
@@ -126,5 +143,35 @@ void main() {
       find.text('Update installed. Restart NixieTube to use the new version.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a build that cannot install offers the download page', (
+    tester,
+  ) async {
+    final opened = <String>[];
+    final (state, updater) = await _pumpApp(
+      tester,
+      installable: false,
+      opened: opened,
+    );
+    await state.checkForUpdates();
+    await tester.pump();
+
+    // The banner links straight to the release: there is nothing to
+    // install this build could act on.
+    expect(find.text('Version 9.9.9 is available.'), findsOneWidget);
+    expect(find.text('Install'), findsNothing);
+    await _tapText(tester, 'Download');
+    await tester.pump();
+    expect(opened.single, githubReleasesPageUrl);
+    expect(updater.applied, isNull);
+
+    // The card says the same thing instead of showing a dead button.
+    state.openAppUpdates();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Open the download page'), findsOneWidget);
+    expect(find.text('Check for updates'), findsNothing);
+    expect(find.text('Install update'), findsNothing);
   });
 }

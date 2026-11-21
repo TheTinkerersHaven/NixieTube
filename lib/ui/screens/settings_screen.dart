@@ -7,7 +7,6 @@
 // screen reads as one uniform list without card surfaces or dividers.
 
 import 'dart:async' show unawaited;
-import 'dart:io' show Platform;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
@@ -17,6 +16,7 @@ import '../../sys/discord.dart';
 import '../../sys/lastfm.dart';
 import '../../sys/listenbrainz.dart';
 import '../../sys/mpris.dart';
+import '../../sys/platform_features.dart';
 import '../../sys/sys_config.dart';
 import '../../sys/updater.dart';
 import '../../sys/version.dart';
@@ -26,6 +26,12 @@ import '../widgets/screen_list.dart';
 import '../widgets/detail_header.dart';
 import '../widgets/browser_login_dialog.dart';
 import '../widgets/lastfm_auth_actions.dart';
+
+/// Whether the settings list has the MPRIS row at all: MPRIS is a Linux
+/// session-bus interface, so on any other host the integrations section
+/// is Discord only and says so in its heading.
+bool _showMprisRow(BuildContext context) =>
+    context.watch<MprisService>().supported;
 
 /// Account, playback, accessibility and app settings.
 class SettingsScreen extends StatefulWidget {
@@ -202,23 +208,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       ),
-      if (!compact) ...[
-        const SizedBox(height: 24),
-        Container(
-          key: _integrationsKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle(
-                'Desktop integrations',
-                subtitle: 'MPRIS media keys and Discord Rich Presence.',
-              ),
-              const SizedBox(height: 8),
-              _IntegrationsSegments(),
-            ],
-          ),
+      const SizedBox(height: 24),
+      Container(
+        key: _integrationsKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionTitle(
+              // Phones have no desktop to integrate with, but the
+              // Discord row is still worth showing (unavailable and
+              // saying why) rather than hiding a capability the user may
+              // have read about.
+              _showMprisRow(context)
+                  ? 'Desktop integrations'
+                  : 'Integrations',
+              subtitle: 'MPRIS media keys and Discord Rich Presence.',
+            ),
+            const SizedBox(height: 8),
+            _IntegrationsSegments(),
+          ],
         ),
-      ],
+      ),
       const SizedBox(height: 24),
       Container(
         key: _scrobblingKey,
@@ -785,7 +795,13 @@ class _DebugCard extends StatelessWidget {
 }
 
 /// MPRIS media-keys and Discord Rich Presence toggles, each its own
-/// segment in the Desktop integrations group.
+/// segment in the integrations group.
+///
+/// Rows the host cannot support are dropped rather than shown dead:
+/// MPRIS exists only on a Linux session bus. Discord is the exception —
+/// its row stays on a phone, disabled, because the presence is a feature
+/// users look for and "not available here" answers it better than a
+/// missing setting.
 class _IntegrationsSegments extends StatelessWidget {
   const _IntegrationsSegments();
 
@@ -795,42 +811,49 @@ class _IntegrationsSegments extends StatelessWidget {
     final mpris = context.watch<MprisService>();
     final discord = context.watch<DiscordPresence>();
     final scheme = Theme.of(context).colorScheme;
+    // MPRIS is a Linux session-bus interface: on any other host the
+    // service reports itself unsupported and the row is dropped rather
+    // than shown dead.
+    final showMpris = mpris.supported;
     return _SettingsSegments(
       children: [
-        _ToggleRow(
-          title: 'MPRIS (media keys, playerctl)',
-          subtitle:
-              mpris.lastError ??
-              (!Platform.isLinux
-                  ? 'Linux only'
-                  : mpris.active
-                  ? 'Active on the session bus'
-                  : 'Inactive'),
-          subtitleColor: mpris.lastError != null ? scheme.error : null,
-          value: state.config.mprisEnabled,
-          enabled: Platform.isLinux,
-          onChanged: (v) {
-            state.config.setBool('mpris.enabled', v);
-            mpris.setEnabled(v);
-            if (v && !mpris.active) {
-              unawaited(mpris.start());
-            }
-            state.refreshConfig();
-          },
-        ),
+        if (showMpris)
+          _ToggleRow(
+            title: 'MPRIS (media keys, playerctl)',
+            subtitle:
+                mpris.lastError ??
+                (mpris.active
+                    ? 'Active on the session bus'
+                    : 'Inactive'),
+            subtitleColor: mpris.lastError != null ? scheme.error : null,
+            value: state.config.mprisEnabled,
+            onChanged: (v) {
+              state.config.setBool('mpris.enabled', v);
+              mpris.setEnabled(v);
+              if (v && !mpris.active) {
+                unawaited(mpris.start());
+              }
+              state.refreshConfig();
+            },
+          ),
         _ToggleRow(
           title: 'Discord Rich Presence',
-          subtitle: 'Status: ${discord.status}',
-          value: state.config.discordEnabled,
+          subtitle: discord.supported
+              ? 'Status: ${discord.status}'
+              : discord.status,
+          value: state.config.discordEnabled && discord.supported,
+          enabled: discord.supported,
           onChanged: (v) {
             state.config.setBool('discord.enabled', v);
             discord.setEnabled(v);
             state.refreshConfig();
           },
-          onSettings: () => showDialog(
-            context: context,
-            builder: (context) => const _DiscordAppIdDialog(),
-          ),
+          onSettings: !discord.supported
+              ? null
+              : () => showDialog(
+                  context: context,
+                  builder: (context) => const _DiscordAppIdDialog(),
+                ),
         ),
       ],
     );
@@ -1063,16 +1086,16 @@ class _AccountCardState extends State<_AccountCard> {
         ],
         if (!connected) ...[
           const SizedBox(height: 12),
-          // The built-in login window is desktop-only; phones sign in by
-          // importing a cookie from a browser.
-          if (!Platform.isAndroid && !Platform.isIOS) ...[
+          // The built-in login window is a desktop WebKit view; phones
+          // sign in by importing a cookie from a browser.
+          if (supportsEmbeddedLogin(currentPlatform())) ...[
             Text(
               'Method 1 — Built-in browser',
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const SizedBox(height: 6),
             Text(
-              'Opens a login window right here — sign in with Google '
+              'Opens the sign-in page right here — sign in with Google '
               'and the session is picked up when you confirm.',
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: scheme.onSurfaceVariant),
@@ -1112,16 +1135,16 @@ class _AccountCardState extends State<_AccountCard> {
           ),
           const SizedBox(height: 8),
           Text(
-            Platform.isAndroid || Platform.isIOS
-                ? '1. On a computer, open music.youtube.com in a browser '
+            supportsEmbeddedLogin(currentPlatform())
+                ? '1. In your browser, open music.youtube.com while logged in.\n'
+                      '2. Open DevTools (F12) → Network tab, then play any song.\n'
+                      '3. Click any youtubei/v1/ request → Headers → view '
+                      'source → copy the whole Cookie value.'
+                : '1. On a computer, open music.youtube.com in a browser '
                       'and sign in.\n'
                       '2. Open DevTools (F12) → Network, then play any song.\n'
                       '3. Copy the whole Cookie header from a youtubei/v1 '
-                      'request and paste it below.'
-                : '1. In your browser, open music.youtube.com while logged in.\n'
-                      '2. Open DevTools (F12) → Network tab, then play any song.\n'
-                      '3. Click any youtubei/v1/ request → Headers → view '
-                      'source → copy the whole Cookie value.',
+                      'request and paste it below.',
             style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: scheme.onSurfaceVariant),
           ),
@@ -1515,6 +1538,7 @@ class _AppUpdatesCard extends StatelessWidget {
     final applying = context.select<AppState, bool>((s) => s.updateApplying);
     final applied = context.select<AppState, bool>((s) => s.updateApplied);
     final failed = context.select<AppState, bool>((s) => s.updateFailed);
+    final canInstall = state.canInstallUpdates;
     final busy = checking || applying;
     final bodyStyle = Theme.of(context).textTheme.bodySmall
         ?.copyWith(color: scheme.onSurfaceVariant);
@@ -1525,56 +1549,73 @@ class _AppUpdatesCard extends StatelessWidget {
         const SizedBox(height: 2),
         Text(_currentVersion, style: bodyStyle),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: M3EOutlinedButton.icon(
-                onPressed: busy
-                    ? null
-                    : () => unawaited(state.checkForUpdates(force: true)),
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Check for updates'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        if (checking || applying)
-          const LinearProgressIndicator()
-        else if (applied)
+        if (!canInstall) ...[
+          // A phone (or a build run from the SDK) has no executable of
+          // its own to replace, so "install" would be a dead button:
+          // the release page is the whole flow.
           Text(
-            'Update installed. Restart NixieTube to use the new version.',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.primary),
-          )
-        else if (failed)
-          Text(
-            'The update could not be installed. Download the new AppImage '
-            'from the release page instead.',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.error),
-          )
-        else if (info != null)
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            'This build cannot replace its own binary, so updates are '
+            'installed from the release page.',
+            style: bodyStyle,
+          ),
+          const SizedBox(height: 12),
+          M3EOutlinedButton.icon(
+            onPressed: () => unawaited(state.openReleasesPage()),
+            icon: const Icon(Icons.open_in_new_rounded),
+            label: const Text('Open the download page'),
+          ),
+        ] else ...[
+          Row(
             children: [
-              Text('Version ${info.version} is available.', style: bodyStyle),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: M3EFilledButton.icon(
-                  onPressed: () => unawaited(state.applyUpdate()),
-                  icon: const Icon(Icons.download_rounded),
-                  label: const Text('Install update'),
+              Expanded(
+                child: M3EOutlinedButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () => unawaited(state.checkForUpdates(force: true)),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Check for updates'),
                 ),
               ),
             ],
-          )
-        else if (checked)
-          Text(
-            'No updates available — you are on the latest version.',
-            style: bodyStyle,
           ),
+          const SizedBox(height: 8),
+          if (checking || applying)
+            const LinearProgressIndicator()
+          else if (applied)
+            Text(
+              'Update installed. Restart NixieTube to use the new version.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.primary),
+            )
+          else if (failed)
+            Text(
+              'The update could not be installed. Download the new AppImage '
+              'from the release page instead.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.error),
+            )
+          else if (info != null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Version ${info.version} is available.', style: bodyStyle),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: M3EFilledButton.icon(
+                    onPressed: () => unawaited(state.applyUpdate()),
+                    icon: const Icon(Icons.download_rounded),
+                    label: const Text('Install update'),
+                  ),
+                ),
+              ],
+            )
+          else if (checked)
+            Text(
+              'No updates available — you are on the latest version.',
+              style: bodyStyle,
+            ),
+        ],
       ],
     );
   }

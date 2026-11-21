@@ -15,6 +15,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 
 import '../../sys/browser_login.dart';
+import '../../sys/platform_features.dart';
+import 'browser_login_mobile.dart';
 
 /// Injected into every new document at document-start (login redirects
 /// create fresh documents, so per-document injection is what keeps the
@@ -52,10 +54,24 @@ const _loginButtonScript =
     '}catch(e){}'
     '})();';
 
-/// Shows the login window. Returns the YouTube `Cookie` header once the
-/// user confirms sign-in and a session reads back, or null on
-/// cancel/timeout/failure.
+/// Shows the sign-in window, picking the one the host can run: an
+/// out-of-process WebKit window on desktop, an in-app WebView on Android
+/// (whose cookie store can be read, HttpOnly ones included).
+///
+/// Returns the YouTube `Cookie` header once the user confirms sign-in and
+/// a session reads back, or null on cancel/timeout/failure.
 Future<String?> showBrowserLoginDialog(
+  BuildContext context, {
+  Duration timeout = const Duration(minutes: 5),
+}) {
+  if (currentPlatform() == AppPlatform.android) {
+    return showMobileBrowserLoginDialog(context, timeout: timeout);
+  }
+  return showDesktopBrowserLoginDialog(context, timeout: timeout);
+}
+
+/// The desktop sign-in window.
+Future<String?> showDesktopBrowserLoginDialog(
   BuildContext context, {
   Duration timeout = const Duration(minutes: 5),
 }) {

@@ -4,6 +4,18 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.7] — 2026-11-21
+
+### Added
+
+- **Android signs in without pasting a cookie.** The app now opens the YouTube Music sign-in page inside itself and reads the session back with one tap — including the HttpOnly cookies that actually authenticate — instead of sending the user to a computer to copy a header by hand.
+- **Playback survives the screen locking on a phone.** Android and iOS now register a media session with the system: a notification showing the song, the artist and its cover with play/pause and skip, lock-screen controls, and the transport buttons on Bluetooth and wired headsets. Until now a backgrounded app was suspended and the music stopped.
+
+### Changed
+
+- **Discord Rich Presence is offered only where it can work.** Discord exposes presence over a socket owned by the desktop client, so on a phone the setting now stays off and reads "not available on this platform" instead of showing a status that never changes; the phone settings list gains an Integrations section with that one row, while MPRIS stays on the desktop.
+- **App updates point at the download page when a build cannot install them.** Only the Linux AppImage can replace its own binary, so any other build now offers "Download" on the update banner and a download-page button in Settings instead of an install button that could not do anything.
+
 ## [0.4.6] — 2026-11-18
 
 ### Fixed

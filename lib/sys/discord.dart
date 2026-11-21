@@ -130,6 +130,11 @@ DiscordActivity? presenceActivity(
   );
 }
 
+/// Status shown when the host cannot run a Discord client at all (phones):
+/// there is no local IPC socket to connect to, so the row says so instead
+/// of sitting at a retry loop that can never succeed.
+const discordUnsupportedStatus = 'not available on this platform';
+
 /// How often the presence re-attempts a handshake that is not up yet,
 /// before a link has ever come up in this run.
 const discordRetryInterval = Duration(seconds: 10);
@@ -173,19 +178,30 @@ class DiscordPresence extends ChangeNotifier {
     this.reconnectInterval = discordReconnectInterval,
     this.maxRetryInterval = discordRetryMaxInterval,
     this.pauseHideAfter = discordPauseHideAfter,
+    bool supported = true,
   }) {
     _appId = appId;
-    _enabled = enabled;
+    _supported = supported;
+    // Presence stays off on a host with no Discord socket: the toggle is
+    // inert rather than enabled-and-never-connecting.
+    _enabled = enabled && supported;
     _statusText = statusText;
+    if (!supported) _status = discordUnsupportedStatus;
     _rpc = rpc ?? DiscordIpcClient();
   }
 
   late String _appId;
+  late bool _supported;
   late bool _enabled;
   late DiscordStatusText _statusText;
   late final DiscordRpc _rpc;
   String _status = 'disabled';
   String _dedup = '';
+
+  /// Whether this host can reach a Discord client at all. False on
+  /// phones, where Discord exposes no IPC socket; the presence is then
+  /// inert and [status] says why.
+  bool get supported => _supported;
 
   /// When playback paused on the current track, the moment it paused;
   /// cleared on play or track change. Presence is withdrawn once this
@@ -265,8 +281,19 @@ class DiscordPresence extends ChangeNotifier {
     }
   }
 
-  /// Toggles presence, tearing down the IPC connection when off.
+  /// Toggles presence, tearing down the IPC connection when off. A host
+  /// without a Discord socket cannot enable it: the request is reported
+  /// through [status] instead of arming a retry loop that could never
+  /// connect.
   void setEnabled(bool value) {
+    if (!supported) {
+      if (_enabled) {
+        _enabled = false;
+        unawaited(shutdown());
+      }
+      _setStatus(discordUnsupportedStatus);
+      return;
+    }
     if (_enabled == value) return;
     _enabled = value;
     _forgetPresence();
@@ -402,7 +429,8 @@ class DiscordPresence extends ChangeNotifier {
     _last = s;
     if (!_enabled) {
       _cancelRetry();
-      if (_status != 'disabled') _setStatus('disabled');
+      final idle = _supported ? 'disabled' : discordUnsupportedStatus;
+      if (_status != idle) _setStatus(idle);
       return;
     }
     _armRetry();
@@ -535,7 +563,11 @@ class DiscordPresence extends ChangeNotifier {
     final wasInitialized = _initialized;
     _initialized = false;
     _initFuture = null;
-    _setStatus(_enabled ? 'idle' : 'disabled');
+    _setStatus(!_supported
+        ? discordUnsupportedStatus
+        : _enabled
+        ? 'idle'
+        : 'disabled');
     if (wasInitialized) {
       try {
         if (_rpc.isConnected) await _rpc.clearActivity();

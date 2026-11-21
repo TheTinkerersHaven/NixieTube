@@ -66,30 +66,30 @@ class AlbumPlaylistViewMobile extends StatelessWidget {
 
     const sortLabels = ['Default', 'Title', 'Artist', 'Duration'];
 
-    // One connected row of four sort buttons. Each segment shares the
-    // content width equally and its label shrinks to fit, so the row
-    // stays on one line even on a narrow phone.
+    // One centered trigger opening a compact menu: four labels across a
+    // 400dp phone would each get ~90dp, so the options live in the menu
+    // and the row keeps only the current one.
     Widget sortControl() {
-      final scheme = Theme.of(context).colorScheme;
-      return Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(ExpressiveCorners.small),
-          border: Border.all(color: scheme.outlineVariant),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Row(
-          children: [
-            for (var i = 0; i < sortLabels.length; i++) ...[
-              if (i > 0) Container(width: 1, color: scheme.outlineVariant),
-              Expanded(
-                child: _SortSegment(
-                  label: sortLabels[i],
-                  selected: sort == i,
-                  onTap: () => onSortChanged(i),
-                ),
+      return Center(
+        child: M3EPopupMenuButton<int>(
+          tooltip: 'Sort order',
+          initialValue: sort,
+          itemBuilder: (context) => [
+            for (var i = 0; i < sortLabels.length; i++)
+              M3EPopupMenuItem<int>(
+                value: i,
+                child: Text(sortLabels[i]),
               ),
-            ],
           ],
+          onSelected: onSortChanged,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.sort_rounded, size: 18),
+              const SizedBox(width: 8),
+              Text('Sort: ${sortLabels[sort]}'),
+            ],
+          ),
         ),
       );
     }

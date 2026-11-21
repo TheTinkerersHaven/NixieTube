@@ -5,12 +5,11 @@
 // It shows once, on the first start, and is skipped for good once the
 // user is through it (the flag lives in the app settings).
 
-import 'dart:io' show Platform;
-
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
+import '../../sys/platform_features.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/browser_login_dialog.dart';
@@ -305,9 +304,9 @@ class _SignInStep extends StatelessWidget {
               ],
             )
           else ...[
-            // The built-in login window is desktop-only; phones sign in
-            // by pasting the cookie from a browser instead.
-            if (!Platform.isAndroid && !Platform.isIOS) ...[
+            // The built-in login window is a desktop WebKit view; phones
+            // sign in by pasting the cookie from a browser instead.
+            if (supportsEmbeddedLogin(currentPlatform())) ...[
               M3EFilledButton.icon(
                 onPressed: loginBusy ? null : onBrowserWindow,
                 icon: const Icon(Icons.login_rounded),
@@ -315,11 +314,22 @@ class _SignInStep extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'Opens a login window right here — sign in with Google and '
+                'Opens the sign-in page right here — sign in with Google and '
                 'the session is picked up when you confirm.',
                 style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 22),
+            ] else ...[
+              // A phone has no embedded login window, so this is the whole
+              // flow: the cookie is copied out of a browser and pasted in.
+              Text(
+                'This build has no built-in login window. Open '
+                'music.youtube.com in a browser on a computer, sign in, and '
+                'copy the Cookie header of any youtubei request (Settings → '
+                'Account lists the exact steps).',
+                style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 16),
             ],
             Text('Or paste the cookie by hand:', style: text.bodyMedium),
             const SizedBox(height: 8),

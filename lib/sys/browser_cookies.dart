@@ -69,4 +69,32 @@ class BrowserCookies {
     if (byName.isEmpty) return null;
     return byName.entries.map((e) => '${e.key}=${e.value}').join('; ');
   }
+
+  /// Builds the `Cookie` header from a cookie header *string*
+  /// (`name=value; name2=value2`), or null when it carries no signed-in
+  /// session.
+  ///
+  /// Android's `CookieManager.getCookie(url)` returns every cookie set
+  /// for that URL in exactly this format — and, unlike `document.cookie`,
+  /// it reads the store itself, so the HttpOnly session cookies
+  /// (`SAPISID`, `__Secure-1PSID`, …) that YouTube authenticates with are
+  /// included. All entries are attributed to `.youtube.com`, which is
+  /// where the session cookies live.
+  static String? youTubeHeaderFromCookieString(String? cookie) {
+    if (cookie == null || cookie.trim().isEmpty) return null;
+    final cookies = <Map<String, String>>[];
+    for (final part in cookie.split(';')) {
+      final eq = part.indexOf('=');
+      if (eq <= 0) continue;
+      final name = part.substring(0, eq).trim();
+      if (name.isEmpty) continue;
+      cookies.add({
+        'domain': '.youtube.com',
+        'name': name,
+        'value': part.substring(eq + 1).trim(),
+      });
+    }
+    if (!hasSignedInSession(cookies)) return null;
+    return buildYouTubeHeader(cookies);
+  }
 }

@@ -1,6 +1,8 @@
 // Application shell: navigation rail, screen body, mini player bar,
 // Now Playing overlay, and playlist dialog.
 
+import 'dart:async' show unawaited;
+
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:flutter/services.dart';
@@ -425,9 +427,18 @@ class _UpdateBanner extends StatelessWidget {
             ),
           ),
           M3ETextButton(
-            onPressed: () => state.openAppUpdates(),
+            onPressed: () {
+              // An AppImage replaces itself from Settings; any other
+              // build has to fetch the download, so the button goes
+              // straight to the release page.
+              if (state.canInstallUpdates) {
+                state.openAppUpdates();
+              } else {
+                unawaited(state.openReleasesPage());
+              }
+            },
             child: Text(
-              'Install',
+              state.canInstallUpdates ? 'Install' : 'Download',
               style: TextStyle(color: scheme.onPrimaryContainer),
             ),
           ),

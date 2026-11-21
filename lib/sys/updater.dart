@@ -22,6 +22,11 @@ const _log = TaggedLog('updater');
 const _githubOwner = 'TheTinkerersHaven';
 const _githubRepo = 'NixieTube';
 
+/// The release page every build links to when it cannot install an
+/// update itself (a phone build, a plain `flutter run`).
+const githubReleasesPageUrl =
+    'https://github.com/$_githubOwner/$_githubRepo/releases/latest';
+
 /// The four magic bytes every ELF binary starts with (`0x7f E L F`).
 const _elfMagic = [0x7f, 0x45, 0x4c, 0x46];
 
@@ -45,6 +50,19 @@ class Updater {
   }) : _dio = dio ?? newHttpClient(),
        _appImagePathOverride = appImagePath,
        _downloadOverride = download;
+
+  /// The release page every build links to when it cannot install an
+  /// update itself (a phone build, a plain `flutter run`).
+  String get releasesPageUrl => githubReleasesPageUrl;
+
+  /// Whether this build can replace its own binary in place.
+  ///
+  /// Only the Linux AppImage can: the running app is an AppImage file on
+  /// disk that the download can be renamed over. A phone install (or any
+  /// build launched from the SDK) has nothing to swap, so updates for it
+  /// are installed from the release page instead.
+  bool get canInstallInPlace =>
+      _appImagePathOverride != null || _appImagePath() != null;
 
   final Dio _dio;
 
