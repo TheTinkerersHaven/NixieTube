@@ -20,6 +20,7 @@ import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/home_screen.dart';
 import 'package:nixietube/ui/screens/library_screen.dart';
+import 'package:nixietube/ui/widgets/cards.dart';
 import 'package:provider/provider.dart';
 
 /// A tube that never reaches the network.
@@ -253,5 +254,37 @@ void main() {
     final playButton = tester.getRect(find.byTooltip('Play quick picks'));
     expect(playButton.height, closeTo(titleBox.height, 1));
     expect(playButton.top, closeTo(titleBox.top, 1));
+  });
+
+  testWidgets('phone quick picks sit under the title and keep the last row', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize);
+    final state = await _boot(_ShortLibrary(songs: 9));
+    // Pins count toward the slots and the row count too.
+    state.togglePin(ShelfItem.song(state.liked.first));
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: const MaterialApp(home: Scaffold(body: HomeScreen())),
+      ),
+    );
+    await tester.pump();
+
+    final title = tester.getRect(find.text('Quick picks'));
+    final grid = tester.getRect(find.byType(GridView));
+    // The grid follows the heading closely, not after a tall gap.
+    expect(grid.top - title.bottom, lessThanOrEqualTo(6));
+
+    // Every rendered card is inside the grid box: the last row is not
+    // clipped by the grid's fixed height.
+    final cards = find.byType(QuickPickCard);
+    expect(cards, findsWidgets);
+    for (var i = 0; i < cards.evaluate().length; i++) {
+      final card = tester.getRect(cards.at(i));
+      expect(card.bottom, lessThanOrEqualTo(grid.bottom + 0.5));
+    }
   });
 }

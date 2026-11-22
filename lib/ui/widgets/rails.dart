@@ -10,6 +10,12 @@ import '../a11y.dart';
 import '../theme.dart';
 import 'cards.dart';
 
+/// Phone rail metrics: shared by the home card rails and the artist page
+/// rails so every phone rail lines up (one card width, one gap).
+const double compactRailCardWidth = 152.0;
+const double compactRailGap = 16.0;
+const double compactRailHeight = 224.0;
+
 /// Section header with title plus scroll-left/right buttons, mirroring
 /// the rail header. Each press transitions exactly one viewport
 /// page ([step] only covers the pre-layout window with no viewport).
@@ -200,14 +206,18 @@ class _BrowseRailState extends State<BrowseRail> {
     // and drop the scroll arrows when everything already fits.
     return LayoutBuilder(
       builder: (context, c) {
-        const gap = 16.0;
+        final gap = compactRailGap;
         final compact = isCompactLayout(context);
         final count = (c.maxWidth / 220).round().clamp(3, 10);
-        final cardW = compact ? 152.0 : (c.maxWidth - gap * (count - 1)) / count;
+        final cardW = compact
+            ? compactRailCardWidth
+            : (c.maxWidth - gap * (count - 1)) / count;
         final needsScroll = compact
             ? (widget.items.length * (cardW + gap) > c.maxWidth)
             : widget.items.length > count;
-        final height = widget.circular ? 210.0 : (compact ? 224.0 : 300.0);
+        final height = widget.circular
+            ? 210.0
+            : (compact ? compactRailHeight : 300.0);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -229,7 +239,7 @@ class _BrowseRailState extends State<BrowseRail> {
                     .forwardToVerticalAncestorOrSelf,
                 padding: EdgeInsets.zero,
                 itemCount: widget.items.length,
-                separatorBuilder: (_, _) => const SizedBox(width: gap),
+                separatorBuilder: (_, _) => SizedBox(width: gap),
                 itemBuilder: (context, i) {
                   final item = widget.items[i];
                   final card = widget.circular
@@ -270,7 +280,11 @@ class CardRail extends StatefulWidget {
   final Widget? trailing;
   final double height;
   final int itemCount;
-  final Widget Function(BuildContext context, int index) itemBuilder;
+
+  /// Builds one card. [width] is the rail's card width for the current
+  /// layout; pass it to the card so its artwork scales with it.
+  final Widget Function(BuildContext context, int index, double width)
+  itemBuilder;
 
   @override
   State<CardRail> createState() => _CardRailState();
@@ -287,6 +301,13 @@ class _CardRailState extends State<CardRail> {
 
   @override
   Widget build(BuildContext context) {
+    // Phones use the same metrics as the artist page rails: a 152dp card
+    // with a 16dp gap and a 224dp rail, so every home rail reads like
+    // those. Desktop keeps the large cover cards.
+    final compact = isCompactLayout(context);
+    final cardW = compact ? compactRailCardWidth : 208.0;
+    final height = compact ? compactRailHeight : widget.height;
+    final gap = compact ? compactRailGap : 0.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -294,11 +315,11 @@ class _CardRailState extends State<CardRail> {
           title: widget.title,
           controller: _ctrl,
           trailing: widget.trailing,
-          showArrows: !isCompactLayout(context),
+          showArrows: !compact,
         ),
         SizedBox(
-          height: widget.height,
-          child: SilkyListView.builder(
+          height: height,
+          child: SilkyListView.separated(
             controller: _ctrl,
             scrollDirection: Axis.horizontal,
             scrollSpeed: 1.5,
@@ -306,8 +327,12 @@ class _CardRailState extends State<CardRail> {
             animationCurve: Curves.easeOutQuart,
             mouseWheelVerticalDeltaBehavior:
                 MouseWheelVerticalDeltaBehavior.forwardToVerticalAncestorOrSelf,
+            separatorBuilder: (_, _) => SizedBox(width: gap),
             itemCount: widget.itemCount,
-            itemBuilder: widget.itemBuilder,
+            itemBuilder: (context, i) => SizedBox(
+              width: cardW,
+              child: widget.itemBuilder(context, i, cardW),
+            ),
           ),
         ),
       ],

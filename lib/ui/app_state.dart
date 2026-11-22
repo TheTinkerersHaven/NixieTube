@@ -603,6 +603,10 @@ class AppState extends ChangeNotifier {
   /// Pushes rise from the bottom, pops sink back down.
   bool get lastNavForward => _nav.lastNavForward;
 
+  /// Increments on every navigation, including a push that keeps the
+  /// same [Screen] (artist → album). The UI keys its transition on it.
+  int get navRevision => _nav.revision;
+
   /// Navigates forward, pushing the current screen for [goBack].
   /// Detail screens kick off their load on arrival.
   void go(Screen screen, {BrowseItem? detail}) {
@@ -4066,6 +4070,8 @@ class AppState extends ChangeNotifier {
     _nowOpen = false;
     _nowReady = false;
     _lyricsFull = false;
+    // Closing the player also abandons any pending sheet reopen.
+    _lyricsSheetPending = false;
     _holdPaletteForTransition();
     _safeNotify();
   }
@@ -4075,6 +4081,24 @@ class AppState extends ChangeNotifier {
   /// reopening always lands on the standard two-column view.
   bool _lyricsFull = false;
   bool get lyricsFull => _lyricsFull;
+
+  /// Set when fullscreen lyrics was opened from the phone's bottom
+  /// sheet, so leaving fullscreen can bring that sheet back on Lyrics.
+  bool _lyricsSheetPending = false;
+  bool get lyricsSheetPending => _lyricsSheetPending;
+
+  /// Marks that the phone's Now Playing sheet should reopen (on the
+  /// Lyrics tab) when fullscreen lyrics is left.
+  void markLyricsSheetPending() {
+    _lyricsSheetPending = true;
+  }
+
+  /// Clears and returns the reopen flag (see [markLyricsSheetPending]).
+  bool consumeLyricsSheetPending() {
+    final pending = _lyricsSheetPending;
+    _lyricsSheetPending = false;
+    return pending;
+  }
 
   /// Remembered tab index (Up next / Lyrics / Info) for the Now
   /// Playing overlay, so reopening lands on the last tab used.

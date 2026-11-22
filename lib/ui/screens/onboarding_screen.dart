@@ -304,8 +304,8 @@ class _SignInStep extends StatelessWidget {
               ],
             )
           else ...[
-            // The built-in login window is a desktop WebKit view; phones
-            // sign in by pasting the cookie from a browser instead.
+            // Desktop has a WebKit window and Android a system WebView;
+            // iOS still pastes a cookie from a browser.
             if (supportsEmbeddedLogin(currentPlatform())) ...[
               M3EFilledButton.icon(
                 onPressed: loginBusy ? null : onBrowserWindow,

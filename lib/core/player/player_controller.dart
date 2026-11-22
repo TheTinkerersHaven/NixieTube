@@ -1347,30 +1347,28 @@ class PlayerController implements PlayerEngineListener {
 
     final gen = ++_prefetchGen;
     final immediateNext = toPrefetch.first;
-    final rest = toPrefetch.skip(1);
 
-    // Resolve the lookahead tracks right away.
-    for (final vid in rest) {
+    // Resolve every lookahead track right away: pressing next must not
+    // wait on a resolve. The immediate next is resolved again near the
+    // handoff below so the URL it plays is fresh when consumed.
+    for (final vid in toPrefetch) {
       unawaited(_prefetchTrack(vid, gen));
     }
 
     // Schedule the immediate next track close to handoff.
     final duration = s.durationMs;
-    if (duration <= 0) {
-      unawaited(_prefetchTrack(immediateNext, gen));
-      return;
-    }
+    if (duration <= 0) return;
     final remaining = duration - s.positionMs;
     final leadTime = _prefetchLeadTimeFor(duration);
-    if (remaining <= leadTime.inMilliseconds) {
-      unawaited(_prefetchTrack(immediateNext, gen));
-      return;
-    }
+    if (remaining <= leadTime.inMilliseconds) return;
     final delay = Duration(milliseconds: remaining - leadTime.inMilliseconds);
     _prefetchTimer = Timer(delay, () {
       _prefetchTimer = null;
       if (_disposed) return;
-      unawaited(_prefetchTrack(immediateNext, gen));
+      // Drop the early resolve and mint a fresh one, so a long track
+      // never hands over an expired URL.
+      _prefetchedStreams.remove(immediateNext);
+      unawaited(_prefetchTrack(immediateNext, gen, force: true));
     });
   }
 
@@ -1389,9 +1387,15 @@ class PlayerController implements PlayerEngineListener {
   }
 
   /// Resolves a single track's stream in the background and stores it in
-  /// the prefetch cache if the generation is still current. Never throws.
-  Future<void> _prefetchTrack(String videoId, int gen) async {
-    if (_prefetchedStreams.containsKey(videoId)) return;
+  /// the prefetch cache if the generation is still current. [force]
+  /// re-resolves even when the track is already cached (the pre-handoff
+  /// refresh). Never throws.
+  Future<void> _prefetchTrack(
+    String videoId,
+    int gen, {
+    bool force = false,
+  }) async {
+    if (!force && _prefetchedStreams.containsKey(videoId)) return;
     ResolvedStream? stream;
     try {
       stream = await _resolveStreamAndLength(videoId);

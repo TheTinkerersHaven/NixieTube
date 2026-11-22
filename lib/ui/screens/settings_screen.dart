@@ -109,7 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: 'Sign in to YouTube Music and manage your session.',
             ),
             const SizedBox(height: 8),
-            _SettingsSegments(children: [const _AccountCard()]),
+            _SettingsCard(child: const _AccountCard()),
           ],
         ),
       ),
@@ -376,9 +376,29 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-/// Uniform card chrome for every settings section: a Material
-/// card with a constant inset, so all sections share the same
-/// surface and padding.
+/// A standalone settings card surface matching the M3 segmented group
+/// styling (16px radius, surfaceContainer background, 12px padding) without
+/// the list focus-traversal wrappers that disrupt embedded text fields.
+class _SettingsCard extends StatelessWidget {
+  const _SettingsCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainer,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: child,
+      ),
+    );
+  }
+}
+
 /// A settings group drawn as one M3 segmented list: each child is a
 /// segment, so related controls share a surface without divider lines.
 class _SettingsSegments extends StatelessWidget {

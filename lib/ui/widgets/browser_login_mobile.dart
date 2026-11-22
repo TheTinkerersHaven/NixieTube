@@ -33,13 +33,12 @@ const _cookieChannel = MethodChannel('nixietube/cookies');
 /// rather than going through JavaScript.
 Future<String?> readSystemCookies(Uri url) async {
   try {
-    return await _cookieChannel.invokeMethod<String>(
-      'getCookies',
-      {'url': url.toString()},
-    );
+    return await _cookieChannel.invokeMethod<String>('getCookies', {
+      'url': url.toString(),
+    });
   } on MissingPluginException {
-    return null;
-  } on PlatformException {
+    // Not Android (or no platform view host): the caller falls back to
+    // the manual paste. A real Android failure should surface as one.
     return null;
   }
 }
@@ -93,6 +92,9 @@ Future<String?> showMobileBrowserLoginDialog(
   return showDialog<String>(
     context: context,
     barrierDismissible: true,
+    // The dialog is a full-screen page: it owns its own SafeArea so the
+    // WebView can draw behind the bars without the route insetting it twice.
+    useSafeArea: false,
     builder: (context) => _MobileBrowserLoginDialog(
       readCookies: reader,
       page: page,
@@ -205,9 +207,7 @@ class _MobileBrowserLoginDialogState extends State<_MobileBrowserLoginDialog> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               decoration: BoxDecoration(
                 color: scheme.surfaceContainer,
-                border: Border(
-                  top: BorderSide(color: scheme.outlineVariant),
-                ),
+                border: Border(top: BorderSide(color: scheme.outlineVariant)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -232,7 +232,9 @@ class _MobileBrowserLoginDialogState extends State<_MobileBrowserLoginDialog> {
                     onPressed: _checking ? null : _check,
                     icon: const Icon(Icons.login_rounded),
                     label: Text(
-                      _checking ? 'Checking…' : "I've signed in — import session",
+                      _checking
+                          ? 'Checking…'
+                          : "I've signed in — import session",
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -287,6 +289,5 @@ class _LoginWebViewState extends State<_LoginWebView> {
     ..loadRequest(Uri.parse(widget.url));
 
   @override
-  Widget build(BuildContext context) =>
-      WebViewWidget(controller: _controller);
+  Widget build(BuildContext context) => WebViewWidget(controller: _controller);
 }

@@ -196,7 +196,6 @@ class HomeScreen extends StatelessWidget {
                   pins: gridLoading ? const <ShelfItem>[] : pins,
                 ),
               ),
-              const SizedBox(height: homeSectionSpacing),
             ] else if (!loading && account != null && activity.isNotEmpty) ...[
               _jumpBackIn(context, state),
               const SizedBox(height: homeSectionSpacing),
@@ -414,11 +413,12 @@ class HomeScreen extends StatelessWidget {
         CardRail(
           title: 'Albums made for you',
           itemCount: entries.length,
-          itemBuilder: (context, i) {
+          itemBuilder: (context, i, width) {
             final entry = entries[i];
             final mix = entry.mix;
             return BrowseCard(
               item: entry.item,
+              width: width,
               onTap: () {
                 if (mix != null) {
                   if (!loading) unawaited(state.playMix(mix));
@@ -489,10 +489,11 @@ class HomeScreen extends StatelessWidget {
     return CardRail(
       title: 'Jump back in',
       itemCount: tracks.length,
-      itemBuilder: (context, i) {
+      itemBuilder: (context, i, width) {
         final t = tracks[i];
         return TrackRailCard(
           track: t,
+          width: width,
           playing: t.videoId == playingId,
           onTap: () => state.playSongs(state.activity, i),
         );
@@ -509,10 +510,11 @@ class HomeScreen extends StatelessWidget {
         child: const Text('Play all'),
       ),
       itemCount: state.discover.length,
-      itemBuilder: (context, i) {
+      itemBuilder: (context, i, width) {
         final t = state.discover[i];
         return TrackRailCard(
           track: t,
+          width: width,
           playing: t.videoId == playingId,
           onTap: () => state.playSongs(state.discover, i),
         );
@@ -702,7 +704,13 @@ class _QuickPicksGrid extends StatelessWidget {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final m = quickPickMetrics(constraints.maxWidth, songs.length);
+        // Pins count toward the slots and the row count: sizing the grid
+        // from songs alone could drop pins (or leave the last row clipped
+        // when they filled it).
+        final m = quickPickMetrics(
+          constraints.maxWidth,
+          songs.length + pins.length,
+        );
         // Pins first, then the ranked pool in order (per-launch
         // variety already shuffled into it by rankPickSongs).
         final picks = orderQuickPicks(pins: pins, songs: songs, slots: m.shown);
@@ -841,20 +849,18 @@ class _QuickPicksGrid extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 8),
-            // Fixed height from the column count so the grid stays lazy:
-            // a shrink-wrapped grid would build every tile eagerly.
-            SizedBox(
-              height: m.rows * m.tile,
-              child: GridView.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: m.cols,
-                  childAspectRatio: 1,
-                ),
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: picks.length,
-                itemBuilder: (context, i) => pickTile(picks[i]),
+            // The grid sizes itself to its content so the last row is
+            // never clipped by a miscalculated fixed height.
+            GridView.builder(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: m.cols,
+                childAspectRatio: 1,
               ),
+              physics: const NeverScrollableScrollPhysics(),
+              shrinkWrap: true,
+              itemCount: picks.length,
+              itemBuilder: (context, i) => pickTile(picks[i]),
+              padding: EdgeInsets.symmetric(vertical: 12),
             ),
           ],
         );
@@ -1084,12 +1090,15 @@ class _ShelfSection extends StatelessWidget {
     final loadingMore = state.isLoadingMoreShelf(shelf.title);
     Widget body;
     if (songs.isNotEmpty && browses.isEmpty) {
-      if (songRail) {
+      // Phones only use the cover rail: the multi-column row list is a
+      // desktop shape, so a song shelf becomes a track rail there.
+      if (songRail || isCompactLayout(context)) {
         body = CardRail(
           title: header,
           itemCount: songs.length,
-          itemBuilder: (context, i) => TrackRailCard(
+          itemBuilder: (context, i, width) => TrackRailCard(
             track: songs[i],
+            width: width,
             playing: songs[i].videoId == playingId,
             onTap: () => _playShelfSong(state, songs, i),
           ),
@@ -1111,7 +1120,7 @@ class _ShelfSection extends StatelessWidget {
       body = CardRail(
         title: header,
         itemCount: shelf.items.length,
-        itemBuilder: (context, i) {
+        itemBuilder: (context, i, width) {
           final item = shelf.items[i];
           if (item is SongItem) {
             final t = item.track;
@@ -1122,6 +1131,7 @@ class _ShelfSection extends StatelessWidget {
                 browseId: '',
                 thumbnails: t.thumbnails,
               ),
+              width: width,
               track: t,
               onTap: () {
                 if (AppState.isMixSeed(t)) {
@@ -1137,6 +1147,7 @@ class _ShelfSection extends StatelessWidget {
           final b = item as BrowseItem;
           return BrowseCard(
             item: b,
+            width: width,
             onTap: () {
               if (b.isPlaylist) {
                 state.openPlaylistById(b.browseId, item: b);

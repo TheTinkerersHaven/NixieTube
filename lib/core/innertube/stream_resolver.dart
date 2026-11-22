@@ -145,6 +145,14 @@ class StreamResolver {
     await _visitorData(true);
   }
 
+  /// Fetches the cached visitor id ahead of the first resolve, so the
+  /// first play does not wait on the YouTube homepage read that mints
+  /// it. Fire-and-forget: failures are retried by the resolve path.
+  void warmUp() {
+    if (_visitor != null && _visitorAt != null) return;
+    unawaited(_visitorData(false));
+  }
+
   /// Cached visitor id, fetched from the YouTube homepage once. Stream URLs
   /// are bound to it; [refresh] re-fetches after a rejection (visitor ids
   /// rotate server-side).

@@ -224,6 +224,10 @@ class _Body extends StatelessWidget {
   Widget build(BuildContext context) {
     final screen = context.select<AppState, Screen>((s) => s.screen);
     final forward = context.select<AppState, bool>((s) => s.lastNavForward);
+    // Every push and pop gets a fresh key, including a move that stays
+    // on the same screen (artist → album, album → related album): the
+    // transition then runs exactly like it does for Settings.
+    final revision = context.select<AppState, int>((s) => s.navRevision);
     // Router-aware switch: pushes rise from the bottom, back pops
     // sink down, always over a fade. Only the incoming child stays
     // mounted (the outgoing one drops at once), so lists never
@@ -247,7 +251,7 @@ class _Body extends StatelessWidget {
       ),
       layoutBuilder: (currentChild, previousChildren) =>
           Stack(children: [?currentChild]),
-      child: KeyedSubtree(key: ValueKey(screen), child: _screenFor(screen)),
+      child: KeyedSubtree(key: ValueKey(revision), child: _screenFor(screen)),
     );
   }
 

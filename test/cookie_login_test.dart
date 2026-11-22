@@ -2,11 +2,13 @@
 // expired) cookie session the card offers to open YouTube Music for
 // a fresh login, and tapping it opens exactly that URL.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+import 'mock_dio.dart';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -157,6 +159,67 @@ void main() {
     expect(env.state.tube.auth.cookie, isNull);
     expect(env.state.account, isNull);
     expect(env.state.config.get('cookie'), isEmpty);
+    env.state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('manual cookie import in Settings logs in', (tester) async {
+    const cookie =
+        'SID=abc; HSID=xyz; SSID=qqq; __Secure-1PAPISID=p1; '
+        '__Secure-3PAPISID=p3; APISID=a1; SAPISID=s1; LOGIN_INFO=AFmmF2swR; PREF=f6';
+    final dio = mockDio((options) async {
+      final path = options.uri.path;
+      if (path.endsWith('/browse')) {
+        return (
+          200,
+          jsonEncode({
+            'contents': {
+              'singleColumnBrowseResultsRenderer': {
+                'tabs': [
+                  {
+                    'tabRenderer': {
+                      'content': {
+                        'sectionListRenderer': {
+                          'contents': [
+                            {
+                              'musicShelfRenderer': {
+                                'title': {'runs': [{'text': 'Playlists'}]},
+                                'contents': [],
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+        );
+      }
+      return (200, '{}');
+    });
+    final tube = InnerTube(dio: dio);
+    final env = await _pumpSettings(tester, tube: tube);
+
+    final field = find.widgetWithText(TextField, 'Cookie header value');
+    expect(field, findsOneWidget);
+    await tester.enterText(field, cookie);
+    await tester.pump();
+    expect(tester.widget<TextField>(field).controller!.text, cookie);
+
+    final signIn = find.text('Sign in');
+    await tester.ensureVisible(signIn);
+    await tester.pumpAndSettle();
+    await tester.tap(signIn);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(env.state.hasCookieSession, isTrue);
+    expect(env.state.loginValid, isTrue);
+    expect(find.text('Connected'), findsOneWidget);
+
     env.state.player.dispose();
     await tester.pump();
   });

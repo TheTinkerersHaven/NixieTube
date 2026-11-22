@@ -33,6 +33,9 @@ const androidNotificationChannelId = 'nixietube.playback';
 /// Human-readable channel name shown in the system settings.
 const androidNotificationChannelName = 'Now playing';
 
+/// Custom media action backing the notification's like button.
+const likeActionName = 'nixietube_like';
+
 /// Translates the player into the media session's vocabulary.
 ///
 /// Pure: [mediaItemFor], [processingStateOf], [mediaControlsFor] and
@@ -49,9 +52,26 @@ class PlaybackAudioHandler extends BaseAudioHandler {
   String _mediaKey = '';
   String _queueKey = '';
   String _playbackKey = '';
-  int _lastSeekEpoch = -1;
-  String? _lastTrackId;
-  bool _lastPlaying = false;
+
+  /// Whether the notification shows a like button, and what tapping it
+  /// does. Wired by [connectRatings] once the app state exists.
+  bool Function()? _canRate;
+  Future<void> Function(String videoId, RatingStatus rating)? _onLike;
+
+  /// Connects the notification's like button to [onLike].
+  ///
+  /// [canRate] is asked on every player update, so the button follows
+  /// sign-in and appears on the next state the session mirrors.
+  void connectRatings({
+    required bool Function() canRate,
+    required Future<void> Function(String videoId, RatingStatus rating) onLike,
+  }) {
+    _canRate = canRate;
+    _onLike = onLike;
+    // The signature includes the rating flag, so this re-sends the
+    // state and the button appears or disappears right away.
+    if (_connected) _onState(_controller.state);
+  }
 
   /// Starts mirroring the player. Idempotent: a second call is a no-op.
   void connect() {
@@ -69,8 +89,6 @@ class PlaybackAudioHandler extends BaseAudioHandler {
     _mediaKey = '';
     _queueKey = '';
     _playbackKey = '';
-    _lastSeekEpoch = -1;
-    _lastTrackId = null;
     mediaItem.add(null);
     queue.add(const []);
     playbackState.add(
@@ -105,30 +123,22 @@ class PlaybackAudioHandler extends BaseAudioHandler {
     }
 
     // --- playback state ------------------------------------------------
-    // Position is only broadcast when it jumps (a seek, a new track, a
-    // pause): clients project the live position from it themselves, and a
-    // per-tick broadcast would redraw the notification twice a second.
-    final seeked = s.seekEpoch != _lastSeekEpoch;
-    final trackChanged = track?.videoId != _lastTrackId;
-    final playingChanged = s.playing != _lastPlaying;
-    _lastSeekEpoch = s.seekEpoch;
-    _lastTrackId = track?.videoId;
-    _lastPlaying = s.playing;
-
+    // The signature changes only for something the notification shows, so
+    // a state is emitted only when it matters. Every emission carries the
+    // real position: [PlaybackState.updatePosition] is the position at
+    // [updateTime], and clients project the live value from there, so a
+    // zero would jump the seek bar back to the start.
+    final canRate = _canRate?.call() ?? false;
     final signature = playbackSignature(
       state: s,
       mediaKey: mediaKey,
       queueKey: queueKey,
+      canRate: canRate,
     );
     if (signature == _playbackKey) return;
     _playbackKey = signature;
 
-    playbackState.add(
-      playbackStateFor(
-        s,
-        updatePosition: seeked || trackChanged || playingChanged,
-      ),
-    );
+    playbackState.add(playbackStateFor(s, canRate: canRate));
   }
 
   // --- requests from the OS -------------------------------------------
@@ -195,6 +205,27 @@ class PlaybackAudioHandler extends BaseAudioHandler {
   Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
     _controller.setShuffle(shuffleMode != AudioServiceShuffleMode.none);
   }
+
+  /// The notification's like button toggles the current track's rating.
+  /// Unknown names fall through to the base handler.
+  @override
+  Future<dynamic> customAction(
+    String name, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    if (name == likeActionName) {
+      final track = _controller.state.current;
+      final onLike = _onLike;
+      if (track != null && onLike != null) {
+        final next = track.rating == RatingStatus.like
+            ? RatingStatus.indifferent
+            : RatingStatus.like;
+        await onLike(track.videoId, next);
+      }
+      return null;
+    }
+    return super.customAction(name, extras);
+  }
 }
 
 /// Forward/rewind step, matching the system's 10s default.
@@ -205,7 +236,9 @@ const forwardInterval = Duration(seconds: 10);
 /// matches what the player actually has.
 MediaItem mediaItemFor(Track track, int durationMs) {
   final art = track.displayArtwork;
-  final artUri = (art != null && art.startsWith('http')) ? Uri.tryParse(art) : null;
+  final artUri = (art != null && art.startsWith('http'))
+      ? Uri.tryParse(art)
+      : null;
   return MediaItem(
     id: track.videoId,
     title: track.title,
@@ -236,31 +269,47 @@ bool canMoveBy(PlayerState s, int offset) {
   return false;
 }
 
-/// The notification's buttons for [s]: previous, play/pause, stop, next,
-/// each omitted when the transport cannot act on it.
-List<MediaControl> mediaControlsFor(PlayerState s) => [
+/// The notification's buttons for [s]: previous, play/pause, next, and —
+/// when [canRate] — a like/unlike button. Each is omitted when the
+/// transport cannot act on it. There is deliberately no stop button: the
+/// notification is taken down when playback stops, and a stop control
+/// would only crowd the row.
+List<MediaControl> mediaControlsFor(PlayerState s, {bool canRate = false}) => [
   if (canMoveBy(s, -1)) MediaControl.skipToPrevious,
   s.playing ? MediaControl.pause : MediaControl.play,
-  MediaControl.stop,
   if (canMoveBy(s, 1)) MediaControl.skipToNext,
+  if (canRate && s.current != null)
+    likeControl(liked: s.current!.rating == RatingStatus.like),
 ];
 
-/// Builds the session's [PlaybackState] for [s]. [updatePosition] is
-/// false for the steady-state ticks a playing track emits twice a
-/// second, so the position is only re-sent when it actually moved.
+/// The custom notification button that likes or unlikes the current
+/// track. [liked] only changes the label; the icon stays a thumb up.
+MediaControl likeControl({required bool liked}) => MediaControl.custom(
+  androidIcon: 'drawable/ic_nixietube_thumb_up',
+  label: liked ? 'Unlike' : 'Like',
+  name: likeActionName,
+  extras: {'liked': liked},
+);
+
+/// Builds the session's [PlaybackState] for [s]. [positionOverride]
+/// replaces the player's position for callers that need a fixed value;
+/// it defaults to the live position, which is what the platform expects.
 PlaybackState playbackStateFor(
   PlayerState s, {
-  bool updatePosition = true,
   Duration? positionOverride,
+  bool canRate = false,
 }) {
-  final duration = s.durationMs > 0 ? Duration(milliseconds: s.durationMs) : null;
-  final controls = mediaControlsFor(s);
+  final duration = s.durationMs > 0
+      ? Duration(milliseconds: s.durationMs)
+      : null;
+  final controls = mediaControlsFor(s, canRate: canRate);
   // Up to three buttons in the compact view, and never the stop button.
   final compact = <int>[];
   for (var i = 0; i < controls.length && compact.length < 3; i++) {
     if (controls[i].action != MediaAction.stop) compact.add(i);
   }
-  final playing = s.playing && processingStateOf(s) == AudioProcessingState.ready;
+  final playing =
+      s.playing && processingStateOf(s) == AudioProcessingState.ready;
   return PlaybackState(
     processingState: processingStateOf(s),
     playing: playing,
@@ -273,8 +322,7 @@ PlaybackState playbackStateFor(
             MediaAction.seekForward,
             MediaAction.seekBackward,
           },
-    updatePosition: positionOverride ??
-        (updatePosition ? Duration(milliseconds: s.positionMs) : Duration.zero),
+    updatePosition: positionOverride ?? Duration(milliseconds: s.positionMs),
     bufferedPosition: Duration(milliseconds: s.positionMs),
     speed: 1.0,
     queueIndex: s.index >= 0 ? s.index : null,
@@ -297,11 +345,13 @@ RepeatMode repeatModeOf(AudioServiceRepeatMode mode) => switch (mode) {
 };
 
 /// Identity of everything the notification shows, so a 500ms position
-/// tick that changes nothing does not re-broadcast the state.
+/// tick that changes nothing does not re-broadcast the state. [canRate]
+/// and the current track's rating change the like button.
 String playbackSignature({
   required PlayerState state,
   required String mediaKey,
   required String queueKey,
+  bool canRate = false,
 }) => [
   mediaKey,
   queueKey,
@@ -310,8 +360,11 @@ String playbackSignature({
   state.loading,
   state.stopped,
   state.error != null,
+  state.autoplay,
   state.repeat.name,
   state.shuffle,
+  state.current?.rating.name ?? '',
+  canRate,
 ].join('|');
 
 /// The live handler, once [startBackgroundAudio] has registered one.

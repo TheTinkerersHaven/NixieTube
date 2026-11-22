@@ -84,12 +84,23 @@ const double playerRadius = ExpressiveCorners.largeIncreased;
 /// which now overlays full-height content (bar + its transparent margins).
 const double playerBarClearance = 150.0;
 
-/// Height reserved for the mobile bottom navigation bar.
-const double mobileNavHeight = 80.0;
+/// Content height of the mobile bottom navigation bar, above the bottom
+/// view inset. Compact enough that the bar plus the gesture area stay
+/// close to the system navigation height.
+const double mobileNavHeight = 64.0;
+
+/// Height of the compact mobile mini player bar, including its margins
+/// and the progress line. The navigation bar sits directly below it.
+const double mobilePlayerBarHeight = 65.0;
 
 /// Narrow (phone) layout: bottom navigation instead of the desktop rail.
 bool isCompactLayout(BuildContext context) =>
     MediaQuery.sizeOf(context).width < 600;
+
+/// Wide window: room to set the artist bio beside the top songs rather
+/// than stacking it under them.
+bool isWideLayout(BuildContext context) =>
+    MediaQuery.sizeOf(context).width >= 900;
 
 const _ytmRed = Color(0xFFFF0000);
 

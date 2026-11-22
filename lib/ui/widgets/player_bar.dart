@@ -9,9 +9,11 @@ import '../../core/models/models.dart';
 import '../../core/player/player_state.dart';
 import '../app_state.dart';
 import '../format.dart';
+import '../../sys/platform_features.dart';
 import 'seek_slider.dart';
 import '../theme.dart';
 import 'artwork_image.dart';
+import 'player_bar_mobile.dart';
 import 'volume_slider.dart';
 
 /// Bottom mini player bar; tap to expand Now Playing.
@@ -24,6 +26,10 @@ import 'volume_slider.dart';
 /// splash/highlight/hover) and can be disabled entirely via [tappable]
 /// — the copy inside the fullscreen lyrics view is inert, its inner
 /// transport controls stay live either way.
+///
+/// A narrow window gets [PlayerBarMobile]: the fullscreen lyrics view
+/// draws this bar on phones too, and the phone transport is the compact
+/// one (no volume button, three controls in one row).
 class PlayerBar extends StatefulWidget {
   const PlayerBar({super.key, this.tappable = true});
 
@@ -41,6 +47,9 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    if (isCompactLayout(context)) {
+      return PlayerBarMobile(tappable: widget.tappable);
+    }
     final tappable = widget.tappable;
     final track = context.select<AppState, Track?>(
       (s) => s.playerState.current,
@@ -186,40 +195,46 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                                   ? null
                                   : () => state.player.next(),
                             ),
-                            SingleMotionBuilder(
-                              motion: M3EMotion.expressiveEffectsDefault
-                                  .toMotion(),
-                              value: _volumeOpen ? 1.0 : 0.0,
-                              builder: (context, value, _) {
-                                return Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.volume_up_rounded,
-                                        size: 28,
+                            // Touch hosts (Android, iOS) have hardware
+                            // volume keys: the button only steals width.
+                            // This also covers the copy under fullscreen
+                            // lyrics, which renders this same bar on a
+                            // phone.
+                            if (supportsVolumeSlider(currentPlatform()))
+                              SingleMotionBuilder(
+                                motion: M3EMotion.expressiveEffectsDefault
+                                    .toMotion(),
+                                value: _volumeOpen ? 1.0 : 0.0,
+                                builder: (context, value, _) {
+                                  return Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.volume_up_rounded,
+                                          size: 28,
+                                        ),
+                                        tooltip: 'Volume',
+                                        color: _volumeOpen
+                                            ? scheme.primary
+                                            : null,
+                                        onPressed: () => setState(
+                                          () => _volumeOpen = !_volumeOpen,
+                                        ),
                                       ),
-                                      tooltip: 'Volume',
-                                      color: _volumeOpen
-                                          ? scheme.primary
-                                          : null,
-                                      onPressed: () => setState(
-                                        () => _volumeOpen = !_volumeOpen,
+                                      const SizedBox(width: 4),
+                                      SizedBox(
+                                        width: 120.0 * value,
+                                        child: VolumeSlider(
+                                          state: state,
+                                          trackHeight: 12,
+                                          thumbHeight: 18,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 120.0 * value,
-                                      child: VolumeSlider(
-                                        state: state,
-                                        trackHeight: 12,
-                                        thumbHeight: 18,
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
+                                    ],
+                                  );
+                                },
+                              ),
                           ],
                         ),
                       ],

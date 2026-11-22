@@ -16,6 +16,7 @@ import '../../core/models/models.dart';
 import '../../core/player/player_state.dart';
 import '../app_state.dart';
 import '../format.dart';
+import '../../sys/platform_features.dart';
 import '../theme.dart';
 import '../widgets/artwork_image.dart';
 import '../widgets/lyrics_list.dart';
@@ -280,14 +281,18 @@ class _TransportColumnState extends State<TransportColumn> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.volume_up_rounded,
-                size: 20,
-                color: scheme.onSurfaceVariant,
-              ),
-              SizedBox(width: 8),
-              SizedBox(width: 140, child: VolumeSlider(state: state)),
-              SizedBox(width: 16),
+              // Touch hosts have hardware volume keys; desktop keeps
+              // the inline slider.
+              if (supportsVolumeSlider(currentPlatform())) ...[
+                Icon(
+                  Icons.volume_up_rounded,
+                  size: 20,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                SizedBox(width: 140, child: VolumeSlider(state: state)),
+                const SizedBox(width: 16),
+              ],
               _SleepTimerButton(state: state),
               if (signedIn) ...[
                 IconButton(
@@ -377,12 +382,16 @@ class _TrackHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
+    final secondaryStyle = text.bodyLarge?.copyWith(
+      color: scheme.onSurfaceVariant,
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           track.title,
           style: text.headlineLarge!.copyWith(
+            height: 1.15,
             fontVariations: const [
               FontVariation('ROND', 50),
               FontVariation('wdth', 105),
@@ -410,13 +419,13 @@ class _TrackHeader extends StatelessWidget {
               for (var i = 0; i < track.artists.length; i++) ...[
                 _LinkText(
                   track.artists[i].name,
-                  style: text.bodyLarge,
+                  style: secondaryStyle,
                   onTap: () => _openArtist(track.artists[i]),
                 ),
                 if (i != track.artists.length - 1)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 2),
-                    child: Text('•', style: text.bodyLarge),
+                    child: Text('•', style: secondaryStyle),
                   ),
               ],
             ],
@@ -426,7 +435,7 @@ class _TrackHeader extends StatelessWidget {
           const SizedBox(height: 2),
           _LinkText(
             track.album!.name,
-            style: text.bodyMedium,
+            style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             onTap: _openAlbum,
           ),
         ],
@@ -463,27 +472,41 @@ class _LinkText extends StatelessWidget {
 /// listeners (and repaint boundaries), so a tick never rebuilds — or
 /// repaints — the artwork, texts and buttons above.
 class TransportProgress extends StatelessWidget {
-  const TransportProgress({super.key, required this.state});
+  const TransportProgress({
+    super.key,
+    required this.state,
+    this.widthFactor = 0.9,
+    this.thumbHeight = 48,
+    this.labelHorizontalPadding = 0,
+  });
 
   final AppState state;
+  final double widthFactor;
+  final double thumbHeight;
+  final double labelHorizontalPadding;
 
   @override
   Widget build(BuildContext context) {
+    Widget wrap(Widget child) => widthFactor == 1.0
+        ? child
+        : FractionallySizedBox(widthFactor: widthFactor, child: child);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
           width: double.infinity,
-          child: FractionallySizedBox(
-            widthFactor: 0.9,
-            child: RepaintBoundary(
-              child: SeekSlider(state: state, thumbHeight: 48),
+          child: wrap(
+            RepaintBoundary(
+              child: SeekSlider(state: state, thumbHeight: thumbHeight),
             ),
           ),
         ),
-        FractionallySizedBox(
-          widthFactor: 0.9,
-          child: RepaintBoundary(child: _TimeLabels(state: state)),
+        wrap(
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: labelHorizontalPadding),
+            child: RepaintBoundary(child: _TimeLabels(state: state)),
+          ),
         ),
       ],
     );
@@ -523,7 +546,16 @@ class _TimeLabels extends StatelessWidget {
 }
 
 class TabsColumn extends StatelessWidget {
-  const TabsColumn({super.key});
+  const TabsColumn({super.key, this.onNavigate, this.initialTab});
+
+  /// Forwarded to the Info tab's song info, so a host that shows these
+  /// tabs in a sheet (the mobile Now Playing) can close itself when the
+  /// user opens an artist or album.
+  final VoidCallback? onNavigate;
+
+  /// Tab to open on (Up next / Lyrics / Info). Null keeps the
+  /// remembered one.
+  final int? initialTab;
 
   @override
   Widget build(BuildContext context) {
@@ -538,7 +570,9 @@ class TabsColumn extends StatelessWidget {
     // reads cleanly on its own (TabBarView already virtualizes the
     // non-visible pages, so only the Up next rows mount here).
     final show = ready && open;
-    return show ? const _TabsContent() : const SizedBox.shrink();
+    return show
+        ? _TabsContent(onNavigate: onNavigate, initialTab: initialTab)
+        : const SizedBox.shrink();
   }
 }
 
@@ -567,7 +601,10 @@ class _LyricsScroll {
 }
 
 class _TabsContent extends StatefulWidget {
-  const _TabsContent();
+  const _TabsContent({this.onNavigate, this.initialTab});
+
+  final VoidCallback? onNavigate;
+  final int? initialTab;
 
   @override
   State<_TabsContent> createState() => _TabsContentState();
@@ -587,7 +624,7 @@ class _TabsContentState extends State<_TabsContent>
     _tabController = TabController(
       length: 3,
       vsync: this,
-      initialIndex: state.nowPlayingTabIndex.clamp(0, 2),
+      initialIndex: (widget.initialTab ?? state.nowPlayingTabIndex).clamp(0, 2),
     );
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
@@ -624,7 +661,7 @@ class _TabsContentState extends State<_TabsContent>
             children: [
               _UpNextTab(),
               _LyricsTab(lyrics: _lyrics, tabController: _tabController),
-              _InfoTab(theme: Theme.of(context)),
+              _InfoTab(theme: Theme.of(context), onNavigate: widget.onNavigate),
             ],
           ),
         ),
@@ -1095,11 +1132,13 @@ class _LyricsTabState extends State<_LyricsTab> {
                   // Always enabled: lyrics may still be fetching, and the
                   // fullscreen view follows them live when they land.
                   onPressed: () {
-                    state.expandLyrics();
                     // On phones the tab sits in a bottom sheet, which
-                    // would cover the fullscreen view; dismiss it. The
-                    // desktop tab lives inline and has nothing to pop.
-                    if (ModalRoute.of(context) is PopupRoute) {
+                    // would cover the fullscreen view; dismiss it and
+                    // bring it back on Lyrics when fullscreen is left.
+                    final fromSheet = ModalRoute.of(context) is PopupRoute;
+                    state.expandLyrics();
+                    if (fromSheet) {
+                      state.markLyricsSheetPending();
                       Navigator.of(context).pop();
                     }
                   },
@@ -1309,9 +1348,13 @@ class _FullscreenLyricsViewState extends State<_FullscreenLyricsView> {
 }
 
 class _InfoTab extends StatelessWidget {
-  const _InfoTab({this.theme});
+  const _InfoTab({this.theme, this.onNavigate});
 
   final ThemeData? theme;
+
+  /// Dismisses the host (the mobile Now Playing sheet) before the info
+  /// view opens an artist or album.
+  final VoidCallback? onNavigate;
 
   @override
   Widget build(BuildContext context) {
@@ -1319,7 +1362,7 @@ class _InfoTab extends StatelessWidget {
       (s) => s.playerState.current,
     );
     if (track == null) return const SizedBox.shrink();
-    return SongInfoView(track: track, theme: theme);
+    return SongInfoView(track: track, theme: theme, onNavigate: onNavigate);
   }
 }
 

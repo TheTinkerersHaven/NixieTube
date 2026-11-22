@@ -41,10 +41,16 @@ class NavigationState {
   final List<HistoryEntry> _history = [];
   bool _canGoBack = false;
   bool _lastNavForward = true;
+  int _revision = 0;
   final OnLoadDetail? _onLoadDetail;
 
   /// The current screen being displayed.
   Screen get screen => _screen;
+
+  /// Increments on every navigation, including a push that keeps the
+  /// same [Screen] (artist → album) or a back pop. The UI keys its
+  /// screen transition on this so those moves animate too.
+  int get revision => _revision;
 
   /// The detail item being displayed, null outside detail screens.
   BrowseItem? get detailItem => _detailItem;
@@ -71,6 +77,7 @@ class NavigationState {
   /// Navigates forward, pushing the current screen for [goBack].
   void go(Screen screen, {BrowseItem? detail}) {
     _lastNavForward = true;
+    _revision++;
     _history.add(HistoryEntry(_screen, _detailItem));
     if (_history.length > 100) _history.removeAt(0);
     _canGoBack = true;
@@ -84,6 +91,7 @@ class NavigationState {
   bool goBack() {
     if (_history.isEmpty) return false;
     _lastNavForward = false;
+    _revision++;
     final entry = _history.removeLast();
     _canGoBack = _history.isNotEmpty;
     _screen = entry.screen;

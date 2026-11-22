@@ -33,6 +33,16 @@ bool isDesktop(AppPlatform platform) => switch (platform) {
   _ => false,
 };
 
+/// Whether the host is a phone or tablet rather than a desktop session.
+bool isMobilePlatform(AppPlatform platform) =>
+    platform == AppPlatform.android || platform == AppPlatform.ios;
+
+/// Whether the player bars should offer a volume slider.
+///
+/// Touch hosts have hardware volume keys and no system-wide volume
+/// slider, so the control is noise there; desktop keeps it.
+bool supportsVolumeSlider(AppPlatform platform) => !isMobilePlatform(platform);
+
 /// Whether the app can show a Google sign-in page inside itself, so the
 /// user never has to import a cookie: a WebKit window on desktop, the
 /// system WebView on Android.

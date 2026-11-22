@@ -90,6 +90,11 @@ void main(List<String> args) async {
   final config = SysConfig();
   final tube = InnerTube();
   final streamResolver = StreamResolver(cookie: tube.auth.cookie);
+  // The first play otherwise pays for the YouTube homepage read that
+  // yields the visitor id; fetching it while the app starts hides that
+  // round trip from the user. Fire-and-forget: a failure is retried by
+  // the normal resolve path.
+  streamResolver.warmUp();
   final player = PlayerController(
     engine: JustAudioPlayerEngine(),
     tube: tube,
@@ -105,7 +110,9 @@ void main(List<String> args) async {
   // Android Auto, Wear and headset buttons. Desktop has no such thing to
   // attach to — MPRIS and the tray cover it — so nothing is started.
   if (supportsBackgroundAudio(platform)) {
-    unawaited(startBackgroundAudio(player));
+    // audio_service requires init to finish before runApp; the handler
+    // catches its own failures, so a phone with no plugin still starts.
+    await startBackgroundAudio(player);
   }
   final state = AppState(
     tube: tube,
@@ -115,6 +122,15 @@ void main(List<String> args) async {
     openUrl: (url) =>
         launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
     streamResolver: streamResolver,
+  );
+  // The notification's like button needs the app's rating path (the
+  // optimistic update, the liked list and the backend call), which only
+  // exists once the state does.
+  backgroundAudio?.connectRatings(
+    canRate: () => state.ratingsAvailable,
+    onLike: (videoId, rating) async {
+      await state.rateTrack(videoId, rating);
+    },
   );
 
   // Desktop integrations (best-effort; failures never block the UI).

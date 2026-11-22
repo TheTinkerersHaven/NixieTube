@@ -4,16 +4,37 @@ All notable changes to NixieTube are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.4.7] — 2026-11-21
+## [0.5.0] — Unreleased
 
 ### Added
 
 - **Android signs in without pasting a cookie.** The app now opens the YouTube Music sign-in page inside itself and reads the session back with one tap — including the HttpOnly cookies that actually authenticate — instead of sending the user to a computer to copy a header by hand.
 - **Playback survives the screen locking on a phone.** Android and iOS now register a media session with the system: a notification showing the song, the artist and its cover with play/pause and skip, lock-screen controls, and the transport buttons on Bluetooth and wired headsets. Until now a backgrounded app was suspended and the music stopped.
+- **The playback notification can like the song.** On a phone the media notification gains a like button — tap it again to unlike — using the same rating as the player, so a song can be saved without opening the app.
+
+### Fixed
+
+- **Manual cookie import in Settings keeps its input and signs in.** Pasting a cookie into the Settings account card and pressing "Sign in" previously wiped the text field and failed to log in because the segmented list wrapper re-instantiated the card on focus changes.
 
 ### Changed
 
+- **Song info closes when you follow a link.** Opening an artist or album from the Now Playing info sheet (or from the song-info dialog) no longer leaves the sheet or dialog covering the page it opens.
+- **Playback starts sooner.** The YouTube visitor id the stream URLs need is fetched while the app starts instead of on the first play, and the next song's stream is resolved as soon as the current one begins, so pressing next no longer waits on a resolve.
+- **Phone and tablet player bars drop the volume slider.** Android and iOS builds no longer draw it in the player bar or the Now Playing transport, where the hardware volume keys already do the job; desktop keeps it.
+- **Leaving fullscreen lyrics returns to the Lyrics sheet.** On a phone, exiting fullscreen lyrics (with the button or the back gesture) brings the Now Playing sheet back on the Lyrics tab instead of dropping the reader on the plain player view.
+- **The artist banner fades into the background on phones.** The mobile scrim now fades the banner out earlier and holds the last stretch at the page colour, so the image's bottom edge no longer shows as a cut above the title.
+
+- **Album and playlist pages animate like Settings.** Opening a detail page from another detail page (artist → album) or opening a playlist from the library now uses the same push animation instead of appearing instantly.
+- **Quick picks use the whole grid.** Pinned picks count toward the grid's slots, and the first row sits closer to the "Quick picks" title.
+- **Phone rails use the artist page's smaller cards.** Every home section now fits the same compact cards and gap as the artist page rails, and song-only shelves show those cover rails instead of the sideways row lists.
+- **Artist top songs read better on phones.** The duration moves into the artist line and the play-count column drops out, so long titles keep their width and the rows pack tighter.
+- **The library title lines up with its content.** On a phone the title now shares the playlist cards' left gutter instead of hugging the screen edge.
+- **The mini player sits above the phone's navigation bar.** The bar is shorter and its surface now ends under the player card instead of running behind it, and the library's new-playlist button floats above the player rather than hiding beneath it.
 - **Discord Rich Presence is offered only where it can work.** Discord exposes presence over a socket owned by the desktop client, so on a phone the setting now stays off and reads "not available on this platform" instead of showing a status that never changes; the phone settings list gains an Integrations section with that one row, while MPRIS stays on the desktop.
+- **The artist bio reads last on a phone.** The artist page used to put the About panel right under the top songs, so it broke up the page; it now sits after the album, single, related-playlist and similar-artist rows, while a wide window keeps it beside the songs as before.
+- **The phone mini player gains a previous button.** The bar now carries previous beside play/pause and next, so stepping back a track no longer means opening Now Playing first.
+- **The player bar under phone lyrics drops the volume button.** Fullscreen lyrics drew the desktop bar on every screen, so a phone showed a volume control it has no use for — hardware volume keys do that job. The bar now follows the window width: the phone layout has three transport buttons and no volume, while a desktop window keeps the volume button and slider.
+- **The scrobbling cards are named by what they do.** The Last.fm and ListenBrainz cards no longer repeat their service as a heading above a "Scrobble plays" toggle; each toggle now reads "Scrobble to Last.fm" or "Scrobble to ListenBrainz", so the two cards are told apart without the extra titles.
 - **App updates point at the download page when a build cannot install them.** Only the Linux AppImage can replace its own binary, so any other build now offers "Download" on the update banner and a download-page button in Settings instead of an install button that could not do anything.
 
 ## [0.4.6] — 2026-11-18

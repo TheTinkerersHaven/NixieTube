@@ -8,6 +8,7 @@ import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
+import '../a11y.dart';
 import '../theme.dart';
 import '../widgets/screen_list.dart';
 import '../widgets/album_panel.dart';
@@ -61,28 +62,61 @@ class LibraryScreen extends StatelessWidget {
         // backdrop); only the header + content clear the status bar.
         SafeArea(
           bottom: false,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              DetailHeader(
-                title: opened?.playlist.title ?? 'Library',
-                onBack: opened == null ? null : state.closePlaylist,
-                trailing: _headerTrailing(context, state, opened),
+          child: AnimatedSwitcher(
+            // Opening and closing the playlist view animate exactly like
+            // a pushed screen (and like Settings), instead of popping in.
+            duration: motionDuration(
+              context,
+              const Duration(milliseconds: 220),
+            ),
+            switchInCurve: Curves.easeOut,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween(
+                  begin: Offset(0, opened != null ? 0.05 : -0.04),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
               ),
-              if (opened != null)
-                Expanded(child: _openPlaylist(context, state, opened))
-              else if (account == null)
-                _signInPrompt(context, state)
-              else
-                Expanded(child: _tabs(context, state)),
-            ],
+            ),
+            layoutBuilder: (currentChild, previousChildren) => Stack(
+              fit: StackFit.expand,
+              children: [...previousChildren, ?currentChild],
+            ),
+            child: KeyedSubtree(
+              key: ValueKey(opened?.playlist.id ?? '__library_root'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DetailHeader(
+                    title: opened?.playlist.title ?? 'Library',
+                    onBack: opened == null ? null : state.closePlaylist,
+                    trailing: _headerTrailing(context, state, opened),
+                  ),
+                  if (opened != null)
+                    Expanded(child: _openPlaylist(context, state, opened))
+                  else if (account == null)
+                    _signInPrompt(context, state)
+                  else
+                    Expanded(child: _tabs(context, state)),
+                ],
+              ),
+            ),
           ),
         ),
         if (account != null && opened == null)
           Positioned(
-            // Clear the floating mini player bar.
+            // The body fills the full screen, so measure from the real
+            // bottom edge: clear the navigation bar and the mini player
+            // bar stacked above it, then leave a small gap so the FAB
+            // floats above the player rather than over it.
             right: screenPadding,
-            bottom: playerBarClearance,
+            bottom:
+                MediaQuery.viewPaddingOf(context).bottom +
+                mobileNavHeight +
+                mobilePlayerBarHeight +
+                screenPadding,
             child: M3EFloatingActionButton(
               shape: M3EButtonShape.square,
               onPressed: () => _createPlaylist(context, state),
@@ -97,35 +131,12 @@ class LibraryScreen extends StatelessWidget {
   /// Prompts for a playlist name, creates it, and reports
   /// the outcome in a SnackBar.
   Future<void> _createPlaylist(BuildContext context, AppState state) async {
-    final controller = TextEditingController();
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New playlist'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Name'),
-          onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
-        ),
-        actions: [
-          M3ETextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          M3EFilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
+      builder: (context) => const _NewPlaylistDialog(),
     );
-    if (name == null || name.isEmpty) {
-      controller.dispose();
-      return;
-    }
+    if (name == null || name.isEmpty) return;
     final id = await state.createPlaylist(name);
-    controller.dispose();
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -470,6 +481,51 @@ class LibraryScreen extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// Dialog prompting for a new playlist name.
+///
+/// The text controller is owned by the dialog's state and disposed only
+/// when the dialog is fully removed from the tree, so dismissing or
+/// canceling the dialog never leaves a disposed controller in use.
+class _NewPlaylistDialog extends StatefulWidget {
+  const _NewPlaylistDialog();
+
+  @override
+  State<_NewPlaylistDialog> createState() => _NewPlaylistDialogState();
+}
+
+class _NewPlaylistDialogState extends State<_NewPlaylistDialog> {
+  final controller = TextEditingController();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New playlist'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Name'),
+        onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+      ),
+      actions: [
+        M3ETextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        M3EFilledButton(
+          onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+          child: const Text('Create'),
+        ),
       ],
     );
   }

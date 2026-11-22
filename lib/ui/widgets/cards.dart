@@ -89,6 +89,7 @@ class TrackRailCard extends StatelessWidget {
     required this.onTap,
     this.contextMenu = true,
     this.showPlaylists = true,
+    this.width,
   });
 
   final Track track;
@@ -97,22 +98,28 @@ class TrackRailCard extends StatelessWidget {
   final bool contextMenu;
   final bool showPlaylists;
 
+  /// Card width; null keeps the desktop-default 208. Compact rails pass
+  /// a smaller width and the artwork shrinks with it.
+  final double? width;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final cardW = width ?? 208.0;
+    final artSize = width != null ? (width! - 8).clamp(40.0, 200.0) : 200.0;
     final card = InkWell(
       onTap: onTap,
       child: Container(
-        width: 208,
+        width: cardW,
         padding: const EdgeInsets.all(4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ArtworkImage(
               track.displayArtwork,
-              size: 200,
+              size: artSize,
               radius: cardRadius,
-              iconSize: 48,
+              iconSize: (artSize / 4).clamp(16.0, 48.0),
               squareCoverKey: track.videoId,
             ),
             const SizedBox(height: 8),

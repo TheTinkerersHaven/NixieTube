@@ -11,7 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/core/player/player_state.dart';
-import 'package:nixietube/core/innertube/stream_resolver.dart' show ResolvedStream;
+import 'package:nixietube/core/innertube/stream_resolver.dart'
+    show ResolvedStream;
 import 'package:nixietube/sys/media_session.dart';
 
 import 'fakes.dart';
@@ -65,14 +66,14 @@ void main() {
     });
 
     test('prefers the player-reported duration', () {
-      expect(mediaItemFor(_track, 200000).duration, const Duration(seconds: 200));
+      expect(
+        mediaItemFor(_track, 200000).duration,
+        const Duration(seconds: 200),
+      );
     });
 
     test('only sends http(s) covers, and the square one when present', () {
-      final noArt = mediaItemFor(
-        const Track(videoId: 'v2', title: 'Plain'),
-        0,
-      );
+      final noArt = mediaItemFor(const Track(videoId: 'v2', title: 'Plain'), 0);
       expect(noArt.artUri, isNull);
 
       final withArt = mediaItemFor(
@@ -143,26 +144,40 @@ void main() {
   });
 
   group('mediaControlsFor', () {
-    test('play/pause flips with the player and stop is always there', () {
+    test('play/pause flips with the player, and there is no stop button', () {
       // One queued track: no previous, and next only because autoplay
       // can continue past the queue.
       expect(mediaControlsFor(_state()), [
         MediaControl.pause,
-        MediaControl.stop,
         MediaControl.skipToNext,
       ]);
       expect(mediaControlsFor(_state(playing: false)), [
         MediaControl.play,
-        MediaControl.stop,
         MediaControl.skipToNext,
       ]);
     });
 
     test('a single-track queue has no transport arrows', () {
-      expect(mediaControlsFor(_state(autoplay: false)), [
-        MediaControl.pause,
-        MediaControl.stop,
-      ]);
+      expect(mediaControlsFor(_state(autoplay: false)), [MediaControl.pause]);
+    });
+
+    test('a connected rating adds a like button, hidden when anonymous', () {
+      final anonymous = mediaControlsFor(_state());
+      expect(anonymous.any((c) => c.action == MediaAction.custom), isFalse);
+
+      final liked = mediaControlsFor(_state(), canRate: true);
+      final like = liked.firstWhere((c) => c.action == MediaAction.custom);
+      expect(like.customAction?.name, likeActionName);
+      expect(like.label, 'Like');
+
+      final alreadyLiked = mediaControlsFor(
+        _state(track: _track.copyWith(rating: RatingStatus.like)),
+        canRate: true,
+      );
+      final unlike = alreadyLiked.firstWhere(
+        (c) => c.action == MediaAction.custom,
+      );
+      expect(unlike.label, 'Unlike');
     });
   });
 
@@ -176,25 +191,28 @@ void main() {
       expect(unknown.systemActions, isNot(contains(MediaAction.seekForward)));
     });
 
-    test('the compact view never spends a slot on stop', () {
-      final compact = playbackStateFor(_state()).androidCompactActionIndices!;
+    test('the compact view shows at most three actions', () {
+      final controls = mediaControlsFor(_state(), canRate: true);
+      final compact = playbackStateFor(
+        _state(),
+        canRate: true,
+      ).androidCompactActionIndices!;
       expect(compact.length, lessThanOrEqualTo(3));
       for (final i in compact) {
-        expect(
-          mediaControlsFor(_state())[i].action,
-          isNot(MediaAction.stop),
-        );
+        expect(i, lessThan(controls.length));
       }
     });
 
-    test('reports the position when it moved and stays silent otherwise', () {
-      final moved = playbackStateFor(_state(positionMs: 30000));
-      expect(moved.updatePosition, const Duration(seconds: 30));
-      final held = playbackStateFor(
+    test('always reports the player position', () {
+      final state = playbackStateFor(_state(positionMs: 30000));
+      expect(state.updatePosition, const Duration(seconds: 30));
+      // A caller can pin it, but the default is the real position: zero
+      // would make the platform project the seek bar from the start.
+      final pinned = playbackStateFor(
         _state(positionMs: 30000),
-        updatePosition: false,
+        positionOverride: const Duration(seconds: 5),
       );
-      expect(held.updatePosition, Duration.zero);
+      expect(pinned.updatePosition, const Duration(seconds: 5));
     });
 
     test('repeat and shuffle reach the session', () {
@@ -250,10 +268,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(handler.mediaItem.value?.title, 'Song One');
-      expect(handler.queue.value.map((i) => i.title), [
-        'Song One',
-        'Song Two',
-      ]);
+      expect(handler.queue.value.map((i) => i.title), ['Song One', 'Song Two']);
       expect(handler.playbackState.value.playing, isTrue);
       expect(handler.playbackState.value.queueIndex, 0);
 
@@ -296,6 +311,33 @@ void main() {
         handler.playbackState.value.processingState,
         AudioProcessingState.idle,
       );
+    });
+
+    test('the notification like button rates the current track', () async {
+      final handler = PlaybackAudioHandler(player);
+      addTearDown(handler.disconnect);
+      final calls = <(String, RatingStatus)>[];
+      handler.connectRatings(
+        canRate: () => true,
+        onLike: (id, rating) async => calls.add((id, rating)),
+      );
+      handler.connect();
+
+      player.playTracks(const [
+        _track,
+        Track(videoId: 'v2', title: 'Song Two', durationSec: 100),
+      ]);
+      await Future<void>.delayed(Duration.zero);
+
+      await handler.customAction(likeActionName);
+      expect(calls, [('v1', RatingStatus.like)]);
+
+      // The button is a toggle: tapping it again on a liked track
+      // clears the like.
+      player.updateTrackRating('v1', RatingStatus.like);
+      await Future<void>.delayed(Duration.zero);
+      await handler.customAction(likeActionName);
+      expect(calls.last, ('v1', RatingStatus.indifferent));
     });
   });
 }

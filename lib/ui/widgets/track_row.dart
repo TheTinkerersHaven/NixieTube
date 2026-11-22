@@ -131,19 +131,28 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
     // A host that wraps the row and a sibling control shares one hover
     // state with it, so both reveal together.
     final hovering = (widget.hovering ?? _hovering) || _menuOpen;
+    // Phones cannot fit the duration column and both thumb buttons
+    // beside a readable title: drop the play-count column and the
+    // separate duration, fold the duration into the subtitle, and use
+    // slightly smaller art and index so long titles survive.
+    final compact = isCompactLayout(context);
     final subtitle = [
       track.artistNames(),
       track.album?.name ?? '',
+      if (compact && track.durationSec > 0) formatDuration(track.durationSec),
     ].where((s) => s.trim().isNotEmpty).join(' • ');
     final tile = ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      contentPadding: compact
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      visualDensity: compact ? VisualDensity.compact : null,
       onTap: onPlay,
       leading: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (index != null)
             SizedBox(
-              width: 28,
+              width: compact ? 24 : 28,
               child: Text(
                 '$index',
                 textAlign: TextAlign.center,
@@ -154,9 +163,9 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
             ),
           ArtworkImage(
             track.displayArtwork,
-            size: 48,
+            size: compact ? 44 : 48,
             radius: rowArtRadius,
-            iconSize: 24,
+            iconSize: compact ? 22 : 24,
             squareCoverKey: track.videoId,
           ),
         ],
@@ -197,8 +206,10 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
         mainAxisSize: MainAxisSize.min,
         children: [
           // Duration/plays sit left of the action buttons, in open
-          // space instead of crammed into the row's far corner.
-          if (track.durationSec > 0 || _viewsLabel != null)
+          // space instead of crammed into the row's far corner. On
+          // phones the duration lives in the subtitle, so this column
+          // would only steal width from the title.
+          if (!compact && (track.durationSec > 0 || _viewsLabel != null))
             Builder(
               builder: (context) {
                 // Locals promote; the getter does not.
@@ -440,7 +451,13 @@ void runTrackAction(
             content: SizedBox(
               width: 420,
               height: 520,
-              child: SongInfoView(track: track, theme: theme),
+              child: SongInfoView(
+                track: track,
+                theme: theme,
+                // Opening an artist or album from the info dialog must
+                // not leave the dialog covering the page it opens.
+                onNavigate: () => Navigator.of(ctx).pop(),
+              ),
             ),
             actions: [
               TextButton(

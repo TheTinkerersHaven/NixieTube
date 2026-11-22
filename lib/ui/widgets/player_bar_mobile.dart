@@ -1,5 +1,6 @@
 // Mobile mini player bar: compact, floating card above bottom navigation.
-// Shows artwork, title, artist, play/pause and next button, plus a slim progress line.
+// Shows artwork, title, artist, previous/play-pause/next buttons, plus a
+// slim progress line.
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -109,6 +110,16 @@ class PlayerBarMobile extends StatelessWidget {
                           ),
                         ],
                       ),
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.skip_previous_rounded,
+                        size: 26,
+                      ),
+                      tooltip: 'Previous',
+                      onPressed: track == null || loading
+                          ? null
+                          : () => state.player.previous(),
                     ),
                     IconButton(
                       icon: Icon(

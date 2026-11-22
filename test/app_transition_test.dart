@@ -144,4 +144,35 @@ void main() {
     state.player.dispose();
     await tester.pump();
   });
+
+  testWidgets('detail-to-detail pushes animate too', (tester) async {
+    final state = await _bootShell(tester);
+    state.go(
+      Screen.detail,
+      detail: const BrowseItem(
+        title: 'Artist',
+        subtitle: '',
+        browseId: 'UC123',
+        thumbnails: [],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Same screen, new detail: the old key would have suppressed the
+    // transition, so the new page would pop in instead of rising.
+    state.go(
+      Screen.detail,
+      detail: const BrowseItem(
+        title: 'Album',
+        subtitle: '',
+        browseId: 'MPRE456',
+        thumbnails: [],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(_slideDy(tester, DetailScreen).any((dy) => dy > 0), isTrue);
+    await tester.pump(const Duration(milliseconds: 300));
+    state.player.dispose();
+    await tester.pump();
+  });
 }

@@ -23,10 +23,12 @@ class DetailHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final compact = isCompactLayout(context);
     return Padding(
-      // A phone top bar hugs its buttons: the icon button already carries
-      // its own 12px inset, so the header only adds a little on top of it.
+      // A phone top bar hugs its back button: the icon button already
+      // carries its own 12px inset, so the header only adds a little on
+      // top of it. Without a back button the title lines up with the
+      // screen content instead of hugging the edge.
       padding: compact
-          ? const EdgeInsets.fromLTRB(4, 4, 8, 4)
+          ? EdgeInsets.fromLTRB(onBack == null ? screenPadding : 4, 4, 8, 4)
           : const EdgeInsets.all(screenPadding),
       child: Row(
         children: [

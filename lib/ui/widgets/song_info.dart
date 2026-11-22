@@ -13,10 +13,21 @@ import '../app_state.dart';
 import '../format.dart';
 
 class SongInfoView extends StatefulWidget {
-  const SongInfoView({super.key, required this.track, this.theme});
+  const SongInfoView({
+    super.key,
+    required this.track,
+    this.theme,
+    this.onNavigate,
+  });
 
   final Track track;
   final ThemeData? theme;
+
+  /// Called just before the view opens an artist or album. Hosts that
+  /// show this in a dialog or a bottom sheet (the song-info dialog, the
+  /// mobile Now Playing sheet) pass a callback that dismisses
+  /// themselves, so the page they open is not hidden behind it.
+  final VoidCallback? onNavigate;
 
   @override
   State<SongInfoView> createState() => _SongInfoViewState();
@@ -181,6 +192,7 @@ class _SongInfoViewState extends State<SongInfoView> {
                             for (var i = 0; i < track.artists.length; i++) ...[
                               GestureDetector(
                                 onTap: () {
+                                  widget.onNavigate?.call();
                                   state.closeNow();
                                   unawaited(
                                     state.openArtist(track.artists[i], track),
@@ -216,6 +228,7 @@ class _SongInfoViewState extends State<SongInfoView> {
               onTap: track.album!.browseId == null
                   ? null
                   : () {
+                      widget.onNavigate?.call();
                       state.closeNow();
                       unawaited(state.openAlbum(track, track.album!));
                     },
