@@ -5,7 +5,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/ui/widgets/palette_backdrop.dart'
-    show PaletteBackdrop, tameWashTint, washStop;
+    show ArtworkBackdrop, PaletteBackdrop, tameWashTint, washStop;
 
 double lum(Color c) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
 
@@ -218,6 +218,80 @@ void main() {
         findsOneWidget,
       );
     });
+  });
+
+  group('ArtworkBackdrop', () {
+    testWidgets(
+      'requests its palette on mount and follows the URL when it changes after load',
+      (tester) async {
+        final cache = <String, List<Color>>{};
+        final requested = <String?>[];
+        final tick = ValueNotifier(0);
+        var url = 'https://a/cover.jpg';
+
+        Widget backdrop() => MaterialApp(
+          theme: ThemeData.dark(),
+          home: Scaffold(
+            body: ArtworkBackdrop(
+              artUrl: url,
+              paletteFor: (u) => cache[u],
+              ensurePalette: (u) async {
+                requested.add(u);
+                if (u != null && !cache.containsKey(u)) {
+                  cache[u] = List<Color>.filled(25, const Color(0xFF5C0E0E));
+                  tick.value++;
+                }
+                return cache[u];
+              },
+              tick: tick,
+            ),
+          ),
+        );
+
+        await tester.pumpWidget(backdrop());
+        await tester.pump();
+        // Missing palette requested for the mount-time URL.
+        expect(requested, ['https://a/cover.jpg']);
+        // ...and once computed, the gradient is painted.
+        expect(
+          find.descendant(
+            of: find.byType(PaletteBackdrop),
+            matching: find.byWidgetPredicate(
+              (w) =>
+                  w is DecoratedBox &&
+                  w.decoration is BoxDecoration &&
+                  (w.decoration as BoxDecoration).gradient != null,
+            ),
+          ),
+          findsOneWidget,
+        );
+
+        // Loading finishes and the art URL changes (track covers
+        // arrive): the backdrop must request the NEW URL instead of
+        // going solid black.
+        url = 'https://b/cover.jpg';
+        await tester.pumpWidget(backdrop());
+        await tester.pump();
+        expect(requested, ['https://a/cover.jpg', 'https://b/cover.jpg']);
+        expect(
+          find.descendant(
+            of: find.byType(PaletteBackdrop),
+            matching: find.byWidgetPredicate(
+              (w) =>
+                  w is DecoratedBox &&
+                  w.decoration is BoxDecoration &&
+                  (w.decoration as BoxDecoration).gradient != null,
+            ),
+          ),
+          findsOneWidget,
+        );
+
+        // A cached palette is not re-requested on rebuild.
+        await tester.pumpWidget(backdrop());
+        await tester.pump();
+        expect(requested, ['https://a/cover.jpg', 'https://b/cover.jpg']);
+      },
+    );
   });
 }
 

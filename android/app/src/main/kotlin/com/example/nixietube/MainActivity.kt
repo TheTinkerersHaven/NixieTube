@@ -16,6 +16,8 @@ import io.flutter.plugin.common.MethodChannel
  * from it is the whole integration.
  */
 class MainActivity : AudioServiceActivity() {
+    private var flutterEngine: FlutterEngine? = null
+
     /**
      * Cookie reader for the in-app sign-in page.
      *
@@ -28,6 +30,9 @@ class MainActivity : AudioServiceActivity() {
      */
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        this.flutterEngine = flutterEngine
+        // Discord Social SDK bridge (AIDL RPC to the installed Discord app).
+        flutterEngine.plugins.add(DiscordSdkPlugin())
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "nixietube/cookies",
@@ -41,5 +46,23 @@ class MainActivity : AudioServiceActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onDestroy() {
+        // Closing the app closes it for good: when the user finishes the
+        // activity (back gesture), tell Dart to stop playback and take the
+        // media notification down, so the notification panel ends in the
+        // same state a fully closed app leaves behind. The audio_service
+        // engine outlives the activity, so the call still lands in Dart.
+        if (isFinishing) {
+            try {
+                MethodChannel(
+                    flutterEngine!!.dartExecutor.binaryMessenger,
+                    "nixietube/lifecycle",
+                ).invokeMethod("closeForGood", null)
+            } catch (_: Exception) {
+            }
+        }
+        super.onDestroy()
     }
 }

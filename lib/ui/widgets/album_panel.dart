@@ -28,6 +28,7 @@ class AlbumPlaylistView extends StatefulWidget {
     this.ownerAvatarUrl,
     required this.tracks,
     required this.numbered,
+    this.isAlbum = false,
     this.topPadding = 64,
     this.listLoading = false,
     this.removable = false,
@@ -51,6 +52,10 @@ class AlbumPlaylistView extends StatefulWidget {
   final String? ownerAvatarUrl;
   final List<Track> tracks;
   final bool numbered;
+
+  /// True on album pages: the mobile header labels the card "Album"
+  /// and the track rows drop the repeated cover and album name.
+  final bool isAlbum;
   final double topPadding;
 
   /// Show a spinner when [tracks] is empty and still loading.
@@ -140,7 +145,6 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
     if (compact) {
       return AlbumPlaylistViewMobile(
         title: widget.title,
-        subtitle: widget.subtitle,
         description: widget.description,
         effectiveArt: effectiveArt,
         effectiveArts: effectiveArts,
@@ -151,6 +155,7 @@ class _AlbumPlaylistViewState extends State<AlbumPlaylistView> {
         sort: _sort,
         onSortChanged: (i) => setState(() => _sort = i),
         numbered: widget.numbered,
+        isAlbum: widget.isAlbum,
         listLoading: widget.listLoading,
         removable: widget.removable,
         onRemoveTrack: widget.onRemoveTrack,
@@ -189,11 +194,16 @@ class PlaylistArt extends StatelessWidget {
     required this.arts,
     required this.size,
     this.tracks = const [],
+    this.radius,
   });
 
   final String? art;
   final List<String> arts;
   final double size;
+
+  /// Corner radius; defaults to [cardRadius]. Pass 0 when an outer
+  /// clip already rounds the corners (e.g. a header card).
+  final double? radius;
 
   /// Tracks behind the collage sources, when known. Cells reuse the
   /// track tile (square-cover resolution with album-art fallback) so
@@ -227,12 +237,13 @@ class PlaylistArt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final r = radius ?? cardRadius;
     if (arts.length > 1) {
       final tile = size / 2;
       Widget cell(int index) =>
           _cell(index < arts.length ? arts[index] : null, tile);
       return ClipRRect(
-        borderRadius: BorderRadius.circular(cardRadius),
+        borderRadius: BorderRadius.circular(r),
         child: SizedBox(
           width: size,
           height: size,
@@ -262,7 +273,7 @@ class PlaylistArt extends StatelessWidget {
     return _cell(
       arts.isNotEmpty ? arts.first : art,
       size,
-      radius: cardRadius,
+      radius: r,
       iconSize: 64,
     );
   }
@@ -272,10 +283,27 @@ class PlaylistArt extends StatelessWidget {
 /// pages. Plain names, own channel and non-channel credits (compilations)
 /// render as static text.
 class OwnerRow extends StatefulWidget {
-  const OwnerRow({super.key, required this.owner, required this.fallbackAvatarUrl});
+  const OwnerRow({
+    super.key,
+    required this.owner,
+    required this.fallbackAvatarUrl,
+    this.avatarSize = 24,
+    this.textStyle,
+    this.padding,
+  });
 
   final ArtistRef? owner;
   final String? fallbackAvatarUrl;
+
+  /// Avatar diameter; the letter fallback scales with it.
+  final double avatarSize;
+
+  /// Base style for the name; the clickable/color rules still apply
+  /// on top via `copyWith`.
+  final TextStyle? textStyle;
+
+  /// Outer padding; defaults to a small hit-area padding.
+  final EdgeInsetsGeometry? padding;
 
   @override
   State<OwnerRow> createState() => _OwnerRowState();
@@ -346,6 +374,7 @@ class _OwnerRowState extends State<OwnerRow> {
       return const SizedBox.shrink();
     }
     final scheme = Theme.of(context).colorScheme;
+    final avatarSize = widget.avatarSize;
     final avatarUrl =
         _avatar ??
         ((widget.fallbackAvatarUrl != null &&
@@ -353,10 +382,15 @@ class _OwnerRowState extends State<OwnerRow> {
             ? widget.fallbackAvatarUrl
             : null);
     final avatar = avatarUrl != null && avatarUrl.isNotEmpty
-        ? ArtworkImage(avatarUrl, size: 24, circular: true, iconSize: 12)
+        ? ArtworkImage(
+            avatarUrl,
+            size: avatarSize,
+            circular: true,
+            iconSize: avatarSize / 2,
+          )
         : Container(
-            width: 24,
-            height: 24,
+            width: avatarSize,
+            height: avatarSize,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: scheme.surfaceContainerHigh,
@@ -364,10 +398,14 @@ class _OwnerRowState extends State<OwnerRow> {
             alignment: Alignment.center,
             child: Text(
               owner.name.substring(0, 1).toUpperCase(),
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontSize: avatarSize / 2,
+              ),
             ),
           );
+    final baseStyle =
+        widget.textStyle ?? Theme.of(context).textTheme.bodyMedium;
     final row = Row(
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
@@ -380,29 +418,27 @@ class _OwnerRowState extends State<OwnerRow> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: _clickable
-                ? Theme.of(context).textTheme.bodyMedium?.copyWith(
+                ? baseStyle?.copyWith(
                     color: scheme.primary,
                     fontWeight: FontWeight.w500,
                   )
-                : Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                : baseStyle?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ),
       ],
     );
+    final padding =
+        widget.padding ??
+        (_clickable
+            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
+            : const EdgeInsets.symmetric(vertical: 4));
     if (!_clickable) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: row,
-      );
+      return Padding(padding: padding, child: row);
     }
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: () => context.read<AppState>().openArtist(owner),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: row,
-      ),
+      child: Padding(padding: padding, child: row),
     );
   }
 }

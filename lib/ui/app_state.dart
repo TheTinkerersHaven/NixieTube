@@ -566,6 +566,43 @@ class AppState extends ChangeNotifier {
   /// Latest player snapshot for selective UI reads.
   PlayerState get playerState => _player.state;
 
+  String _playbackSourceName = 'Your queue';
+
+  /// Name of the album, playlist, mix or radio that supplied the current
+  /// playback queue. This is captured when playback starts rather than
+  /// inferred from the current track's album metadata.
+  String get playbackSourceName => _playbackSourceName;
+
+  void _setPlaybackSource([String? explicitName]) {
+    final explicit = explicitName?.trim();
+    if (explicit != null && explicit.isNotEmpty) {
+      _playbackSourceName = explicit;
+      _safeNotify();
+      return;
+    }
+    final opened = _openPlaylist?.playlist.title.trim();
+    if (opened != null && opened.isNotEmpty) {
+      _playbackSourceName = opened;
+      return;
+    }
+    final albumName = detail.album?.title.trim();
+    if (albumName != null && albumName.isNotEmpty) {
+      _playbackSourceName = albumName;
+      return;
+    }
+    final playlistName = detail.playlist?.title.trim();
+    if (playlistName != null && playlistName.isNotEmpty) {
+      _playbackSourceName = playlistName;
+      return;
+    }
+    final detailName = detailItem?.title.trim();
+    if (detailName != null && detailName.isNotEmpty) {
+      _playbackSourceName = detailName;
+      return;
+    }
+    _playbackSourceName = 'Your queue';
+  }
+
   /// The account library (playlists, likes, artists, subscriptions).
   AccountLibrary get library => _library;
 
@@ -734,7 +771,7 @@ class AppState extends ChangeNotifier {
   Future<bool> playBrowsable(BrowseItem item) async {
     final tracks = await _loadBrowsableTracks(item);
     if (tracks == null || tracks.isEmpty) return false;
-    playSongs(tracks, 0);
+    playSongs(tracks, 0, sourceName: item.title);
     return true;
   }
 
@@ -744,7 +781,7 @@ class AppState extends ChangeNotifier {
   Future<bool> playBrowsableShuffled(BrowseItem item) async {
     final tracks = await _loadBrowsableTracks(item);
     if (tracks == null || tracks.isEmpty) return false;
-    playShuffled(tracks);
+    playShuffled(tracks, sourceName: item.title);
     return true;
   }
 
@@ -968,7 +1005,7 @@ class AppState extends ChangeNotifier {
   /// playlist pages open as a playlist.
   Future<void> playMix(HomeMix mix) async {
     if (mix.seed != null) {
-      await playMixSeed(mix.seed!);
+      await playMixSeed(mix.seed!, sourceName: mix.title);
       return;
     }
     final browseId = mix.browseId;
@@ -981,12 +1018,12 @@ class AppState extends ChangeNotifier {
     }
     final tracks = pl?.tracks.where((t) => t.videoId.isNotEmpty).toList() ?? [];
     if (tracks.isEmpty) return;
-    playSongs(tracks, 0);
+    playSongs(tracks, 0, sourceName: mix.title);
   }
 
   /// Plays a personalized mix seed card: the seed first, then its
   /// radio mix behind it (same shape as single-track playback).
-  Future<void> playMixSeed(Track seed) async {
+  Future<void> playMixSeed(Track seed, {String? sourceName}) async {
     final pid = seed.playlistId;
     if (pid == null || pid.isEmpty) return;
     List<Track> mix;
@@ -996,7 +1033,7 @@ class AppState extends ChangeNotifier {
       return;
     }
     final upcoming = mix.where((t) => t.videoId != seed.videoId).toList();
-    playSongs([seed, ...upcoming], 0);
+    playSongs([seed, ...upcoming], 0, sourceName: sourceName ?? 'Your mix');
   }
 
   int _detailGen = 0;
@@ -1117,7 +1154,19 @@ class AppState extends ChangeNotifier {
       _searchState.removeSearchHistory(query);
 
   /// Runs a search and enriches the song rows, cancelling older queries.
-  Future<void> searchFor(String query) => _searchState.searchFor(query);
+  /// [filter] is a server-side category key (see `searchFilterParams`).
+  Future<void> searchFor(String query, {String? filter}) =>
+      _searchState.searchFor(query, filter: filter);
+
+  /// Live autocomplete suggestions for the query being typed.
+  List<String> get searchSuggestions => _searchState.searchSuggestions;
+
+  /// Fetches autocomplete suggestions for [query].
+  Future<void> fetchSearchSuggestions(String query) =>
+      _searchState.fetchSuggestions(query);
+
+  /// Clears the live suggestions.
+  void clearSearchSuggestions() => _searchState.clearSuggestions();
 
   /// Clears the current search results and query.
   void clearSearch() => _searchState.clearSearch();
@@ -1130,12 +1179,14 @@ class AppState extends ChangeNotifier {
 
   /// Plays [songs] starting at [index]. A lone track plays as its own
   /// radio station instead of a one-song queue (see [playSingle]).
-  void playSongs(List<Track> songs, int index) {
+  void playSongs(List<Track> songs, int index, {String? sourceName}) {
     if (songs.length == 1) {
-      unawaited(playSingle(songs.first));
+      _setPlaybackSource(sourceName);
+      unawaited(playSingle(songs.first, sourceName: sourceName));
       return;
     }
-    _player.playTracks(songs, index);
+    _setPlaybackSource(sourceName);
+    _player.playTracks(songs, index, sourceName);
   }
 
   /// The watch-next radio playlist for [track]: its own when it carries
@@ -1171,8 +1222,11 @@ class AppState extends ChangeNotifier {
   /// playback starts at once from the track alone, and the watch-next
   /// mix lands via [PlayerController.appendRadio] without restarting
   /// the track. Stale fetches (user moved on meanwhile) are dropped.
-  Future<void> playSingle(Track track) async {
-    _player.playTracks([track], 0);
+  Future<void> playSingle(Track track, {String? sourceName}) async {
+    if (_playbackSourceName == 'Your queue') {
+      _setPlaybackSource();
+    }
+    _player.playTracks([track], 0, sourceName);
     List<Track> upcoming;
     try {
       upcoming = await _tube.upNext(
@@ -1188,10 +1242,11 @@ class AppState extends ChangeNotifier {
   }
 
   /// Plays [songs] in shuffled order.
-  void playShuffled(List<Track> songs) {
+  void playShuffled(List<Track> songs, {String? sourceName}) {
     if (songs.isEmpty) return;
     final shuffled = List<Track>.of(songs)..shuffle(Random());
-    _player.playTracks(shuffled, 0);
+    _setPlaybackSource(sourceName);
+    _player.playTracks(shuffled, 0, sourceName);
   }
 
   /// Plays an artist's full top-songs playlist from the tapped song onward.
@@ -1202,7 +1257,7 @@ class AppState extends ChangeNotifier {
     // Start playback from the preview immediately so the tap is responsive;
     // the full playlist (when available) lands in the background and swaps
     // the queue in without restarting the song.
-    playSongs(preview, index);
+    playSongs(preview, index, sourceName: artist.name);
     final full = await _fullArtistSongs(artist);
     if (full == null) return;
     if (_player.state.current?.videoId != tapped.videoId) return;
@@ -1215,9 +1270,9 @@ class AppState extends ChangeNotifier {
     final tracks = full ?? artist.topSongs;
     if (tracks.isEmpty) return;
     if (shuffled) {
-      playShuffled(tracks);
+      playShuffled(tracks, sourceName: artist.name);
     } else {
-      playSongs(tracks, 0);
+      playSongs(tracks, 0, sourceName: artist.name);
     }
   }
 
@@ -1232,6 +1287,11 @@ class AppState extends ChangeNotifier {
   /// and whether the mix loaded at all, so callers can tell a loaded
   /// station from a failed fetch instead of leaving a silent no-op.
   Future<({int queued, bool loaded})> startRadio(Track track) async {
+    _setPlaybackSource(
+      track.artistNames().isEmpty
+          ? 'Song Radio'
+          : '${track.artistNames()} Radio',
+    );
     if (_player.state.current?.videoId == track.videoId) {
       List<Track> upcoming;
       try {
@@ -1262,7 +1322,11 @@ class AppState extends ChangeNotifier {
     upcoming = _withoutSeed(upcoming, track);
     final seen = {track.videoId};
     upcoming = upcoming.where((t) => seen.add(t.videoId)).toList();
-    _player.playTracks([track, ...upcoming], 0);
+    _player.playTracks(
+      [track, ...upcoming],
+      0,
+      '${track.artistNames().isEmpty ? track.title : track.artistNames()} Radio',
+    );
     return (queued: upcoming.length, loaded: loaded);
   }
 
@@ -3823,7 +3887,7 @@ class AppState extends ChangeNotifier {
         accessToken: s.accessToken,
         sessionToken: savedToken.isNotEmpty ? savedToken : null,
       );
-      _streamResolver.cookie = _tube.auth.cookie;
+      _streamResolver.auth = _tube.auth;
       _authLoaded = true;
       _safeNotify();
       unawaited(_refreshAccountAfterAuth());
@@ -3933,7 +3997,7 @@ class AppState extends ChangeNotifier {
         }
       } catch (_) {}
       await _saveAuth();
-      _streamResolver.cookie = _tube.auth.cookie;
+      _streamResolver.auth = _tube.auth;
       await _saveAuth();
       unawaited(_refreshAvatar());
       unawaited(loadLibrary());
@@ -3955,7 +4019,7 @@ class AppState extends ChangeNotifier {
   void logout() {
     _tube.auth = const AuthSession.anonymous();
     _tube.authProvider = null;
-    _streamResolver.cookie = null;
+    _streamResolver.auth = const AuthSession.anonymous();
     _account = null;
     _accountAvatar = null;
     _clearLibraryLists();
@@ -4001,7 +4065,7 @@ class AppState extends ChangeNotifier {
     _tube.auth = const AuthSession.anonymous();
     config.remove('cookie');
     config.remove('sapisidHash');
-    _streamResolver.cookie = null;
+    _streamResolver.auth = const AuthSession.anonymous();
     config.remove('sessionToken');
     _rating.clearCachedRatings();
     final current = _player.state.current;

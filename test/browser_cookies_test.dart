@@ -114,5 +114,4 @@ void main() {
       expect(BrowserCookies.hasSignedInSession(['junk']), isFalse);
     });
   });
-
 }

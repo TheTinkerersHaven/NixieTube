@@ -15,11 +15,15 @@ void main() {
       // The hash must bind the secure value, not the fallback.
       expect(
         session.sapisidHash,
-        endsWith(AuthSession.deriveSapisidHash(timestamp, 'secret-sapisid-value')),
+        endsWith(
+          AuthSession.deriveSapisidHash(timestamp, 'secret-sapisid-value'),
+        ),
       );
       expect(
         session.sapisidHash,
-        isNot(endsWith(AuthSession.deriveSapisidHash(timestamp, 'fallback-value'))),
+        isNot(
+          endsWith(AuthSession.deriveSapisidHash(timestamp, 'fallback-value')),
+        ),
       );
       expect(session.cookie, _cookie.replaceAll(RegExp(r'\s+'), ''));
     });

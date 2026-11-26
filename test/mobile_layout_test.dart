@@ -66,7 +66,7 @@ void main() {
       addTearDown(state.dispose);
       final mpris = MprisService(controller: player);
       addTearDown(mpris.dispose);
-      final discord = DiscordPresence();
+      final DiscordPresenceBase discord = DiscordPresence();
       addTearDown(discord.dispose);
       final lastfm = LastFmService(config: state.config);
       addTearDown(lastfm.dispose);
@@ -157,17 +157,97 @@ void main() {
     expect(find.byType(AlbumPlaylistViewDesktop), findsNothing);
     expect(find.text('Test Album'), findsOneWidget);
     expect(find.text('Song 1'), findsOneWidget);
-    // The sort control is one compact centered row; picking an option
-    // from its menu updates the label.
+    // The sort control is one compact pill chip on the right of the
+    // tracklist header row; picking an option from its menu updates
+    // the label.
     final trigger = tester.getRect(
       find.byWidgetPredicate((w) => w is M3EPopupMenuButton<int>),
     );
-    expect((trigger.left + trigger.right) / 2, closeTo(200, 1));
+    expect(trigger.height, closeTo(32, 1));
+    expect(trigger.right, greaterThan(300));
     await tester.tap(find.text('Sort: Default'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Title'));
     await tester.pumpAndSettle();
     expect(find.text('Sort: Title'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('opening an album or playlist on a phone shows a horizontal header card', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() => tester.view.resetPhysicalSize);
+
+    final dir = Directory.systemTemp.createTempSync('nt-mobile-plcard-test');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = InnerTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: FakeEngine(),
+      tube: tube,
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
+    addTearDown(art.close);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: art,
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+
+    Widget panel() => MaterialApp(
+      home: Scaffold(
+        body: ChangeNotifierProvider.value(
+          value: state,
+          child: const AlbumPlaylistView(
+            title: 'My Playlist',
+            subtitle: '',
+            description: '',
+            art: null,
+            owner: ArtistRef('Some Artist'),
+            tracks: [
+              Track(videoId: 'a', title: 'Song A', durationSec: 60),
+              Track(videoId: 'b', title: 'Song B', durationSec: 120),
+            ],
+            numbered: false,
+          ),
+        ),
+      ),
+    );
+
+    // Albums and playlists alike open with one glass hero card: a 20dp
+    // radius translucent card with a hairline border, a 120dp cover
+    // rounded to 12dp padded in on the left, and name/artist/meta to
+    // its right (the glass fill + border of the Now Playing bar).
+    await tester.pumpWidget(panel());
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is PlaylistArt && w.size == 120 && w.radius == 12,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Container &&
+            w.decoration is BoxDecoration &&
+            (w.decoration as BoxDecoration).borderRadius ==
+                BorderRadius.circular(20) &&
+            (w.decoration as BoxDecoration).border != null,
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('My Playlist'), findsOneWidget);
+    expect(find.text('Some Artist'), findsOneWidget);
+    expect(find.text('Playlist • 2 songs • 3:00'), findsOneWidget);
+    expect(find.text('2 songs'), findsOneWidget); // tracklist header count
     expect(tester.takeException(), isNull);
   });
 
@@ -221,6 +301,10 @@ void main() {
 
     expect(find.byType(NowPlayingMobile), findsOneWidget);
     expect(find.byType(NowPlayingDesktop), findsNothing);
+    expect(find.text('PLAYING FROM'), findsOneWidget);
+    expect(find.text('Up next'), findsOneWidget);
+    expect(find.text('Lyrics'), findsOneWidget);
+    expect(find.byTooltip('Info'), findsOneWidget);
     expect(find.text('Now Playing Song'), findsOneWidget);
     expect(find.text('Test Artist'), findsOneWidget);
 
@@ -259,7 +343,7 @@ void main() {
       addTearDown(state.dispose);
       final mpris = MprisService(controller: player, supported: false);
       addTearDown(mpris.dispose);
-      final discord = DiscordPresence();
+      final DiscordPresenceBase discord = DiscordPresence();
       addTearDown(discord.dispose);
       final lastfm = LastFmService(config: state.config);
       addTearDown(lastfm.dispose);
@@ -288,6 +372,12 @@ void main() {
       expect(find.text('Desktop integrations'), findsNothing);
       expect(find.text('Integrations'), findsOneWidget);
       expect(find.text('MPRIS (media keys, playerctl)'), findsNothing);
+      // The sectioned structure is shared with desktop, and each
+      // scrobbler is a single named row — no separate service heading.
+      expect(find.text('Scrobble to Last.fm'), findsOneWidget);
+      expect(find.text('Scrobble to ListenBrainz'), findsOneWidget);
+      expect(find.text('Last.fm'), findsNothing);
+      expect(find.text('ListenBrainz'), findsNothing);
       // Settings belongs to the library tab it was opened from.
       final nav = tester.widget<NavigationBar>(find.byType(NavigationBar));
       expect(nav.selectedIndex, 2);
@@ -339,7 +429,7 @@ void main() {
     addTearDown(state.dispose);
     final mpris = MprisService(controller: player);
     addTearDown(mpris.dispose);
-    final discord = DiscordPresence();
+    final DiscordPresenceBase discord = DiscordPresence();
     addTearDown(discord.dispose);
     final lastfm = LastFmService(config: state.config);
     addTearDown(lastfm.dispose);

@@ -55,7 +55,7 @@ Future<({AppState state, String configPath})> _pumpWith(
   addTearDown(state.dispose);
   final mpris = MprisService(controller: player);
   addTearDown(mpris.dispose);
-  final discord = DiscordPresence();
+  final DiscordPresenceBase discord = DiscordPresence();
   addTearDown(discord.dispose);
   final lastfm = LastFmService(config: state.config);
   addTearDown(lastfm.dispose);
@@ -304,20 +304,29 @@ void main() {
     await tester.tap(find.text('Info'));
     await tester.pumpAndSettle();
     final onSurface = buildTheme().colorScheme.onSurface;
-    Text artistLink() => tester.widget<Text>(
-      find.byWidgetPredicate(
-        (w) =>
-            w is Text && w.data == 'Some Artist' && w.style?.color != onSurface,
-      ),
+    Finder artistLinks() => find.byWidgetPredicate(
+      (w) =>
+          w is Text && w.data == 'Some Artist' && w.style?.color != onSurface,
     );
     // Off by default: plain primary-colored text, no underline.
     expect(state.config.underlineLinks, isFalse);
-    expect(artistLink().style?.decoration, TextDecoration.none);
+    expect(artistLinks(), findsWidgets);
+    expect(
+      tester
+          .widgetList<Text>(artistLinks())
+          .every((w) => w.style?.decoration == TextDecoration.none),
+      isTrue,
+    );
     // Opting in underlines the link in place.
     state.config.underlineLinks = true;
     state.refreshConfig();
     await tester.pumpAndSettle();
-    expect(artistLink().style?.decoration, TextDecoration.underline);
+    expect(
+      tester
+          .widgetList<Text>(artistLinks())
+          .any((w) => w.style?.decoration == TextDecoration.underline),
+      isTrue,
+    );
     state.player.dispose();
     await tester.pump();
   });

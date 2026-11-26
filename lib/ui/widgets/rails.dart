@@ -12,9 +12,9 @@ import 'cards.dart';
 
 /// Phone rail metrics: shared by the home card rails and the artist page
 /// rails so every phone rail lines up (one card width, one gap).
-const double compactRailCardWidth = 152.0;
-const double compactRailGap = 16.0;
-const double compactRailHeight = 224.0;
+const double compactRailCardWidth = 160.0;
+const double compactRailGap = 12.0;
+const double compactRailHeight = 196.0;
 
 /// Section header with title plus scroll-left/right buttons, mirroring
 /// the rail header. Each press transitions exactly one viewport
@@ -54,11 +54,12 @@ class RailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = isCompactLayout(context);
     return Row(
       children: [
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: EdgeInsets.only(bottom: compact ? 4 : 8),
             child: Text(title, style: Theme.of(context).textTheme.titleLarge),
           ),
         ),
@@ -75,6 +76,28 @@ class RailHeader extends StatelessWidget {
           ),
         ],
         if (trailing case final Widget t) t,
+      ],
+    );
+  }
+}
+
+/// Section header with a title and an optional "See all" action, used
+/// above the top-song list on artist pages.
+class SectionHeader extends StatelessWidget {
+  const SectionHeader({super.key, required this.title, this.onSeeAll});
+
+  final String title;
+  final VoidCallback? onSeeAll;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        ),
+        if (onSeeAll != null)
+          M3ETextButton(onPressed: onSeeAll, child: const Text('See all')),
       ],
     );
   }
@@ -167,6 +190,7 @@ class _BrowseRailState extends State<BrowseRail> {
   Widget build(BuildContext context) {
     if (widget.items.isEmpty) return const SizedBox.shrink();
     if (!widget.fillWidth) {
+      final compact = isCompactLayout(context);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -176,7 +200,9 @@ class _BrowseRailState extends State<BrowseRail> {
             trailing: widget.trailing,
           ),
           SizedBox(
-            height: widget.circular ? 210 : 300,
+            height: compact
+                ? compactRailHeight
+                : (widget.circular ? 210 : 300),
             child: SilkyListView.builder(
               controller: _ctrl,
               scrollSpeed: 1.5,
@@ -194,11 +220,15 @@ class _BrowseRailState extends State<BrowseRail> {
                         item: item,
                         onTap: () => widget.onOpen(item),
                       )
-                    : BrowseCard(item: item, onTap: () => widget.onOpen(item));
+                    : BrowseCard(
+                        item: item,
+                        onTap: () => widget.onOpen(item),
+                        width: compact ? compactRailCardWidth : null,
+                      );
               },
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: compact ? 10 : 16),
         ],
       );
     }
@@ -216,7 +246,7 @@ class _BrowseRailState extends State<BrowseRail> {
             ? (widget.items.length * (cardW + gap) > c.maxWidth)
             : widget.items.length > count;
         final height = widget.circular
-            ? 210.0
+            ? (compact ? compactRailHeight : 210.0)
             : (compact ? compactRailHeight : 300.0);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -256,7 +286,7 @@ class _BrowseRailState extends State<BrowseRail> {
                 },
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: compact ? 10 : 16),
           ],
         );
       },

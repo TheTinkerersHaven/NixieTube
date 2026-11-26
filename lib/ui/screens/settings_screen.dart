@@ -23,7 +23,6 @@ import '../../sys/version.dart';
 import '../app_state.dart';
 import '../theme.dart';
 import '../widgets/screen_list.dart';
-import '../widgets/detail_header.dart';
 import '../widgets/browser_login_dialog.dart';
 import '../widgets/lastfm_auth_actions.dart';
 
@@ -219,9 +218,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // Discord row is still worth showing (unavailable and
               // saying why) rather than hiding a capability the user may
               // have read about.
-              _showMprisRow(context)
-                  ? 'Desktop integrations'
-                  : 'Integrations',
+              _showMprisRow(context) ? 'Desktop integrations' : 'Integrations',
               subtitle: 'MPRIS media keys and Discord Rich Presence.',
             ),
             const SizedBox(height: 8),
@@ -241,13 +238,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 8),
             _SettingsSegments(
-              children: [
-                const _ScrobblerSegment(label: 'Last.fm', child: _LastFmCard()),
-                const _ScrobblerSegment(
-                  label: 'ListenBrainz',
-                  child: _ListenBrainzCard(),
-                ),
-              ],
+              children: [const _LastFmCard(), const _ListenBrainzCard()],
             ),
           ],
         ),
@@ -323,15 +314,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!compact) {
       return screenColumn(context: context, children: sections);
     }
-    // Pushed from the library or a banner: phones get a back button and
-    // a compact top bar instead of the desktop's free-floating title.
+    // Phones get the same structure as desktop — a large title above the
+    // sections — with a back button in front of it when the page was
+    // pushed. The bar aligns to the content gutter like the sections.
     return Column(
       children: [
         SafeArea(
           bottom: false,
-          child: DetailHeader(
-            title: 'Settings',
-            onBack: state.canGoBack ? () => state.goBack() : null,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              screenPadding,
+              8,
+              screenPadding,
+              8,
+            ),
+            child: Row(
+              children: [
+                if (state.canGoBack)
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    tooltip: 'Back',
+                    onPressed: state.goBack,
+                  ),
+                Expanded(
+                  child: Text(
+                    'Settings',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
         Expanded(
@@ -376,8 +390,17 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
+/// The expressive outer radius shared by every settings surface, so
+/// standalone cards and segmented groups read as one family. Matches the
+/// M3 Expressive segmented-list default.
+const double _settingsSurfaceRadius = 24.0;
+
+/// Inner padding of a settings surface: 16dp horizontal so row content
+/// aligns inside segments and cards alike, 12dp vertical.
+const EdgeInsets _settingsSurfacePadding = EdgeInsets.fromLTRB(16, 12, 16, 12);
+
 /// A standalone settings card surface matching the M3 segmented group
-/// styling (16px radius, surfaceContainer background, 12px padding) without
+/// styling (expressive radius, surfaceContainer background) without
 /// the list focus-traversal wrappers that disrupt embedded text fields.
 class _SettingsCard extends StatelessWidget {
   const _SettingsCard({required this.child});
@@ -389,18 +412,17 @@ class _SettingsCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Material(
       color: scheme.surfaceContainer,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(_settingsSurfaceRadius),
       clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: child,
-      ),
+      child: Padding(padding: _settingsSurfacePadding, child: child),
     );
   }
 }
 
-/// A settings group drawn as one M3 segmented list: each child is a
-/// segment, so related controls share a surface without divider lines.
+/// A settings group drawn as one M3 Expressive segmented list: each child
+/// is a segment, so related controls share a surface without divider
+/// lines. Uses the M3E default outer radius and even inner padding so the
+/// segments and their content align on every width.
 class _SettingsSegments extends StatelessWidget {
   const _SettingsSegments({required this.children});
 
@@ -410,28 +432,9 @@ class _SettingsSegments extends StatelessWidget {
   Widget build(BuildContext context) => M3ESegmentedList(
     itemCount: children.length,
     itemBuilder: (context, i) => children[i],
-    outerRadius: 16,
+    outerRadius: _settingsSurfaceRadius,
+    padding: _settingsSurfacePadding,
   );
-}
-
-/// A named scrobbler inside the shared Scrobbling segmented list.
-class _ScrobblerSegment extends StatelessWidget {
-  const _ScrobblerSegment({required this.label, required this.child});
-
-  final String label;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        child,
-      ],
-    );
-  }
 }
 
 /// A uniform settings toggle row: a title, an optional
@@ -529,6 +532,20 @@ class _SettingsModal extends StatelessWidget {
   }
 }
 
+/// What the "System" color source actually follows on this host: the
+/// XDG portal / GTK theme on Linux desktop, wallpaper colors on
+/// Android, and nothing on iOS (the built-in theme is used).
+String _systemSourceNote() => switch (currentPlatform()) {
+  AppPlatform.android =>
+    'Follows your wallpaper accent color when the system reports one; '
+        'otherwise the built-in theme.',
+  AppPlatform.ios =>
+    'iOS reports no system accent color, so the built-in theme is used.',
+  _ =>
+    'Follows your desktop accent color when the system reports one '
+        '(XDG portal / GTK theme); otherwise the built-in theme.',
+};
+
 /// Theme card: color source (system accent vs custom seed),
 /// seed swatches, and manual per-role overrides applied on top
 /// of either source. Every control persists to config and
@@ -583,9 +600,7 @@ class _ThemeCard extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           source == ThemeSource.system
-              ? 'Follows your desktop accent color when the system '
-                    'reports one (XDG portal / GTK theme); otherwise '
-                    'the built-in theme.'
+              ? _systemSourceNote()
               : 'Built from the seed color below.',
           style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: scheme.onSurfaceVariant),
@@ -829,7 +844,7 @@ class _IntegrationsSegments extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
     final mpris = context.watch<MprisService>();
-    final discord = context.watch<DiscordPresence>();
+    final discord = context.watch<DiscordPresenceBase>();
     final scheme = Theme.of(context).colorScheme;
     // MPRIS is a Linux session-bus interface: on any other host the
     // service reports itself unsupported and the row is dropped rather
@@ -842,9 +857,7 @@ class _IntegrationsSegments extends StatelessWidget {
             title: 'MPRIS (media keys, playerctl)',
             subtitle:
                 mpris.lastError ??
-                (mpris.active
-                    ? 'Active on the session bus'
-                    : 'Inactive'),
+                (mpris.active ? 'Active on the session bus' : 'Inactive'),
             subtitleColor: mpris.lastError != null ? scheme.error : null,
             value: state.config.mprisEnabled,
             onChanged: (v) {
@@ -909,7 +922,7 @@ class _DiscordAppIdDialogState extends State<_DiscordAppIdDialog> {
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
-    final discord = context.read<DiscordPresence>();
+    final discord = context.read<DiscordPresenceBase>();
     return Dialog(
       child: SizedBox(
         width: 560,
@@ -982,7 +995,7 @@ class _DiscordStatusLinePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final discord = context.watch<DiscordPresence>();
+    final discord = context.watch<DiscordPresenceBase>();
     final scheme = Theme.of(context).colorScheme;
     final modes = DiscordStatusText.values;
     return M3EToggleButtonGroup(
@@ -1205,7 +1218,9 @@ class _OnboardingCard extends StatelessWidget {
     final state = context.read<AppState>();
     final scheme = Theme.of(context).colorScheme;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      // Stretch so the trailing-aligned action button reaches the card's
+      // right edge instead of hugging the widest text.
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text('First-run setup', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 6),
@@ -1216,10 +1231,14 @@ class _OnboardingCard extends StatelessWidget {
               ?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 12),
-        M3ETextButton.icon(
-          onPressed: () => state.restartOnboarding(),
-          icon: const Icon(Icons.replay_rounded),
-          label: const Text('Run the setup again'),
+        Align(
+          alignment: Alignment.centerRight,
+          child: M3EButton.icon(
+            style: M3EButtonStyle.outlined,
+            onPressed: () => state.restartOnboarding(),
+            icon: const Icon(Icons.replay_rounded),
+            label: const Text('Run the setup again'),
+          ),
         ),
       ],
     );
@@ -1300,7 +1319,7 @@ class _LastFmCardState extends State<_LastFmCard> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _ToggleRow(
-          title: 'Scrobble plays',
+          title: 'Scrobble to Last.fm',
           subtitle: 'Status: $status',
           subtitleColor: status.startsWith('error') ? scheme.error : null,
           value: _enabled,
@@ -1563,7 +1582,9 @@ class _AppUpdatesCard extends StatelessWidget {
     final bodyStyle = Theme.of(context).textTheme.bodySmall
         ?.copyWith(color: scheme.onSurfaceVariant);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      // Stretch so the trailing-aligned action buttons reach the card's
+      // right edge instead of hugging the widest text.
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text('Current version', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 2),
@@ -1579,10 +1600,13 @@ class _AppUpdatesCard extends StatelessWidget {
             style: bodyStyle,
           ),
           const SizedBox(height: 12),
-          M3EOutlinedButton.icon(
-            onPressed: () => unawaited(state.openReleasesPage()),
-            icon: const Icon(Icons.open_in_new_rounded),
-            label: const Text('Open the download page'),
+          Align(
+            alignment: Alignment.centerRight,
+            child: M3EOutlinedButton.icon(
+              onPressed: () => unawaited(state.openReleasesPage()),
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('Open the download page'),
+            ),
           ),
         ] else ...[
           Row(
@@ -1663,7 +1687,7 @@ class _DiscordPauseHidePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final discord = context.watch<DiscordPresence>();
+    final discord = context.watch<DiscordPresenceBase>();
     final scheme = Theme.of(context).colorScheme;
     return M3EToggleButtonGroup(
       type: M3EButtonGroupType.connected,

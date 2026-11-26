@@ -47,3 +47,13 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Discord Social SDK (official .aar from the developer portal). We use
+    // its AIDL interfaces (com.discord.socialsdk.rpc.*) to talk to the
+    // installed Discord app's RPC service for Rich Presence — no OAuth,
+    // no native lib load.
+    implementation(files("libs/discord_partner_sdk.aar"))
+    // Custom Tabs used by the SDK's AuthenticationActivity (OAuth fallback).
+    implementation("androidx.browser:browser:1.8.0")
+}

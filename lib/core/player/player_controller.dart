@@ -296,14 +296,20 @@ class PlayerController implements PlayerEngineListener {
   /// pass only runs the reads it needs for like state — so for anyone
   /// else this is where a row's duration comes from, at no extra
   /// request. Never throws.
-  Future<ResolvedStream?> _resolveStreamAndLength(String videoId) async {
+  Future<ResolvedStream?> _resolveStreamAndLength(
+    String videoId, {
+    bool updateDuration = true,
+  }) async {
     ResolvedStream? stream;
     try {
       stream = await _resolveStream(videoId);
     } catch (_) {
       return null;
     }
-    if (stream != null && stream.durationSec > 0) {
+    if (updateDuration &&
+        !_disposed &&
+        stream != null &&
+        stream.durationSec > 0) {
       updateTrackDurations({videoId: stream.durationSec});
     }
     return stream;
@@ -450,12 +456,17 @@ class PlayerController implements PlayerEngineListener {
   }
 
   /// Replaces the queue with [tracks] and starts at [startIndex].
-  void playTracks(List<Track> tracks, [int startIndex = 0]) {
+  void playTracks(
+    List<Track> tracks, [
+    int startIndex = 0,
+    String? queueSourceName,
+  ]) {
     if (tracks.isEmpty) return;
     _shuffleHistory.clear();
     _update(
       _state.copyWith(
         queue: List.of(tracks),
+        queueSourceName: queueSourceName ?? 'Your queue',
         index: startIndex.clamp(0, tracks.length - 1),
       ),
     );
@@ -1201,6 +1212,9 @@ class PlayerController implements PlayerEngineListener {
     // opens/buffers the URL, so a stale (expired) URL falls back to a
     // fresh resolve below.
     final reused = _prefetchedStreams.remove(track.videoId);
+    // A deciphered URL is not reusable: it 403s when played later, so
+    // resolve it again at handoff even if a prefetch put one here.
+    final usable = (reused != null && reused.cacheable) ? reused : null;
     _prefetchGen++;
     _cancelPrefetchTimer();
     // A previous track's ticker must not publish its old engine position
@@ -1222,7 +1236,7 @@ class PlayerController implements PlayerEngineListener {
       ),
     );
     saveSession();
-    unawaited(_startCurrentAsync(track, token, reused));
+    unawaited(_startCurrentAsync(track, token, usable));
   }
 
   Future<void> _startCurrentAsync(
@@ -1298,8 +1312,11 @@ class PlayerController implements PlayerEngineListener {
   /// Cancels the prefetch lead timer (the cached streams are cleared by
   /// [_clearPrefetch]).
   void _cancelPrefetchTimer() {
-    _prefetchTimer?.cancel();
+    final timer = _prefetchTimer;
     _prefetchTimer = null;
+    timer?.cancel();
+    _prefetchGen++;
+    _prefetchedStreams.clear();
   }
 
   /// Returns the lead time before track end at which prefetching should
@@ -1348,12 +1365,10 @@ class PlayerController implements PlayerEngineListener {
     final gen = ++_prefetchGen;
     final immediateNext = toPrefetch.first;
 
-    // Resolve every lookahead track right away: pressing next must not
-    // wait on a resolve. The immediate next is resolved again near the
-    // handoff below so the URL it plays is fresh when consumed.
-    for (final vid in toPrefetch) {
-      unawaited(_prefetchTrack(vid, gen));
-    }
+    // Resolve the lookahead tracks one at a time. A burst of concurrent
+    // player/watch requests gets connections dropped by the edge; the
+    // first track is resolved first, so pressing next is still instant.
+    unawaited(_prefetchSequential(toPrefetch, gen));
 
     // Schedule the immediate next track close to handoff.
     final duration = s.durationMs;
@@ -1364,7 +1379,7 @@ class PlayerController implements PlayerEngineListener {
     final delay = Duration(milliseconds: remaining - leadTime.inMilliseconds);
     _prefetchTimer = Timer(delay, () {
       _prefetchTimer = null;
-      if (_disposed) return;
+      if (_disposed || gen != _prefetchGen) return;
       // Drop the early resolve and mint a fresh one, so a long track
       // never hands over an expired URL.
       _prefetchedStreams.remove(immediateNext);
@@ -1395,16 +1410,27 @@ class PlayerController implements PlayerEngineListener {
     int gen, {
     bool force = false,
   }) async {
+    if (_disposed || gen != _prefetchGen) return;
     if (!force && _prefetchedStreams.containsKey(videoId)) return;
     ResolvedStream? stream;
     try {
-      stream = await _resolveStreamAndLength(videoId);
+      stream = await _resolveStreamAndLength(videoId, updateDuration: false);
     } catch (_) {
       return;
     }
-    if (gen != _prefetchGen) return;
-    if (stream == null) return;
+    if (_disposed || gen != _prefetchGen) return;
+    if (stream == null || !stream.cacheable) return;
     _prefetchedStreams[videoId] = stream;
+  }
+
+  /// Resolves [videoIds] in order, stopping when the prefetch generation
+  /// changes. Sequential on purpose: the edge drops connections when
+  /// several player requests are opened at once.
+  Future<void> _prefetchSequential(List<String> videoIds, int gen) async {
+    for (final videoId in videoIds) {
+      if (gen != _prefetchGen || _disposed) return;
+      await _prefetchTrack(videoId, gen);
+    }
   }
 
   /// Advances on natural finish unless explicitly stopped.

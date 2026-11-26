@@ -87,13 +87,6 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
     unawaited(state.openArtist(artist, widget.track));
   }
 
-  void _openAlbum(AppState state) {
-    final album = widget.track.album;
-    if (album == null) return;
-    state.closeNow();
-    unawaited(state.openAlbum(widget.track, album));
-  }
-
   void _openSheet(BuildContext context, {int initialTab = 0}) {
     showModalBottomSheet<void>(
       context: context,
@@ -180,10 +173,11 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
       (s) => s.playerState.durationMs > 0,
     );
 
-    final albumName = track.album?.name;
-    final showAlbum = albumName != null && albumName != track.title;
-    final actionPillBg = Colors.white.withValues(alpha: 0.10);
-
+    final sourceName = context.select<AppState, String>(
+      (s) => s.playerState.queueSourceName,
+    );
+    final actionPillBg = Colors.white.withValues(alpha: 0.08);
+    final actionLayerBg = Colors.white.withValues(alpha: 0.12);
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onVerticalDragEnd: (details) {
@@ -196,8 +190,8 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
       },
       child: Column(
         children: [
-          // Top bar: dismiss on left, optional album context in center,
-          // balanced overflow IconButton on right.
+          // Top bar: dismiss on left, source context in center,
+          // overflow on right.
           Row(
             children: [
               IconButton(
@@ -206,29 +200,30 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                 onPressed: state.closeNow,
               ),
               Expanded(
-                child: showAlbum
-                    ? Center(
-                        child: InkWell(
-                          onTap: () => _openAlbum(state),
-                          borderRadius: BorderRadius.circular(8),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            child: Text(
-                              albumName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: text.titleSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'PLAYING FROM',
+                      maxLines: 1,
+                      textAlign: TextAlign.center,
+                      style: text.labelMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      sourceName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: text.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               M3EMenuAnchor(
                 controller: _menuController,
@@ -237,8 +232,9 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                 builder: (context, controller, _) => IconButton(
                   icon: const Icon(Icons.more_vert_rounded),
                   tooltip: 'More actions',
-                  onPressed: () =>
-                      controller.isOpen ? controller.close() : controller.open(),
+                  onPressed: () => controller.isOpen
+                      ? controller.close()
+                      : controller.open(),
                 ),
               ),
             ],
@@ -250,21 +246,20 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
               builder: (context, constraints) {
                 const sideInset = 8.0;
                 final maxArtByWidth = constraints.maxWidth - (sideInset * 2);
-                final maxArtByHeight =
-                    (constraints.maxHeight - 316.0).clamp(160.0, 380.0);
+                final maxArtByHeight = (constraints.maxHeight - 316.0).clamp(
+                  160.0,
+                  380.0,
+                );
                 final artSize = math.min(maxArtByWidth, maxArtByHeight);
 
-                final artwork = Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Center(
-                    child: RepaintBoundary(
-                      child: ArtworkImage(
-                        track.displayArtwork,
-                        size: artSize,
-                        radius: playerRadius,
-                        iconSize: artSize / 4,
-                        squareCoverKey: track.videoId,
-                      ),
+                final artwork = Center(
+                  child: RepaintBoundary(
+                    child: ArtworkImage(
+                      track.displayArtwork,
+                      size: artSize,
+                      radius: playerRadius,
+                      iconSize: artSize / 4,
+                      squareCoverKey: track.videoId,
                     ),
                   ),
                 );
@@ -274,10 +269,7 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                   children: [
                     // Title and Like / Dislike Row
                     Padding(
-                      padding: const EdgeInsets.only(
-                        left: sideInset,
-                        right: 2,
-                      ),
+                      padding: const EdgeInsets.only(left: sideInset, right: 2),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
@@ -316,16 +308,19 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                                             color: scheme.onSurfaceVariant,
                                           ),
                                         ),
-                                      for (var i = 0;
-                                          i < track.artists.length;
-                                          i++) ...[
+                                      for (
+                                        var i = 0;
+                                        i < track.artists.length;
+                                        i++
+                                      ) ...[
                                         InkWell(
                                           onTap: () => _openArtist(
                                             state,
                                             track.artists[i],
                                           ),
-                                          borderRadius:
-                                              BorderRadius.circular(4),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
                                           child: Text(
                                             track.artists[i].name,
                                             style: text.bodyMedium?.copyWith(
@@ -349,61 +344,92 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                           ),
                           if (widget.signedIn) ...[
                             const SizedBox(width: 4),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              icon: _pendingRating == RatingStatus.like &&
-                                      _pendingVideoId == track.videoId
-                                  ? const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: M3ELoadingIndicator(),
-                                    )
-                                  : Icon(
-                                      track.rating == RatingStatus.like
-                                          ? Icons.thumb_up_rounded
-                                          : Icons.thumb_up_outlined,
+                            Container(
+                              height: 44,
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: actionPillBg,
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.10),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    icon:
+                                        _pendingRating == RatingStatus.like &&
+                                            _pendingVideoId == track.videoId
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: M3ELoadingIndicator(),
+                                          )
+                                        : Icon(
+                                            track.rating == RatingStatus.like
+                                                ? Icons.thumb_up_rounded
+                                                : Icons.thumb_up_outlined,
+                                            size: 20,
+                                          ),
+                                    tooltip: track.rating == RatingStatus.like
+                                        ? 'Remove like'
+                                        : 'Like',
+                                    style: IconButton.styleFrom(
+                                      foregroundColor:
+                                          track.rating == RatingStatus.like
+                                          ? scheme.primary
+                                          : scheme.onSurface,
+                                      fixedSize: const Size(36, 36),
                                     ),
-                              tooltip: track.rating == RatingStatus.like
-                                  ? 'Remove like'
-                                  : 'Like',
-                              color: track.rating == RatingStatus.like
-                                  ? scheme.primary
-                                  : scheme.onSurface,
-                              onPressed: _pendingRating != null
-                                  ? null
-                                  : () => _rate(
-                                        track.rating == RatingStatus.like
-                                            ? RatingStatus.indifferent
-                                            : RatingStatus.like,
-                                      ),
-                            ),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              icon: _pendingRating == RatingStatus.dislike &&
-                                      _pendingVideoId == track.videoId
-                                  ? const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: M3ELoadingIndicator(),
-                                    )
-                                  : Icon(
-                                      track.rating == RatingStatus.dislike
-                                          ? Icons.thumb_down_rounded
-                                          : Icons.thumb_down_outlined,
-                                    ),
-                              tooltip: track.rating == RatingStatus.dislike
-                                  ? 'Remove dislike'
-                                  : 'Dislike',
-                              color: track.rating == RatingStatus.dislike
-                                  ? scheme.primary
-                                  : scheme.onSurface,
-                              onPressed: _pendingRating != null
-                                  ? null
-                                  : () => _rate(
+                                    onPressed: _pendingRating != null
+                                        ? null
+                                        : () => _rate(
+                                            track.rating == RatingStatus.like
+                                                ? RatingStatus.indifferent
+                                                : RatingStatus.like,
+                                          ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    icon:
+                                        _pendingRating ==
+                                                RatingStatus.dislike &&
+                                            _pendingVideoId == track.videoId
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: M3ELoadingIndicator(),
+                                          )
+                                        : Icon(
+                                            track.rating == RatingStatus.dislike
+                                                ? Icons.thumb_down_rounded
+                                                : Icons.thumb_down_outlined,
+                                            size: 20,
+                                          ),
+                                    tooltip:
                                         track.rating == RatingStatus.dislike
-                                            ? RatingStatus.indifferent
-                                            : RatingStatus.dislike,
-                                      ),
+                                        ? 'Remove dislike'
+                                        : 'Dislike',
+                                    style: IconButton.styleFrom(
+                                      foregroundColor:
+                                          track.rating == RatingStatus.dislike
+                                          ? scheme.primary
+                                          : scheme.onSurface,
+                                      fixedSize: const Size(36, 36),
+                                    ),
+                                    onPressed: _pendingRating != null
+                                        ? null
+                                        : () => _rate(
+                                            track.rating == RatingStatus.dislike
+                                                ? RatingStatus.indifferent
+                                                : RatingStatus.dislike,
+                                          ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ],
@@ -443,8 +469,9 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                             minimumSize: const Size(56, 56),
                             foregroundColor: scheme.onSurface,
                           ),
-                          onPressed:
-                              loading ? null : () => state.player.previous(),
+                          onPressed: loading
+                              ? null
+                              : () => state.player.previous(),
                         ),
                         if (loading)
                           const SizedBox(
@@ -472,14 +499,16 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                               backgroundColor: Colors.white,
                               foregroundColor: Colors.black,
                               minimumSize: const Size(72, 72),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                  ExpressiveCorners.extraLarge,
+                                ),
+                              ),
                             ),
                             onPressed: () => state.player.togglePlayPause(),
                           ),
                         IconButton(
-                          icon: const Icon(
-                            Icons.skip_next_rounded,
-                            size: 40,
-                          ),
+                          icon: const Icon(Icons.skip_next_rounded, size: 40),
                           tooltip: 'Next',
                           style: IconButton.styleFrom(
                             minimumSize: const Size(56, 56),
@@ -497,8 +526,9 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                           color: repeatOff
                               ? scheme.onSurfaceVariant
                               : scheme.primary,
-                          onPressed:
-                              loading ? null : () => state.player.cycleRepeat(),
+                          onPressed: loading
+                              ? null
+                              : () => state.player.cycleRepeat(),
                         ),
                       ],
                     ),
@@ -511,45 +541,68 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                     right: sideInset,
                     bottom: 4,
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonalIcon(
-                          onPressed: () => _openSheet(context, initialTab: 0),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: actionPillBg,
-                            foregroundColor: scheme.onSurface,
-                            minimumSize: const Size.fromHeight(44),
+                  child: Container(
+                    height: 52,
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: actionPillBg,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.10),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: () => _openSheet(context, initialTab: 0),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: actionLayerBg,
+                              foregroundColor: scheme.onSurface,
+                              fixedSize: const Size.fromHeight(44),
+                              padding: EdgeInsets.zero,
+                              shape: const StadiumBorder(),
+                            ),
+                            icon: const Icon(
+                              Icons.queue_music_rounded,
+                              size: 18,
+                            ),
+                            label: const Text('Up next'),
                           ),
-                          icon: const Icon(Icons.queue_music_rounded, size: 18),
-                          label: const Text('Up next'),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: FilledButton.tonalIcon(
-                          onPressed: () => _openSheet(context, initialTab: 1),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: actionPillBg,
-                            foregroundColor: scheme.onSurface,
-                            minimumSize: const Size.fromHeight(44),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: () => _openSheet(context, initialTab: 1),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: actionLayerBg,
+                              foregroundColor: scheme.onSurface,
+                              fixedSize: const Size.fromHeight(44),
+                              padding: EdgeInsets.zero,
+                              shape: const StadiumBorder(),
+                            ),
+                            icon: const Icon(Icons.lyrics_rounded, size: 18),
+                            label: const Text('Lyrics'),
                           ),
-                          icon: const Icon(Icons.lyrics_rounded, size: 18),
-                          label: const Text('Lyrics'),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      IconButton.filledTonal(
-                        onPressed: () => _openSheet(context, initialTab: 2),
-                        tooltip: 'Song info',
-                        style: IconButton.styleFrom(
-                          backgroundColor: actionPillBg,
-                          foregroundColor: scheme.onSurface,
-                          minimumSize: const Size(44, 44),
+                        const SizedBox(width: 4),
+                        Center(
+                          child: IconButton(
+                            onPressed: () => _openSheet(context, initialTab: 2),
+                            tooltip: 'Info',
+                            style: IconButton.styleFrom(
+                              backgroundColor: actionLayerBg,
+                              foregroundColor: scheme.onSurface,
+                              fixedSize: const Size(44, 44),
+                            ),
+                            icon: const Icon(
+                              Icons.info_outline_rounded,
+                              size: 18,
+                            ),
+                          ),
                         ),
-                        icon: const Icon(Icons.info_outline_rounded, size: 20),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 );
 
@@ -559,6 +612,7 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
                     height: constraints.maxHeight,
                     child: Column(
                       children: [
+                        const Spacer(),
                         artwork,
                         const Spacer(),
                         controlDeck,
@@ -605,9 +659,8 @@ class _NowPlayingMobileState extends State<NowPlayingMobile> {
       ),
       M3EMenuItemButton(
         leadingIcon: const Icon(Icons.open_in_new_rounded),
-        onPressed: () => unawaited(
-          handleNowMenu(context, NowMenuAction.openYoutube, track),
-        ),
+        onPressed: () =>
+            unawaited(handleNowMenu(context, NowMenuAction.openYoutube, track)),
         child: const Text('Open in YouTube'),
       ),
       if (widget.signedIn && widget.libraryAvailable)

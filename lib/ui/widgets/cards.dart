@@ -36,12 +36,24 @@ class BrowseCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final art = item.thumbnails.isEmpty ? null : item.bestArtwork;
     final cardW = width ?? 208.0;
-    final artSize = width != null ? (width! - 8).clamp(40.0, 200.0) : 200.0;
+    final compact = isCompactLayout(context);
+    final cardPadding = compact ? 2.0 : 4.0;
+    // One art-to-text gap everywhere (desktop and phones); single-line
+    // title and subtitle keep every card the same height, so no card
+    // can inflate its rail. Compact art leaves 2dp of slack for font
+    // rounding.
+    const artGap = 8.0;
+    final artSize = width != null
+        ? (width! - cardPadding * 2 - artGap - (compact ? 2 : 0)).clamp(
+            40.0,
+            200.0,
+          )
+        : 200.0;
     final card = InkWell(
       onTap: onTap,
       child: Container(
         width: cardW,
-        padding: const EdgeInsets.all(4),
+        padding: EdgeInsets.all(cardPadding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -51,10 +63,10 @@ class BrowseCard extends StatelessWidget {
               radius: cardRadius,
               iconSize: (artSize / 4).clamp(16.0, 48.0),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: artGap),
             Text(
               item.title,
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
@@ -106,12 +118,23 @@ class TrackRailCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final cardW = width ?? 208.0;
-    final artSize = width != null ? (width! - 8).clamp(40.0, 200.0) : 200.0;
+    final compact = isCompactLayout(context);
+    final cardPadding = compact ? 2.0 : 4.0;
+    // One art-to-text gap everywhere (desktop and phones); single-line
+    // texts keep every card the same height. Compact art leaves 2dp of
+    // slack for font rounding. Desktop keeps the 200dp cover.
+    const artGap = 8.0;
+    final artSize = width != null
+        ? (width! - cardPadding * 2 - artGap - (compact ? 2 : 0)).clamp(
+            40.0,
+            200.0,
+          )
+        : 200.0;
     final card = InkWell(
       onTap: onTap,
       child: Container(
         width: cardW,
-        padding: const EdgeInsets.all(4),
+        padding: EdgeInsets.all(cardPadding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -122,10 +145,10 @@ class TrackRailCard extends StatelessWidget {
               iconSize: (artSize / 4).clamp(16.0, 48.0),
               squareCoverKey: track.videoId,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: artGap),
             Text(
               track.title,
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: playing ? scheme.primary : scheme.onSurface,
@@ -172,7 +195,7 @@ class TrackRailCard extends StatelessWidget {
 }
 
 /// Quick-pick card in the YTM style: title overlaid on the artwork with a
-/// bottom scrim and a chevron, no text below the art.
+/// bottom scrim and an optional chevron, no text below the art.
 class QuickPickCard extends StatelessWidget {
   const QuickPickCard({
     super.key,
@@ -181,6 +204,9 @@ class QuickPickCard extends StatelessWidget {
     required this.art,
     this.playing = false,
     this.squareCoverKey,
+    this.showArrow = false,
+    this.padding = const EdgeInsets.all(4),
+    this.borderRadius = const BorderRadius.all(Radius.circular(cardRadius)),
     required this.onTap,
     this.track,
   });
@@ -189,6 +215,9 @@ class QuickPickCard extends StatelessWidget {
   final String subtitle;
   final String? art;
   final bool playing;
+  final bool showArrow;
+  final EdgeInsetsGeometry padding;
+  final BorderRadius borderRadius;
 
   /// `videoId` used to resolve the square cover when [art] is a
   /// recognizably 16:9 still (`i.ytimg.com`): quick-pick tiles are
@@ -205,9 +234,9 @@ class QuickPickCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final card = Padding(
-      padding: const EdgeInsets.all(4),
+      padding: padding,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(cardRadius),
+        borderRadius: borderRadius,
         child: InkWell(
           onTap: onTap,
           child: AspectRatio(
@@ -272,10 +301,11 @@ class QuickPickCard extends StatelessWidget {
                           ],
                         ),
                       ),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        color: Colors.white.withValues(alpha: 0.9),
-                      ),
+                      if (showArrow)
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
                     ],
                   ),
                 ),
@@ -302,15 +332,23 @@ class SimilarArtistCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final art = item.thumbnails.isEmpty ? null : item.bestArtwork;
+    final compact = isCompactLayout(context);
+    final padding = compact ? 2.0 : 4.0;
+    const artGap = 8.0;
     return InkWell(
       onTap: onTap,
       child: Container(
         width: 160,
-        padding: const EdgeInsets.all(4),
+        padding: EdgeInsets.all(padding),
         child: Column(
           children: [
-            ArtworkImage(art, size: 136, circular: true, iconSize: 40),
-            const SizedBox(height: 8),
+            ArtworkImage(
+              art,
+              size: compact ? 146 : 136,
+              circular: true,
+              iconSize: 40,
+            ),
+            SizedBox(height: artGap),
             Text(
               item.title,
               maxLines: 1,
@@ -318,15 +356,16 @@ class SimilarArtistCard extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),
-            if (item.subtitle.trim().isNotEmpty)
-              Text(
-                item.subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-                textAlign: TextAlign.center,
-              ),
+            // Always render the subtitle line, empty or not, so every
+            // similar-artist card has the same height in its rail.
+            Text(
+              item.subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),

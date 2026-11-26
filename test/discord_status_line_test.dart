@@ -72,7 +72,7 @@ PlayerState _playing() => PlayerState(
 Future<
   ({
     AppState state,
-    DiscordPresence discord,
+    DiscordPresenceBase discord,
     _RecordingRpc rpc,
     String configPath,
   })
@@ -105,7 +105,7 @@ _pumpSettings(WidgetTester tester) async {
   final rpc = _RecordingRpc();
   // Enabled with a track already playing, so the presence holds a
   // session the chip can re-push.
-  final discord = DiscordPresence(
+  final DiscordPresenceBase discord = DiscordPresence(
     enabled: true,
     statusText: DiscordStatusText.app,
     rpc: rpc,

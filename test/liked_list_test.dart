@@ -286,5 +286,13 @@ void main() {
       final card = tester.getRect(cards.at(i));
       expect(card.bottom, lessThanOrEqualTo(grid.bottom + 0.5));
     }
+    expect(cards, findsNWidgets(8));
+    final first = tester.widget<QuickPickCard>(cards.first);
+    expect(first.padding, EdgeInsets.zero);
+    expect(first.borderRadius.topLeft, const Radius.circular(20));
+    expect(first.borderRadius.topRight, const Radius.circular(4));
+    final last = tester.widget<QuickPickCard>(cards.last);
+    expect(last.borderRadius.bottomRight, const Radius.circular(20));
+    expect(last.borderRadius.bottomLeft, const Radius.circular(4));
   });
 }

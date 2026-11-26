@@ -28,12 +28,17 @@ class SearchUiState {
     this.query = '',
     this.loading = false,
     this.sections = const {},
+    this.bestMatch,
     this.error,
   });
 
   String query;
   bool loading;
   Map<String, List<ShelfItem>> sections;
+
+  /// The entity of the top-result card shelf (the best match), when the
+  /// "All" response carried one.
+  ShelfItem? bestMatch;
   String? error;
 
   /// Creates a copy with optional overrides.
@@ -41,12 +46,14 @@ class SearchUiState {
     String? query,
     bool? loading,
     Map<String, List<ShelfItem>>? sections,
+    ShelfItem? bestMatch,
     String? error,
   }) {
     return SearchUiState(
       query: query ?? this.query,
       loading: loading ?? this.loading,
       sections: sections ?? this.sections,
+      bestMatch: bestMatch,
       error: error,
     );
   }
@@ -87,10 +94,43 @@ class SearchState {
 
   SearchUiState _search = SearchUiState();
   int _searchGen = 0;
+  int _suggestGen = 0;
   List<String> _searchHistory = [];
+  List<String> _suggestions = [];
 
   /// The current search state.
   SearchUiState get search => _search;
+
+  /// Live autocomplete suggestions for the query being typed.
+  List<String> get searchSuggestions => List.unmodifiable(_suggestions);
+
+  /// Fetches autocomplete suggestions for [query], dropping stale answers.
+  Future<void> fetchSuggestions(String query) async {
+    final q = query.trim();
+    final gen = ++_suggestGen;
+    if (q.isEmpty) {
+      _suggestions = [];
+      onChanged();
+      return;
+    }
+    try {
+      final found = await tube.searchSuggestions(q);
+      if (gen != _suggestGen) return;
+      _suggestions = found;
+      onChanged();
+    } catch (_) {
+      if (gen != _suggestGen) return;
+      _suggestions = [];
+      onChanged();
+    }
+  }
+
+  /// Clears the live suggestions (e.g. when the field is emptied).
+  void clearSuggestions() {
+    _suggestGen++;
+    _suggestions = [];
+    onChanged();
+  }
 
   /// The recorded search queries, newest first.
   List<String> get searchHistory => List.unmodifiable(_searchHistory);
@@ -154,7 +194,9 @@ class SearchState {
   }
 
   /// Runs a search and enriches the song rows, cancelling older queries.
-  Future<void> searchFor(String query) async {
+  /// [filter] is a server-side category key (see [searchFilterParams]);
+  /// null searches everything.
+  Future<void> searchFor(String query, {String? filter}) async {
     final normalized = query.trim();
     if (normalized.isEmpty) return;
     recordSearchHistory(normalized);
@@ -162,15 +204,16 @@ class SearchState {
     _search = SearchUiState(query: normalized, loading: true);
     onChanged();
     try {
-      final sections = await tube.search(normalized);
+      final result = await tube.search(normalized, filter: filter);
       if (gen != _searchGen) return;
       _search = SearchUiState(
         query: normalized,
         loading: false,
-        sections: stampSections(sections),
+        sections: stampSections(result.sections),
+        bestMatch: result.bestMatch,
       );
       onChanged();
-      await _enrichSongRows(normalized, sections, gen);
+      await _enrichSongRows(normalized, result.sections, gen);
     } catch (e) {
       if (gen != _searchGen) return;
       _search = SearchUiState(
@@ -209,6 +252,7 @@ class SearchState {
       query: normalized,
       loading: false,
       sections: stampSections(stamped),
+      bestMatch: _search.bestMatch,
     );
     for (final track in enriched) {
       recordEnrichedRating(track);
@@ -227,6 +271,7 @@ class SearchState {
     _search = SearchUiState(
       query: _search.query,
       sections: stampSections(sections),
+      bestMatch: _search.bestMatch,
     );
     onChanged();
   }

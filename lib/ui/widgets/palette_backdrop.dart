@@ -12,6 +12,8 @@
 // same luminance-aware wash that keeps text readable on
 // light covers is available everywhere.
 
+import 'dart:async' show unawaited;
+
 import 'package:material_ui/material_ui.dart';
 
 import '../a11y.dart';
@@ -86,6 +88,80 @@ class PaletteBackdrop extends StatelessWidget {
       ),
       builder: (context, decoration, child) =>
           DecoratedBox(decoration: decoration ?? const BoxDecoration()),
+    );
+  }
+}
+
+/// A [PaletteBackdrop] that also requests its own palette: [paletteFor]
+/// reads the computed cache, [ensurePalette] computes it on a miss, and
+/// [tick] notifies when a palette lands so the wash repaints. Keeping the
+/// request next to the render site — instead of relying on a panel's
+/// mount-time trigger — makes the wash follow the artwork URL even when
+/// it changes after the panel mounted (track paging, late-arriving track
+/// covers), so the gradient doesn't collapse to a solid background once
+/// loading finishes.
+class ArtworkBackdrop extends StatefulWidget {
+  const ArtworkBackdrop({
+    super.key,
+    required this.artUrl,
+    required this.paletteFor,
+    required this.ensurePalette,
+    this.tick,
+  });
+
+  /// Cover whose palette should wash the background.
+  final String? artUrl;
+
+  /// Cache read: the computed palette for [artUrl], or null.
+  final List<Color>? Function(String? url) paletteFor;
+
+  /// Computes and caches the palette for [artUrl] when missing.
+  final Future<List<Color>?> Function(String? url) ensurePalette;
+
+  /// Bumped when any palette is computed; drives the repaint.
+  final Listenable? tick;
+
+  @override
+  State<ArtworkBackdrop> createState() => _ArtworkBackdropState();
+}
+
+class _ArtworkBackdropState extends State<ArtworkBackdrop> {
+  String? _requestedUrl;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _requestPalette();
+  }
+
+  @override
+  void didUpdateWidget(ArtworkBackdrop oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _requestPalette();
+  }
+
+  void _requestPalette() {
+    final url = widget.artUrl;
+    if (url == null || url.isEmpty || url == _requestedUrl) return;
+    _requestedUrl = url;
+    if (widget.paletteFor(url) == null) {
+      unawaited(widget.ensurePalette(url));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tick = widget.tick;
+    if (tick == null) {
+      return PaletteBackdrop(
+        palette: widget.paletteFor(widget.artUrl) ?? const <Color>[],
+      );
+    }
+    return ListenableBuilder(
+      listenable: tick,
+      builder: (context, _) => PaletteBackdrop(
+        palette: widget.paletteFor(widget.artUrl) ?? const <Color>[],
+      ),
     );
   }
 }

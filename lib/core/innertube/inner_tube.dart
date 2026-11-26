@@ -23,6 +23,19 @@ import 'track_merge.dart';
 
 const _base = 'https://music.youtube.com/youtubei/v1';
 const _origin = 'https://music.youtube.com';
+
+/// Server-side search filter `params` tokens (the same ones YouTube
+/// Music's own filter chips send), keyed by lowercase category. Built
+/// from the shared base/tail with the per-category middle segment.
+const _searchFilterBase = 'EgWKAQ';
+const _searchFilterTail = 'AWoMEA4QChADEAQQCRAF';
+const Map<String, String> searchFilterParams = {
+  'songs': '${_searchFilterBase}II$_searchFilterTail',
+  'videos': '${_searchFilterBase}IQ$_searchFilterTail',
+  'albums': '${_searchFilterBase}IY$_searchFilterTail',
+  'artists': '${_searchFilterBase}Ig$_searchFilterTail',
+  'playlists': '${_searchFilterBase}Io$_searchFilterTail',
+};
 const _userAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0';
 
@@ -936,43 +949,130 @@ class InnerTube {
   }
 
   /// Searches YouTube Music and normalizes results into stable categories
-  /// ("Songs", "Albums/EP/Singles", "Artists").
-  Future<Map<String, List<ShelfItem>>> search(String query) async {
-    final res = await post('search', _bodyWith({'query': query}));
+  /// ("Songs", "Albums/EP/Singles", "Artists"), plus the best-match
+  /// entity of the top-result card when the response carries one.
+  ///
+  /// [filter] is a server-side category key from [searchFilterParams]
+  /// ("songs", "albums", …) — the same `params` token YouTube Music's own
+  /// filter chips send, so a filtered search is ranked and complete
+  /// server-side instead of being carved out of the "All" response.
+  Future<SearchResults> search(String query, {String? filter}) async {
+    final body = _bodyWith({'query': query});
+    final params = filter == null ? null : searchFilterParams[filter];
+    if (params != null) body['params'] = params;
+    final res = await post('search', body);
     final tabs = nav(res, const [
       'contents',
       'tabbedSearchResultsRenderer',
       'tabs',
     ]);
-    if (tabs is! List || tabs.isEmpty) return {};
+    if (tabs is! List || tabs.isEmpty) return const SearchResults(sections: {});
     final sections = nav(tabs.first, const [
       'tabRenderer',
       'content',
       'sectionListRenderer',
       'contents',
     ]);
-    if (sections is! List) return {};
+    if (sections is! List) return const SearchResults(sections: {});
 
-    final raw = _collectSearchShelves(sections);
-    final groups = _groupSearchItems(raw);
+    final collected = _collectSearchShelves(sections);
+    final groups = _groupSearchItems(collected.raw);
     if (canonicalMetadata(query).isNotEmpty) {
       await _completeSearchMatches(query, groups);
     }
-    return _searchResultSections(groups);
+    return SearchResults(
+      sections: _searchResultSections(groups),
+      // Filtered searches answer with a plain shelf, no card; the best
+      // match only belongs to the "All" response.
+      bestMatch: filter == null
+          ? _preferAudioVersion(collected.bestMatch, groups)
+          : null,
+    );
   }
 
-  /// Collects the raw shelves of a search response.
+  /// When the best-match card links to a music video rather than the
+  /// audio-only recording, swap in the same-titled song from the Songs
+  /// shelf (those rows are audio by definition), so playback, likes and
+  /// history land on the song, not the video. The card's own artwork is
+  /// kept when the audio row carries none.
+  ShelfItem? _preferAudioVersion(ShelfItem? best, _SearchGroups groups) {
+    if (best is! SongItem) return best;
+    final track = best.track;
+    // Already an audio-shelf song: nothing to swap.
+    if (groups.songs.containsKey(track.videoId)) return best;
+    final canon = canonicalMetadata(track.title);
+    if (canon.isEmpty) return best;
+    for (final audio in groups.songs.values) {
+      if (canonicalMetadata(audio.track.title) != canon) continue;
+      final t = audio.track;
+      return SongItem(
+        t.thumbnails.isEmpty && track.thumbnails.isNotEmpty
+            ? t.copyWith(thumbnails: track.thumbnails)
+            : t,
+      );
+    }
+    return best;
+  }
+
+  /// Autocomplete suggestions for [query] via `music/get_search_suggestions`
+  /// — what YouTube Music shows under the search box while typing.
+  Future<List<String>> searchSuggestions(String query) async {
+    final res = await post(
+      'music/get_search_suggestions',
+      _bodyWith({'input': query}),
+    );
+    final contents = nav(res, const ['contents']);
+    if (contents is! List || contents.isEmpty) return const [];
+    final section = nav(contents.first, const [
+      'searchSuggestionsSectionRenderer',
+      'contents',
+    ]);
+    if (section is! List) return const [];
+    final out = <String>[];
+    for (final item in section) {
+      if (item is! Map) continue;
+      final suggestion = nav(item, const [
+        'searchSuggestionRenderer',
+        'suggestion',
+      ]);
+      if (suggestion is String) {
+        if (suggestion.isNotEmpty) out.add(suggestion);
+        continue;
+      }
+      if (suggestion is Map) {
+        final runs = nav(suggestion, const ['runs']);
+        if (runs is List) {
+          final text = runs
+              .whereType<Map>()
+              .map((r) => r['text'])
+              .whereType<String>()
+              .join();
+          if (text.isNotEmpty) out.add(text);
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Collects the raw shelves of a search response, and the best-match
+  /// entity of its top-result card shelf.
   ///
   /// Shelves sit at the top level or inside an `itemSectionRenderer`;
   /// both are collected, and the loose song rows are kept apart.
-  Map<String, List<ShelfItem>> _collectSearchShelves(List<dynamic> sections) {
+  ({Map<String, List<ShelfItem>> raw, ShelfItem? bestMatch})
+  _collectSearchShelves(List<dynamic> sections) {
     final raw = <String, List<ShelfItem>>{};
     final directSongs = <SongItem>[];
+    ShelfItem? bestMatch;
     for (final section in sections) {
       if (section is! Map) continue;
       for (final candidate in _searchCandidates(section)) {
-        if (candidate.containsKey('musicShelfRenderer') ||
-            candidate.containsKey('musicCardShelfRenderer')) {
+        final card = candidate['musicCardShelfRenderer'];
+        if (card != null ||
+            candidate.containsKey('musicShelfRenderer')) {
+          // The card shelf is the best match: parse the entity the card
+          // itself stands for, then its rows like any other shelf.
+          if (card != null) bestMatch ??= parseSearchCardShelf(card);
           parseSearchShelf(candidate, raw);
           continue;
         }
@@ -982,7 +1082,7 @@ class InnerTube {
     if (directSongs.isNotEmpty) {
       raw.putIfAbsent('Songs', () => []).addAll(directSongs);
     }
-    return raw;
+    return (raw: raw, bestMatch: bestMatch);
   }
 
   /// The renderers of one search section, unwrapping the item section.
@@ -3052,6 +3152,20 @@ class InnerTube {
 
 /// The grouped result categories of a search, before they are turned
 /// into the stable response sections.
+/// The parsed answer of a search: the categorized result sections plus
+/// the "best match" entity from the top-result card shelf, when the
+/// response carries one (unfiltered searches only).
+class SearchResults {
+  const SearchResults({required this.sections, this.bestMatch});
+
+  /// Result sections keyed by category ("Songs", "Albums/EP/Singles", …).
+  final Map<String, List<ShelfItem>> sections;
+
+  /// The entity the top-result card (`musicCardShelfRenderer`) stands
+  /// for — a song, artist, album or playlist.
+  final ShelfItem? bestMatch;
+}
+
 class _SearchGroups {
   _SearchGroups({
     required this.songs,

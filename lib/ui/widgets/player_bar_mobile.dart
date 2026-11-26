@@ -77,9 +77,8 @@ class PlayerBarMobile extends StatelessWidget {
                             track?.title ?? 'Search for music to start playing',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(fontWeight: FontWeight.w600),
                           ),
                           const SizedBox(height: 2),
                           Text.rich(
@@ -98,24 +97,22 @@ class PlayerBarMobile extends StatelessWidget {
                                     ),
                                   ),
                                 TextSpan(
-                                  text: track?.artistNames() ?? (track != null ? '' : 'NixieTube'),
+                                  text:
+                                      track?.artistNames() ??
+                                      (track != null ? '' : 'NixieTube'),
                                 ),
                               ],
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(
-                        Icons.skip_previous_rounded,
-                        size: 26,
-                      ),
+                      icon: const Icon(Icons.skip_previous_rounded, size: 26),
                       tooltip: 'Previous',
                       onPressed: track == null || loading
                           ? null
@@ -123,7 +120,9 @@ class PlayerBarMobile extends StatelessWidget {
                     ),
                     IconButton(
                       icon: Icon(
-                        playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        playing
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
                         size: 26,
                       ),
                       tooltip: 'Play/pause',
@@ -132,10 +131,7 @@ class PlayerBarMobile extends StatelessWidget {
                           : () => state.player.togglePlayPause(),
                     ),
                     IconButton(
-                      icon: const Icon(
-                        Icons.skip_next_rounded,
-                        size: 26,
-                      ),
+                      icon: const Icon(Icons.skip_next_rounded, size: 26),
                       tooltip: 'Next',
                       onPressed: track == null || loading
                           ? null
@@ -159,18 +155,27 @@ class _MiniProgressBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pos = context.select<AppState, int>((s) => s.playerState.positionMs);
-    final dur = context.select<AppState, int>((s) => s.playerState.durationMs);
+    final state = context.read<AppState>();
     final scheme = Theme.of(context).colorScheme;
-    final progress = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
-
-    return SizedBox(
-      height: 2.5,
-      child: LinearProgressIndicator(
-        value: progress,
-        backgroundColor: Colors.transparent,
-        valueColor: AlwaysStoppedAnimation<Color>(scheme.primary),
-      ),
+    // Playback progress arrives on its own notifier, not through
+    // `notifyListeners`: a tick twice a second must not rebuild the app.
+    // Reading the position with `select` instead would leave the bar
+    // frozen until something else rebuilt the page.
+    return ValueListenableBuilder<int>(
+      valueListenable: state.progressTick,
+      builder: (context, _, _) {
+        final pos = state.playerState.positionMs;
+        final dur = state.playerState.durationMs;
+        final progress = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
+        return SizedBox(
+          height: 2.5,
+          child: LinearProgressIndicator(
+            value: progress,
+            backgroundColor: Colors.transparent,
+            valueColor: AlwaysStoppedAnimation<Color>(scheme.primary),
+          ),
+        );
+      },
     );
   }
 }

@@ -1,0 +1,102 @@
+name: Player presolve
+
+# Pre-solves YouTube's player challenges (`s` / `n`) so the app never runs
+# the EJS AST pass on a phone: see tool/ejs_presolve.js for what the pass
+# costs and why the artifact replaces it.
+#
+# The results are published on the orphan `player-cache` branch, keyed by
+# player version, plus an index.json that names the newest one. The app
+# fetches `player-cache/<version>.js` and evaluates it directly. When a
+# version is missing (YouTube rotated base.js before this job saw it, or
+# the branch is unreachable) the app falls back to solving locally, which
+# is slow but correct, so a failed run never breaks playback.
+on:
+  schedule:
+    # Player scripts rotate every few days; a run that finds nothing new
+    # costs one watch-page fetch. GitHub delays scheduled runs under
+    # load, so the app may briefly fall back to the local solve.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Re-solve an already published player version
+        type: boolean
+        default: false
+  push:
+    # The artifact is only as correct as the bundle that made it: when the
+    # solver changes, published versions were solved by the old one.
+    paths:
+      - 'assets/js/yt.solver.lib.js'
+      - 'assets/js/yt.solver.core.min.js'
+      - 'tool/ejs_presolve.js'
+      - '.github/workflows/player-presolve.yml'
+
+permissions:
+  contents: write
+
+# One publisher at a time: two runs writing the index would race.
+concurrency:
+  group: player-presolve
+  cancel-in-progress: false
+
+jobs:
+  presolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The branch is the published store, so the tool has to see it to
+      # know which versions are already there. It does not exist until the
+      # first run, hence the orphan fallback.
+      - name: Check out the player cache
+        env:
+          BRANCH: player-cache
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          CACHE="${RUNNER_TEMP}/player-cache"
+          git init --quiet "${CACHE}"
+          cd "${CACHE}"
+          git remote add origin "${REMOTE}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git fetch --quiet --depth=1 origin "${BRANCH}"; then
+            git checkout --quiet -B "${BRANCH}" FETCH_HEAD
+            echo "player cache: ${BRANCH} at $(git rev-parse --short HEAD)"
+          else
+            git checkout --quiet --orphan "${BRANCH}"
+            echo "player cache: creating ${BRANCH}"
+          fi
+
+      - name: Solve the current player
+        env:
+          # A bundle change means the published artifacts were solved by
+          # the old one, so they are regenerated in that case.
+          FORCE: ${{ (github.event_name == 'push' || inputs.force) && '--force' || '' }}
+        run: |
+          node tool/ejs_presolve.js \
+            --out "${RUNNER_TEMP}/player-cache" \
+            --keep 5 \
+            ${FORCE}
+
+      - name: Publish
+        env:
+          BRANCH: player-cache
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/player-cache"
+          git add --all
+          if git diff --cached --quiet; then
+            echo "nothing new to publish"
+            exit 0
+          fi
+          LATEST=$(node -e 'const i=require("./index.json");console.log(i.latest ?? "unknown")')
+          git commit --quiet -m "player-cache: ${LATEST}"
+          git push --quiet origin "HEAD:${BRANCH}"
+          echo "published ${LATEST} on ${BRANCH}"

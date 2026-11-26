@@ -23,6 +23,7 @@ class PlayerState {
     this.durationMs = 0,
     this.volume = 80,
     this.queue = const [],
+    this.queueSourceName = 'Your queue',
     this.index = -1,
     this.shuffle = false,
     this.repeat = RepeatMode.off,
@@ -50,6 +51,7 @@ class PlayerState {
   final int durationMs;
   final int volume;
   final List<Track> queue;
+  final String queueSourceName;
   final int index;
   final bool shuffle;
   final RepeatMode repeat;
@@ -75,6 +77,7 @@ class PlayerState {
     int? durationMs,
     int? volume,
     List<Track>? queue,
+    String? queueSourceName,
     int? index,
     bool? shuffle,
     RepeatMode? repeat,
@@ -93,6 +96,7 @@ class PlayerState {
       durationMs: durationMs ?? this.durationMs,
       volume: volume ?? this.volume,
       queue: queue ?? this.queue,
+      queueSourceName: queueSourceName ?? this.queueSourceName,
       index: index ?? this.index,
       shuffle: shuffle ?? this.shuffle,
       repeat: repeat ?? this.repeat,

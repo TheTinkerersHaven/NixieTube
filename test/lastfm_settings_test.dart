@@ -31,7 +31,7 @@ void main() {
   late AppState state;
   late PlayerController player;
   late MprisService mpris;
-  late DiscordPresence discord;
+  late DiscordPresenceBase discord;
   late LastFmService lastfm;
   String? opened;
 
@@ -111,7 +111,7 @@ void main() {
   Future<void> openKeysModal(WidgetTester tester) async {
     final cog = find.descendant(
       of: find.ancestor(
-        of: find.text('Last.fm'),
+        of: find.text('Scrobble to Last.fm'),
         matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byTooltip('Advanced settings'),
@@ -132,9 +132,9 @@ void main() {
     // Section header + card body present, disabled by default. The
     // Discord card also carries a "Status:" line, so scope to this card.
     expect(find.text('Scrobbling'), findsOneWidget);
-    expect(find.text('Last.fm'), findsOneWidget);
+    expect(find.text('Scrobble to Last.fm'), findsOneWidget);
     final lastfmCard = find.ancestor(
-      of: find.text('Last.fm'),
+      of: find.text('Scrobble to Last.fm'),
       matching: find.byType(M3ESegmentedItem),
     );
     expect(
@@ -148,7 +148,7 @@ void main() {
     // Toggle scrobbling on.
     final switchFinder = find.descendant(
       of: find.ancestor(
-        of: find.text('Last.fm'),
+        of: find.text('Scrobble to Last.fm'),
         matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byType(Switch),
@@ -185,7 +185,7 @@ void main() {
     // Enable + fill credentials so Connect is actionable.
     final switchFinder = find.descendant(
       of: find.ancestor(
-        of: find.text('Last.fm'),
+        of: find.text('Scrobble to Last.fm'),
         matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byType(Switch),
@@ -262,7 +262,7 @@ void main() {
     // Toggle on, leave both credential fields empty.
     final switchFinder = find.descendant(
       of: find.ancestor(
-        of: find.text('Last.fm'),
+        of: find.text('Scrobble to Last.fm'),
         matching: find.byType(M3ESegmentedItem),
       ),
       matching: find.byType(Switch),

@@ -135,7 +135,7 @@ void main() {
     addTearDown(state.dispose);
     final mpris = MprisService(controller: player);
     addTearDown(mpris.dispose);
-    final discord = DiscordPresence();
+    final DiscordPresenceBase discord = DiscordPresence();
     addTearDown(discord.dispose);
     final lastfm = LastFmService(config: state.config);
     addTearDown(lastfm.dispose);
@@ -161,10 +161,7 @@ void main() {
         final rect = tester.getRect(button);
         if (rect.bottom < tester.view.physicalSize.height - 8) break;
       }
-      await tester.drag(
-        find.byType(Scrollable).first,
-        const Offset(0, -400),
-      );
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -400));
       await tester.pump();
     }
     expect(find.text('First-run setup'), findsOneWidget);

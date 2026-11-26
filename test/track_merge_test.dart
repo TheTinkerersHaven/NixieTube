@@ -115,9 +115,11 @@ void main() {
         ['A'],
       );
       expect(
-        mergeTrack(_track(), _incoming(artists: const [ArtistRef('B')]), opts)
-            .artists
-            .map((a) => a.name),
+        mergeTrack(
+          _track(),
+          _incoming(artists: const [ArtistRef('B')]),
+          opts,
+        ).artists.map((a) => a.name),
         ['B'],
       );
     });
@@ -159,9 +161,11 @@ void main() {
         'Kept',
       );
       expect(
-        mergeTrack(_track(), _incoming(album: const AlbumRef('Other')), opts)
-            .album
-            ?.name,
+        mergeTrack(
+          _track(),
+          _incoming(album: const AlbumRef('Other')),
+          opts,
+        ).album?.name,
         'Other',
       );
     });
@@ -169,7 +173,9 @@ void main() {
     test('fills a missing year on the kept album', () {
       final out = mergeTrack(
         _track(album: const AlbumRef('Kept', kind: ReleaseKind.album)),
-        _incoming(album: const AlbumRef('Kept', kind: ReleaseKind.album, year: '2024')),
+        _incoming(
+          album: const AlbumRef('Kept', kind: ReleaseKind.album, year: '2024'),
+        ),
         const TrackMerge(album: AlbumMerge.fillMissing),
       );
       expect(out.album?.year, '2024');
@@ -195,8 +201,10 @@ void main() {
 
     test('fills a missing duration but never overwrites a known one', () {
       expect(
-        mergeTrack(_track(durationSec: 200), _incoming(durationSec: 100))
-            .durationSec,
+        mergeTrack(
+          _track(durationSec: 200),
+          _incoming(durationSec: 100),
+        ).durationSec,
         200,
       );
       expect(
@@ -207,16 +215,15 @@ void main() {
 
     test('ORs the explicit flag', () {
       expect(mergeTrack(_track(), _incoming(explicit: true)).explicit, isTrue);
-      expect(
-        mergeTrack(_track(explicit: true), _incoming()).explicit,
-        isTrue,
-      );
+      expect(mergeTrack(_track(explicit: true), _incoming()).explicit, isTrue);
     });
 
     test('incomingWins takes a non-empty incoming title', () {
       const opts = TrackMerge(title: TitleMerge.incomingWins);
-      expect(mergeTrack(_track(title: 'Old'), _incoming(title: 'New'), opts)
-          .title, 'New');
+      expect(
+        mergeTrack(_track(title: 'Old'), _incoming(title: 'New'), opts).title,
+        'New',
+      );
       expect(mergeTrack(_track(title: 'Old'), _incoming(), opts).title, 'Old');
     });
 

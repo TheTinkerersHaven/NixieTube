@@ -1,3 +1,5 @@
+
+
 <div align="center">
   <img alt="NixieTube" src="assets/icon/nixietube.png" width="200">
   <br>
@@ -79,6 +81,18 @@ flutter run -d linux
 # Or build a release bundle
 flutter build linux --release
 ```
+
+> [!IMPORTANT]
+> **Required before building for Android.**
+> The Discord Social SDK is proprietary and can't be committed to this repo, so each developer needs their own copy of `discord_partner_sdk.aar`. Sign in to the [Discord Developer Portal](https://discord.com/developers/applications), open your application (make one if you don't have any), go to **Games → Social SDK → Downloads**, select the latest version, and download `DiscordSocialSdk-<version>.zip`. Unzip it and copy `discord_social_sdk/lib/release/discord_partner_sdk.aar` from the archive into this project at `android/app/libs/discord_partner_sdk.aar` (create the `libs` folder if it doesn't exist):
+>
+> ```bash
+> mkdir -p android/app/libs
+> unzip -o DiscordSocialSdk-<version>.zip 'discord_social_sdk/lib/release/discord_partner_sdk.aar' -d /tmp/discord_sdk
+> cp /tmp/discord_sdk/discord_social_sdk/lib/release/discord_partner_sdk.aar android/app/libs/
+> ```
+>
+> The path `android/app/libs/` is already gitignored — please don't force-add the AAR, and don't share it publicly. If the file is missing, the Gradle build fails with a clear error; you can also run `tool/setup_sdk.sh` (if present) to fetch/place it automatically.
 
 ## Tech Stack
 

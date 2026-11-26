@@ -51,7 +51,7 @@ Future<({AppState state, String configPath})> _pumpSettings(
   addTearDown(state.dispose);
   final mpris = MprisService(controller: player);
   addTearDown(mpris.dispose);
-  final discord = DiscordPresence();
+  final DiscordPresenceBase discord = DiscordPresence();
   addTearDown(discord.dispose);
   final lastfm = LastFmService(config: state.config);
   addTearDown(lastfm.dispose);

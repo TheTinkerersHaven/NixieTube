@@ -62,7 +62,7 @@ Future<(AppState, _FakeUpdater)> _pumpApp(
   );
   final mpris = MprisService(controller: state.player);
   addTearDown(mpris.dispose);
-  final discord = DiscordPresence();
+  final DiscordPresenceBase discord = DiscordPresence();
   addTearDown(discord.dispose);
   final lastfm = LastFmService(config: state.config);
   addTearDown(lastfm.dispose);
@@ -166,12 +166,17 @@ void main() {
     expect(opened.single, githubReleasesPageUrl);
     expect(updater.applied, isNull);
 
-    // The card says the same thing instead of showing a dead button.
+    // The card says the same thing instead of showing a dead button,
+    // and the button sits on the trailing edge of the card.
     state.openAppUpdates();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Open the download page'), findsOneWidget);
     expect(find.text('Check for updates'), findsNothing);
     expect(find.text('Install update'), findsNothing);
+    final button = tester.getRect(find.text('Open the download page'));
+    final logicalWidth =
+        tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    expect(button.center.dx, greaterThan(logicalWidth / 2));
   });
 }

@@ -167,6 +167,28 @@ Future<void> _settle() =>
 
 void main() {
   group('starting', () {
+    test('pending prefetch is discarded after dispose', () async {
+      final engine = FakeEngine();
+      final pending = Completer<ResolvedStream>();
+      final tube = FakeTube();
+      final c = PlayerController(
+        engine: engine,
+        tube: tube,
+        resolveStream: (id) => pending.future,
+        configDirPath: Directory.systemTemp
+            .createTempSync('nt-player-dispose')
+            .path,
+      );
+      c.playTracks([_track('v1'), _track('v2')]);
+      c.dispose();
+      pending.complete(
+        const ResolvedStream(url: 'https://x/v2', bitrate: 128000),
+      );
+      await _settle();
+      expect(c.state.queue, isNotEmpty);
+      expect(c.state.queueSourceName, 'Your queue');
+    });
+
     test('playTracks resolves and plays', () async {
       final engine = FakeEngine();
       final c = _controller(engine);

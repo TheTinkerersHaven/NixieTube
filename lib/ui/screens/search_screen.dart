@@ -1,7 +1,7 @@
 // Search screen: query field, section
 // filter chips, and categorized results.
 
-import 'dart:async' show unawaited;
+import 'dart:async' show Timer, unawaited;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
@@ -9,10 +9,13 @@ import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
+import '../format.dart';
 import '../theme.dart';
-import '../widgets/screen_list.dart';
 import '../widgets/artwork_image.dart';
+import '../widgets/browse_menu.dart';
 import '../widgets/rails.dart';
+import '../widgets/screen_list.dart';
+import '../widgets/track_menu_scope.dart';
 import '../widgets/track_row.dart';
 
 /// Search songs, releases and artists.
@@ -28,6 +31,9 @@ class _SearchScreenState extends State<SearchScreen> {
   final FocusNode _focus = FocusNode();
   String _filter = 'All';
   String _lastQuery = '';
+  Timer? _suggestTimer;
+  (String, Brightness)? _bestMatchColorSchemeKey;
+  Future<ColorScheme?>? _bestMatchColorSchemeFuture;
 
   @override
   void initState() {
@@ -36,9 +42,24 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _suggestTimer?.cancel();
     _controller.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  /// Debounced autocomplete: while typing, ask InnerTube for
+  /// suggestions (what YTM shows under the search box).
+  void _onQueryChanged(AppState state, String text) {
+    _suggestTimer?.cancel();
+    final q = text.trim();
+    if (q.isEmpty) {
+      state.clearSearchSuggestions();
+      return;
+    }
+    _suggestTimer = Timer(const Duration(milliseconds: 250), () {
+      unawaited(state.fetchSearchSuggestions(q));
+    });
   }
 
   void _submit(AppState state) {
@@ -103,6 +124,7 @@ class _SearchScreenState extends State<SearchScreen> {
               border: const OutlineInputBorder(),
             ),
             textInputAction: TextInputAction.search,
+            onChanged: (v) => _onQueryChanged(state, v),
             onSubmitted: (_) => _submit(state),
           ),
         ),
@@ -123,13 +145,15 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _filters(BuildContext context, AppState state) {
-    final sections = state.search.sections;
-    int count(String key) => sections[key]?.length ?? 0;
-    final chips = <String, int>{
-      'All': sections.values.fold(0, (n, l) => n + l.length),
-      'Songs': count('Songs'),
-      'Albums/EP/Singles': count('Albums/EP/Singles'),
-      'Artists': count('Artists'),
+    // Server-side filter chips: tapping one re-runs the search with the
+    // `params` token YouTube Music's own chips send, so the category is
+    // ranked and complete server-side rather than carved out of the
+    // "All" response client-side.
+    const chips = <String, String?>{
+      'All': null,
+      'Songs': 'songs',
+      'Albums/EP/Singles': 'albums',
+      'Artists': 'artists',
     };
     return SizedBox(
       height: 48,
@@ -141,9 +165,16 @@ class _SearchScreenState extends State<SearchScreen> {
         itemBuilder: (context, i) {
           final key = chips.keys.elementAt(i);
           return FilterChip(
-            label: Text('$key (${chips[key]})'),
+            label: Text(key),
             selected: _filter == key,
-            onSelected: (_) => setState(() => _filter = key),
+            onSelected: (_) {
+              if (_filter == key) return;
+              setState(() => _filter = key);
+              final q = state.search.query;
+              if (q.isNotEmpty) {
+                unawaited(state.searchFor(q, filter: chips[key]));
+              }
+            },
           );
         },
       ),
@@ -194,6 +225,13 @@ class _SearchScreenState extends State<SearchScreen> {
     // their artwork decodes) are only built when scrolled into view.
     final rows =
         <({int kind, String? key, List<ShelfItem>? items, ShelfItem? item})>[];
+    // The top-result card shelf is the best match: pin its entity as a
+    // prominent card above every category on the unfiltered "All" tab.
+    final best = _filter == 'All' ? search.bestMatch : null;
+    if (best != null) {
+      rows.add((kind: 3, key: null, items: null, item: best));
+      rows.add((kind: 2, key: null, items: null, item: null));
+    }
     for (final key in keys) {
       rows.add((kind: 0, key: key, items: sections[key]!, item: null));
       for (final item in sections[key]!) {
@@ -211,9 +249,229 @@ class _SearchScreenState extends State<SearchScreen> {
             return _sectionHeader(context, state, r.key!, r.items!);
           case 1:
             return _sectionItem(context, state, r.item!, playingId);
+          case 3:
+            return _bestMatchCard(context, state, r.item!, playingId);
           default:
             return const SizedBox(height: 16);
         }
+      },
+    );
+  }
+
+  /// The best-match card: the entity of the top-result card shelf shown
+  /// above all categories — big cover, title, type/artist meta, and a
+  /// play affordance for songs. Tap plays a song or opens the browsable
+  /// entity; press-and-hold (mobile) / right-click opens its menu.
+  Widget _bestMatchCard(
+    BuildContext context,
+    AppState state,
+    ShelfItem item,
+    String? playingId,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    final song = item is SongItem ? item.track : null;
+    final browse = item is BrowseItem ? item : null;
+    final art = song == null
+        ? browse?.displayArtwork
+        : state.cachedSquareCover(song.videoId) ?? song.displayArtwork;
+    final title = song?.title ?? browse?.title ?? '';
+    final subtitle = song != null
+        ? [
+            song.artistNames(),
+            song.album?.name ?? '',
+            if (song.durationSec > 0) formatDuration(song.durationSec),
+          ].where((s) => s.trim().isNotEmpty).join(' • ')
+        : (browse?.subtitle ?? '');
+    final playing = song != null && song.videoId == playingId;
+    final brightness = Theme.of(context).brightness;
+    final Future<ColorScheme?>? colorSchemeFuture;
+    if (art == null) {
+      colorSchemeFuture = null;
+    } else {
+      final key = (art, brightness);
+      if (_bestMatchColorSchemeKey != key) {
+        _bestMatchColorSchemeKey = key;
+        _bestMatchColorSchemeFuture = _artColorScheme(state, art, brightness);
+      }
+      colorSchemeFuture = _bestMatchColorSchemeFuture;
+    }
+
+    void onTap() {
+      if (song != null) {
+        unawaited(state.playSingle(song));
+      } else if (browse != null) {
+        if (browse.isPlaylist) {
+          state.openPlaylistById(browse.browseId, item: browse);
+        } else {
+          state.go(Screen.detail, detail: browse);
+        }
+      }
+    }
+
+    final wrapped = song != null
+        ? TrackMenuTarget(
+            track: song,
+            child: _bestMatchCardSurface(
+              context,
+              colorSchemeFuture,
+              scheme,
+              art,
+              title,
+              subtitle,
+              playing,
+              browse,
+              song,
+              onTap,
+            ),
+          )
+        : browse != null
+        ? BrowseMenuTarget(
+            item: browse,
+            child: _bestMatchCardSurface(
+              context,
+              colorSchemeFuture,
+              scheme,
+              art,
+              title,
+              subtitle,
+              playing,
+              browse,
+              song,
+              onTap,
+            ),
+          )
+        : _bestMatchCardSurface(
+            context,
+            colorSchemeFuture,
+            scheme,
+            art,
+            title,
+            subtitle,
+            playing,
+            browse,
+            song,
+            onTap,
+          );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 24, 4, 0),
+      child: wrapped,
+    );
+  }
+
+  Future<ColorScheme?> _artColorScheme(
+    AppState state,
+    String url,
+    Brightness brightness,
+  ) async {
+    final file = await state.art.file(url);
+    if (file == null) return null;
+    return ColorScheme.fromImageProvider(
+      provider: FileImage(file),
+      brightness: brightness,
+    );
+  }
+
+  Widget _bestMatchCardSurface(
+    BuildContext context,
+    Future<ColorScheme?>? colorSchemeFuture,
+    ColorScheme fallbackScheme,
+    String? art,
+    String title,
+    String subtitle,
+    bool playing,
+    BrowseItem? browse,
+    Track? song,
+    VoidCallback onTap,
+  ) {
+    return FutureBuilder<ColorScheme?>(
+      future: colorSchemeFuture,
+      builder: (context, snapshot) {
+        final scheme = snapshot.data ?? fallbackScheme;
+        return Material(
+          color: scheme.primaryContainer,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(cardRadius),
+            side: BorderSide(color: scheme.primary.withValues(alpha: 0.4)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  ArtworkImage(
+                    art,
+                    size: 96,
+                    radius: rowArtRadius,
+                    circular: browse?.browseId.startsWith('UC') ?? false,
+                    iconSize: 40,
+                    squareCoverKey: song?.videoId,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Best match',
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(
+                                color: scheme.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                color: playing
+                                    ? scheme.primary
+                                    : scheme.onPrimaryContainer,
+                              ),
+                        ),
+                        if (subtitle.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: scheme.onPrimaryContainer.withValues(
+                                    alpha: 0.8,
+                                  ),
+                                ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (song != null)
+                    IconButton(
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      tooltip: 'Play',
+                      style: IconButton.styleFrom(
+                        backgroundColor: scheme.primary,
+                        foregroundColor: scheme.onPrimary,
+                      ),
+                      onPressed: onTap,
+                    )
+                  else
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: scheme.onPrimaryContainer,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
       },
     );
   }
@@ -234,7 +492,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
           if (songs.isNotEmpty)
             M3ETextButton(
-              onPressed: () => state.playSongs(songs, 0),
+              onPressed: () => state.playSongs(songs, 0, sourceName: 'Search'),
               child: const Text('Play all'),
             ),
         ],
@@ -291,9 +549,27 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _suggestions(BuildContext context, AppState state) {
+    final live = context.select<AppState, List<String>>(
+      (s) => s.searchSuggestions,
+    );
+    final typing = _controller.text.trim().isNotEmpty;
     return screenList(
       children: [
-        const Text('Try searching for songs, artists or albums.'),
+        // While typing, show InnerTube's live autocomplete above history.
+        if (typing && live.isNotEmpty) ...[
+          for (final s in live)
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              leading: const Icon(Icons.search_rounded),
+              title: Text(s, maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () {
+                _controller.text = s;
+                _submit(state);
+              },
+            ),
+          const SizedBox(height: 16),
+        ] else if (!typing)
+          const Text('Try searching for songs, artists or albums.'),
         const SizedBox(height: 16),
         _recentSearches(context, state),
       ],

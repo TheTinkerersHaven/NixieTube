@@ -15,7 +15,9 @@ import 'core/innertube/stream_resolver.dart';
 import 'core/player/audio_backend.dart';
 import 'core/player/just_audio_player_engine.dart';
 import 'core/player/player_controller.dart';
+import 'core/player/stream_proxy.dart';
 import 'sys/discord.dart';
+import 'sys/discord_sdk_mobile.dart';
 import 'sys/lastfm.dart';
 import 'sys/listenbrainz.dart';
 import 'sys/log.dart';
@@ -30,6 +32,7 @@ import 'sys/tray_service.dart';
 import 'ui/app.dart';
 import 'ui/app_state.dart';
 import 'ui/theme.dart';
+import 'ui/widgets/js_solver_host.dart';
 import 'ui/widgets/track_menu_scope.dart';
 
 /// Caps the in-memory image cache. `maximumSizeBytes` is the memory bound;
@@ -89,12 +92,25 @@ void main(List<String> args) async {
   initLogging();
   final config = SysConfig();
   final tube = InnerTube();
-  final streamResolver = StreamResolver(cookie: tube.auth.cookie);
+  final streamResolver = StreamResolver(
+    auth: tube.auth,
+    authProvider: () => tube.auth,
+  );
   // The first play otherwise pays for the YouTube homepage read that
   // yields the visitor id; fetching it while the app starts hides that
   // round trip from the user. Fire-and-forget: a failure is retried by
   // the normal resolve path.
   streamResolver.warmUp();
+  // When the media edge's per-URL budget runs out mid-stream, the
+  // loopback proxy asks for a fresh raw URL for the same video.
+  StreamProxy.instance.resolveFresh = (videoId) async {
+    final stream = await streamResolver.resolve(
+      videoId,
+      proxy: false,
+      force: true,
+    );
+    return stream?.url;
+  };
   final player = PlayerController(
     engine: JustAudioPlayerEngine(),
     tube: tube,
@@ -113,6 +129,17 @@ void main(List<String> args) async {
     // audio_service requires init to finish before runApp; the handler
     // catches its own failures, so a phone with no plugin still starts.
     await startBackgroundAudio(player);
+    // Closing the app closes it for good: the host activity reports
+    // when it is being finished (back gesture) and we stop playback
+    // and take the media notification down, so the notification panel
+    // ends in the same state a fully closed app leaves behind.
+    const lifecycleChannel = MethodChannel('nixietube/lifecycle');
+    lifecycleChannel.setMethodCallHandler((call) async {
+      if (call.method == 'closeForGood') {
+        await closeBackgroundAudioForGood();
+      }
+      return null;
+    });
   }
   final state = AppState(
     tube: tube,
@@ -137,18 +164,33 @@ void main(List<String> args) async {
   // Window close hides to the tray (see TrayService); quitting
   // flushes the session first, from either MPRIS or the tray menu.
   // Sleep inhibition must drop before exit, or the lock outlives us.
-  final discord = DiscordPresence(
-    appId: config.discordAppId,
-    enabled: config.discordEnabled,
-    statusText: discordStatusTextFromKey(config.discordStatusText),
-    pauseHideAfter: Duration(minutes: config.discordPauseHideMinutes),
-    supported: supportsDiscordRpc(platform),
-  );
+  //
+  // Discord presence rides the local IPC socket on desktop and the
+  // official Social SDK AAR on Android (presence via the installed
+  // Discord app's RPC service, no OAuth) — both behind the shared
+  // DiscordPresenceBase surface.
+  final DiscordPresenceBase discord = supportsDiscordSocialSdk(platform)
+      ? DiscordSdkPresence(
+          appId: config.discordAppIdOrDefault,
+          enabled: config.discordEnabled,
+          statusText: discordStatusTextFromKey(config.discordStatusText),
+          pauseHideAfter: Duration(minutes: config.discordPauseHideMinutes),
+          supported: true,
+        )
+      : DiscordPresence(
+          appId: config.discordAppId,
+          enabled: config.discordEnabled,
+          statusText: discordStatusTextFromKey(config.discordStatusText),
+          pauseHideAfter: Duration(minutes: config.discordPauseHideMinutes),
+          supported: supportsDiscordRpc(platform),
+        );
   unawaited(player.states.forEach(discord.update));
+  unawaited(discord.start());
 
   final sleepInhibit = SleepInhibitService(controller: player);
   Future<void> quitApp() async {
     await sleepInhibit.dispose();
+    await StreamProxy.instance.close();
     await player.flushSession().timeout(
       const Duration(seconds: 2),
       onTimeout: () {},
@@ -246,7 +288,7 @@ class NixieTubeApp extends StatelessWidget {
 
   final AppState state;
   final MprisService mpris;
-  final DiscordPresence discord;
+  final DiscordPresenceBase discord;
   final LastFmService lastfm;
   final MusicBrainzService? musicbrainz;
   final ListenBrainzService? listenbrainz;
@@ -380,6 +422,10 @@ class _ThemedMaterialAppState extends State<_ThemedMaterialApp> {
         ),
       ),
     );
+    Widget buildHome() => _SkeletonConfig(
+      reducedMotion: reducedMotion,
+      child: const Scaffold(body: AppShell()),
+    );
     return MaterialApp(
       title: 'NixieTube',
       theme: theme,
@@ -409,16 +455,35 @@ class _ThemedMaterialAppState extends State<_ThemedMaterialApp> {
                 ? Brightness.light
                 : Brightness.dark,
           ),
-          child: TrackMenuScope(
-            coordinator: _menus,
-            child: child ?? const SizedBox.shrink(),
+          child: JsSolverHost(
+            child: TrackMenuScope(
+              coordinator: _menus,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },
-      home: _SkeletonConfig(
-        reducedMotion: reducedMotion,
-        child: const Scaffold(body: AppShell()),
-      ),
+      home: buildHome(),
+      // A cold start through a deep link (e.g. the Discord OAuth2
+      // callback discord-<appId>://authorize/callback?code=…) arrives
+      // from the platform as a pushed route with no generator, which
+      // would throw "Could not find a generator for route". Show the
+      // normal home instead and hand the URI to the link handler —
+      // app_links delivers the same link through its own stream.
+      onUnknownRoute: (settings) {
+        // Deep-link route pushes are a platform side effect, not real
+        // navigation: render home for a frame, then drop the route so
+        // the stack (and the back button) stay clean.
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (context) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (context.mounted) Navigator.of(context).pop();
+            });
+            return buildHome();
+          },
+        );
+      },
     );
   }
 }

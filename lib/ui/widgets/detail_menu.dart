@@ -69,6 +69,12 @@ class DetailMenuButton extends StatelessWidget {
     return M3EPopupMenuButton<_DetailMenuAction>(
       tooltip: 'More actions',
       icon: const Icon(Icons.more_vert_rounded),
+      // A 40dp circular tonal trigger (the popup's default style is
+      // tonal; pinning the size to 40x40 makes the round shape a circle).
+      triggerDecoration: const M3EButtonDecoration(
+        fixedSize: Size(40, 40),
+        padding: EdgeInsets.zero,
+      ),
       onSelected: (action) => _onSelected(context, action),
       itemBuilder: (context) => const [
         M3EPopupMenuItem<_DetailMenuAction>(

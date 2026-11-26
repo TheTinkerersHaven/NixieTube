@@ -52,11 +52,18 @@ bool supportsVolumeSlider(AppPlatform platform) => !isMobilePlatform(platform);
 bool supportsEmbeddedLogin(AppPlatform platform) =>
     isDesktop(platform) || platform == AppPlatform.android;
 
-/// Whether Discord Rich Presence can work.
+/// Whether Discord Rich Presence can work over the desktop IPC socket.
 ///
 /// Discord exposes presence over a local IPC socket owned by the desktop
 /// client; a phone has neither the socket nor a Discord client to own it.
 bool supportsDiscordRpc(AppPlatform platform) => isDesktop(platform);
+
+/// Whether Discord Rich Presence can run through the official Social SDK
+/// (the discord_partner_sdk.aar), which publishes presence via the
+/// installed Discord app's RPC service. Android only — the SDK ships an
+/// AAR; iOS needs the xcframework, which is not vendored.
+bool supportsDiscordSocialSdk(AppPlatform platform) =>
+    platform == AppPlatform.android;
 
 /// Whether MPRIS media keys can be exported.
 ///

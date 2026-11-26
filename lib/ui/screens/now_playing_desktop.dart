@@ -33,6 +33,9 @@ class NowPlayingDesktop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final sourceName = context.select<AppState, String>(
+      (s) => s.playerState.queueSourceName,
+    );
     return Column(
       children: [
         Row(
@@ -43,9 +46,25 @@ class NowPlayingDesktop extends StatelessWidget {
               onPressed: context.read<AppState>().closeNow,
             ),
             Expanded(
-              child: Text(
-                'Now playing',
-                style: Theme.of(context).textTheme.titleLarge,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'PLAYING FROM',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      letterSpacing: 1.1,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    sourceName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ],
               ),
             ),
             M3EPopupMenuButton<NowMenuAction>(
@@ -77,9 +96,8 @@ class NowPlayingDesktop extends StatelessWidget {
                 ),
                 if (signedIn && libraryAvailable)
                   M3EPopupMenuItem<NowMenuAction>(
-                    onTap: () => context
-                        .read<AppState>()
-                        .openPlaylistDialog(track),
+                    onTap: () =>
+                        context.read<AppState>().openPlaylistDialog(track),
                     child: const Row(
                       children: [
                         Icon(Icons.playlist_add_rounded),
@@ -140,16 +158,11 @@ class NowPlayingDesktop extends StatelessWidget {
                 children: [
                   Expanded(
                     child: RepaintBoundary(
-                      child: TransportColumn(
-                        track: track,
-                        artSize: artSize,
-                      ),
+                      child: TransportColumn(track: track, artSize: artSize),
                     ),
                   ),
                   const SizedBox(width: 24),
-                  const Expanded(
-                    child: RepaintBoundary(child: TabsColumn()),
-                  ),
+                  const Expanded(child: RepaintBoundary(child: TabsColumn())),
                 ],
               );
             },

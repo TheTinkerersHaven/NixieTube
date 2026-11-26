@@ -61,7 +61,7 @@ Future<({AppState state, List<String> opened})> _pumpSettings(
   addTearDown(state.dispose);
   final mpris = MprisService(controller: player);
   addTearDown(mpris.dispose);
-  final discord = DiscordPresence();
+  final DiscordPresenceBase discord = DiscordPresence();
   addTearDown(discord.dispose);
   final lastfm = LastFmService(config: state.config);
   addTearDown(lastfm.dispose);
@@ -183,7 +183,11 @@ void main() {
                           'contents': [
                             {
                               'musicShelfRenderer': {
-                                'title': {'runs': [{'text': 'Playlists'}]},
+                                'title': {
+                                  'runs': [
+                                    {'text': 'Playlists'},
+                                  ],
+                                },
                                 'contents': [],
                               },
                             },

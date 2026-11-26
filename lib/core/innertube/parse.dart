@@ -1189,6 +1189,128 @@ void parseSearchShelf(
   }
 }
 
+/// Splits text runs into segments at the " • " separator runs — the
+/// same splitBySeparator Metrolist/InnerTune apply to card subtitles,
+/// which read "Song • Artist • Album • 3:45".
+List<List> splitRunsBySeparator(dynamic runs) {
+  if (runs is! List) return const [];
+  final segments = <List>[];
+  var current = <dynamic>[];
+  for (final run in runs) {
+    final text = run is Map ? str(run['text']) : null;
+    if (text != null && text.trim() == '•') {
+      segments.add(current);
+      current = <dynamic>[];
+    } else {
+      current.add(run);
+    }
+  }
+  segments.add(current);
+  return segments;
+}
+
+/// Parses a search `musicCardShelfRenderer` — the "Top result" card —
+/// into the single entity it stands for, the way Metrolist's
+/// `fromMusicCardShelfRenderer` does: the entity comes from the card's
+/// own `onTap` endpoint (watch → song, browse → artist/album/playlist),
+/// the subtitle runs carry type • artists • album • duration, and the
+/// card-level thumbnail is its art.
+ShelfItem? parseSearchCardShelf(dynamic card) {
+  if (card is! Map) return null;
+  // The card title lives in its header; some variants repeat it at the
+  // top level, so fall back to that.
+  final headerTitle = nav(card, const [
+    'header',
+    'musicCardShelfHeaderBasicRenderer',
+    'title',
+    'runs',
+  ]);
+  final topTitle = nav(card, const ['title', 'runs']);
+  final title = runsText(
+    headerTitle is List && headerTitle.isNotEmpty
+        ? headerTitle
+        : (topTitle is List ? topTitle : null),
+  );
+  if (title.isEmpty) return null;
+  final segments = splitRunsBySeparator(nav(card, const ['subtitle', 'runs']));
+  final typeLabel = segments.isNotEmpty ? runsText(segments[0]) : '';
+  final thumbNode = nav(card, const ['thumbnail']);
+  final thumbnails = parseThumbnails(thumbNode ?? card);
+
+  final onTap = nav(card, const ['onTap']);
+  // Song card: the card itself links to a watch endpoint.
+  final videoId = str(nav(onTap, const ['watchEndpoint', 'videoId']));
+  if (videoId != null && videoId.isNotEmpty) {
+    // Artists sit in the second subtitle segment; the linked names are
+    // the runs at even indices ("oddElements" in Metrolist's port, which
+    // despite the name filters index % 2 == 0 — names alternate with
+    // ", " runs inside a segment).
+    final artists = <ArtistRef>[];
+    if (segments.length > 1) {
+      final seg = segments[1];
+      for (var i = 0; i < seg.length; i += 2) {
+        final name = str(nav(seg[i], const ['text']));
+        if (name == null || name.isEmpty) continue;
+        artists.add(ArtistRef(name, browseId: _browseIdFromRuns([seg[i]])));
+      }
+    }
+    // Album is the third segment's first run that links to a release.
+    AlbumRef? album;
+    if (segments.length > 2) {
+      for (final run in segments[2]) {
+        final id = _browseIdFromRuns([run]);
+        final name = str(nav(run, const ['text']));
+        if (id != null && id.startsWith('MPRE') && name != null) {
+          album = AlbumRef(name, browseId: id);
+          break;
+        }
+      }
+    }
+    // The duration is the last subtitle segment ("3:45").
+    final durationText = segments.isNotEmpty ? runsText(segments.last) : '';
+    final duration = _durationRe.hasMatch(durationText)
+        ? toDurationSec(durationText)
+        : 0;
+    final explicitBadges = nav(card, const ['subtitleBadges']);
+    var explicit = false;
+    if (explicitBadges is List) {
+      for (final b in explicitBadges) {
+        if (str(nav(b, const [
+              'musicInlineBadgeRenderer',
+              'icon',
+              'iconType',
+            ])) ==
+            'MUSIC_EXPLICIT_BADGE') {
+          explicit = true;
+          break;
+        }
+      }
+    }
+    return ShelfItem.song(
+      Track(
+        videoId: videoId,
+        title: title,
+        artists: artists,
+        album: album,
+        durationSec: duration,
+        thumbnails: thumbnails,
+        explicit: explicit,
+      ),
+    );
+  }
+  // Browse card: artist, album or playlist, decided by the browse id.
+  final browseId = str(nav(onTap, const ['browseEndpoint', 'browseId']));
+  if (browseId == null || browseId.isEmpty) return null;
+  return ShelfItem.browse(
+    title: title,
+    subtitle: typeLabel.isNotEmpty ? typeLabel : runsText(nav(card, const ['subtitle', 'runs'])),
+    browseId: browseId,
+    thumbnails: thumbnails,
+    kind: detectReleaseKind(typeLabel),
+    browseParams: str(nav(onTap, const ['browseEndpoint', 'params'])),
+  );
+}
+
 /// Ranks song search results against the raw [query], best match first.
 ///
 /// YouTube answers "title + artist" queries (e.g. "kid again ivycomb")

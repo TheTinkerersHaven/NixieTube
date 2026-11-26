@@ -18,7 +18,7 @@ lib/
 ├── theme.dart                 YTM-red seed scheme, dynamic color, radii
 ├── core/
 │   ├── artwork/artwork_store.dart   Disk-cached covers
-│   ├── innertube/                   InnerTube client: auth, library, browse, search, radio, ratings, lyrics, stream resolve
+│   ├── innertube/                   InnerTube client: auth, library, browse, search, radio, ratings, lyrics, stream resolve, pre-solved player scripts
 │   ├── models/models.dart           Track, shelf, playlist, detail models
 │   └── player/                      Queue, shuffle/repeat/radio, sleep timer, session persistence, engines
 ├── sys/
@@ -47,6 +47,16 @@ Key symbols:
 - `AppState` (`lib/ui/app_state.dart`) — the central `ChangeNotifier`. Most UI reads go through `context.select<AppState, ...>`; writes go through methods on the state.
 - `Updater` (`lib/sys/updater.dart`) — `checkForUpdates()` hits the GitHub releases API; `applyUpdate()` downloads to `<exe>.new` and atomically renames.
 - `UpdateInfo` — data class returned by `checkForUpdates()`, carries `version` and the download URL.
+
+## Agent skills
+
+Dart and Flutter skills are installed into `.agents/skills/`, which is
+git-ignored:
+
+```bash
+dart run skills@ get          # refresh the skill catalog
+dart run skills@ get --all    # install or update every skill in it
+```
 
 ## Code style & conventions
 
@@ -79,7 +89,9 @@ flutter build linux --release  # must succeed
 ## Domain knowledge
 
 - **Auth session:** cookie + SAPISIDHASH. `AuthSession.fromCookie(cookie)` parses it; `loginValid` is true when the saved cookie session still reads the library.
-- **Stream resolution:** `StreamResolver` resolves playable URLs via yt-dlp; results are cached 5 minutes with TTL. Lookahead prefetches up to 3 tracks ahead.
+- **Stream resolution:** `StreamResolver` resolves playable URLs through InnerTube's player endpoint (native clients first, WEB_REMIX for age-restricted tracks); results are cached 5 minutes with TTL. Lookahead prefetches up to 3 tracks ahead.
+- **Challenge solving:** answering `s` / `n` needs the player script's functions. Parsing it (meriyah → astring) takes minutes on a non-JIT engine, so `tool/ejs_presolve.js` runs that pass on Node in CI (`.github/workflows/player-presolve.yml`, every 30 min) and publishes the result on the `player-cache` branch keyed by player version. `PresolvedPlayers` (`lib/core/innertube/player_presolver.dart`) fetches it, `JsChallengeSolver` evaluates it, and the local AST pass is only the fallback. When YouTube changes the player, the job fails loudly and the vendored bundle in `assets/js` needs patching.
+- **The vendored bundle is patched:** `assets/js/yt.solver.lib.js` buffers astring's output and joins it once instead of appending per token, which is what made the local AST pass take minutes rather than seconds (QuickJS has no rope strings, so every `+=` copied the whole output — about 2.5 TB of memcpy for one player). Keep that patch when regenerating the bundle, or `test/ejs_solver_bundle_test.dart` fails; the printed script is byte-identical with and without it.
 - **AppImage updates:** `Updater.applyUpdate()` only replaces when running from an `.AppImage` path; local `flutter run` skips gracefully. The new binary takes effect on next launch.
 - **Banner pattern:** banners live in `lib/ui/app.dart` as `_SessionBanner`, `_AudioBackendBanner`, `_UpdateBanner`. Each reads its visibility via `context.select` and is dismissed via `AppState.dismiss*Banner()`, which also must be read via `context.select` so Provider rebuilds the banner when the flag flips.
 - **Square thumbnails:** must use YouTube's own square art — no client-side auto-crop and no bar trimming; the artwork store never crops (whole-frame decode).

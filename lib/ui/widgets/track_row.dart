@@ -42,6 +42,8 @@ class TrackRow extends StatefulWidget {
     this.removable = false,
     this.onRemove,
     this.showViews = false,
+    this.albumRows = false,
+    this.flush = false,
     this.contextMenu = true,
     this.hovering,
     this.onMenuOpenChanged,
@@ -64,6 +66,16 @@ class TrackRow extends StatefulWidget {
   /// Shows the row's play count under the duration (artist top
   /// songs, album tracks) when the backend provided one.
   final bool showViews;
+
+  /// Album detail rows: the hero card already shows the cover and the
+  /// album name, so on phones the row drops the artwork thumbnail and
+  /// the album name from the subtitle, and keeps a fixed 28dp index.
+  final bool albumRows;
+
+  /// On phones, drops the row's side padding so its content lines up
+  /// with a header that sits flush on the same edge (the artist page's
+  /// section header) instead of keeping the 12dp gutter.
+  final bool flush;
 
   /// Whether right-click opens the overflow menu. Hosts with their
   /// own row menu (Up Next) disable this to avoid double menus.
@@ -134,16 +146,25 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
     // Phones cannot fit the duration column and both thumb buttons
     // beside a readable title: drop the play-count column and the
     // separate duration, fold the duration into the subtitle, and use
-    // slightly smaller art and index so long titles survive.
+    // slightly smaller art and index so long titles survive. Album rows
+    // additionally drop the artwork (the hero card carries the cover)
+    // and the album name, and keep a fixed 28dp index.
     final compact = isCompactLayout(context);
+    final albumRows = widget.albumRows;
     final subtitle = [
       track.artistNames(),
-      track.album?.name ?? '',
+      if (!albumRows) track.album?.name ?? '',
       if (compact && track.durationSec > 0) formatDuration(track.durationSec),
     ].where((s) => s.trim().isNotEmpty).join(' • ');
     final tile = ListTile(
+      // On phones the trailing like/dislike/⋮ buttons each carry 12dp
+      // of icon inset, so the row pads its left side by the same 12dp:
+      // artwork and icons then sit evenly inside the list's margins.
+      // Hosts whose header sits flush with the list edge (the artist
+      // page's section header) set [flush] instead, so the rows line up
+      // with the header without an extra gutter.
       contentPadding: compact
-          ? EdgeInsets.zero
+          ? (widget.flush ? EdgeInsets.zero : const EdgeInsets.only(left: 12))
           : const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       visualDensity: compact ? VisualDensity.compact : null,
       onTap: onPlay,
@@ -152,22 +173,23 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
         children: [
           if (index != null)
             SizedBox(
-              width: compact ? 24 : 28,
+              width: compact && !albumRows ? 20 : 28,
               child: Text(
                 '$index',
-                textAlign: TextAlign.center,
+                textAlign: TextAlign.left,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: playing ? scheme.primary : scheme.onSurfaceVariant,
                 ),
               ),
             ),
-          ArtworkImage(
-            track.displayArtwork,
-            size: compact ? 44 : 48,
-            radius: rowArtRadius,
-            iconSize: compact ? 22 : 24,
-            squareCoverKey: track.videoId,
-          ),
+          if (!(compact && albumRows))
+            ArtworkImage(
+              track.displayArtwork,
+              size: compact ? 44 : 48,
+              radius: rowArtRadius,
+              iconSize: compact ? 22 : 24,
+              squareCoverKey: track.videoId,
+            ),
         ],
       ),
       title: Text(
@@ -204,6 +226,7 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
             ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
           // Duration/plays sit left of the action buttons, in open
           // space instead of crammed into the row's far corner. On
@@ -279,11 +302,19 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
           ] else ...[
             if (track.rating == RatingStatus.like ||
                 track.rating == RatingStatus.dislike)
-              Icon(
-                track.rating == RatingStatus.dislike
-                    ? Icons.thumb_down_rounded
-                    : Icons.thumb_up_rounded,
-                color: scheme.primary,
+              // Same 48dp box as the buttons, so the static icon keeps
+              // the same right inset they have.
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: Icon(
+                    track.rating == RatingStatus.dislike
+                        ? Icons.thumb_down_rounded
+                        : Icons.thumb_up_rounded,
+                    color: scheme.primary,
+                  ),
+                ),
               ),
           ],
           AnimatedSize(
@@ -345,13 +376,25 @@ class _TrackRowState extends State<TrackRow> with TrackMenuHost<TrackRow> {
             child: card,
           )
         : card;
-    if (!contextMenu) return anchored;
+    // Hosts with their own row menu (Up Next) opt out of the row-local
+    // right-click. On phones there is no hover to reveal the ⋮ either,
+    // so press-and-hold opens the same menu at the press point.
+    if (!contextMenu && !compact) return anchored;
     return GestureDetector(
-      onSecondaryTapDown: (details) => openTrackMenu(
-        context,
-        menuController,
-        position: details.localPosition,
-      ),
+      onSecondaryTapDown: contextMenu
+          ? (details) => openTrackMenu(
+              context,
+              menuController,
+              position: details.localPosition,
+            )
+          : null,
+      onLongPressStart: compact
+          ? (details) => openTrackMenu(
+              context,
+              menuController,
+              position: details.localPosition,
+            )
+          : null,
       child: anchored,
     );
   }

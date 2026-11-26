@@ -49,12 +49,7 @@ class AppShellDesktop extends StatelessWidget {
             Expanded(child: body),
           ],
         ),
-        const Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: PlayerBar(),
-        ),
+        const Positioned(left: 0, right: 0, bottom: 0, child: PlayerBar()),
       ],
     );
   }

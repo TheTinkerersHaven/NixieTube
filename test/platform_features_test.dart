@@ -7,7 +7,11 @@ import 'package:nixietube/sys/platform_features.dart';
 
 void main() {
   test('desktop sessions have a window, a tray and local sockets', () {
-    for (final p in [AppPlatform.linux, AppPlatform.windows, AppPlatform.macOS]) {
+    for (final p in [
+      AppPlatform.linux,
+      AppPlatform.windows,
+      AppPlatform.macOS,
+    ]) {
       expect(isDesktop(p), isTrue, reason: '$p');
       expect(supportsTray(p), isTrue, reason: '$p');
       expect(supportsEmbeddedLogin(p), isTrue, reason: '$p');
@@ -23,6 +27,18 @@ void main() {
       expect(supportsDiscordRpc(p), isFalse, reason: '$p');
       // ...but they do need the OS media session to keep playing.
       expect(supportsBackgroundAudio(p), isTrue, reason: '$p');
+    }
+    // The Social SDK ships an AAR for Android; presence goes through the
+    // installed Discord app's RPC service there.
+    expect(supportsDiscordSocialSdk(AppPlatform.android), isTrue);
+    for (final p in [
+      AppPlatform.ios,
+      AppPlatform.linux,
+      AppPlatform.windows,
+      AppPlatform.macOS,
+      AppPlatform.other,
+    ]) {
+      expect(supportsDiscordSocialSdk(p), isFalse, reason: '$p');
     }
   });
 

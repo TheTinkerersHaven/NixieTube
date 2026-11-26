@@ -81,7 +81,10 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.byWidgetPredicate((w) => w is M3EPopupMenuButton), findsOneWidget);
+    expect(
+      find.byWidgetPredicate((w) => w is M3EPopupMenuButton),
+      findsOneWidget,
+    );
     await tester.tap(find.byTooltip('More actions'));
     await tester.pump();
     await tester.pumpAndSettle();

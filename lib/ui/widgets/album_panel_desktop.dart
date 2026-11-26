@@ -147,7 +147,11 @@ class AlbumPlaylistViewDesktop extends StatelessWidget {
                           M3EFilledButton.icon(
                             onPressed: sortedTracks.isEmpty
                                 ? null
-                                : () => state.playSongs(sortedTracks, 0),
+                                : () => state.playSongs(
+                                    sortedTracks,
+                                    0,
+                                    sourceName: title,
+                                  ),
                             icon: const Icon(
                               Icons.play_arrow_rounded,
                               size: 32,
@@ -160,7 +164,10 @@ class AlbumPlaylistViewDesktop extends StatelessWidget {
                             tooltip: 'Shuffle',
                             onPressed: sortedTracks.isEmpty
                                 ? null
-                                : () => state.playShuffled(sortedTracks),
+                                : () => state.playShuffled(
+                                    sortedTracks,
+                                    sourceName: title,
+                                  ),
                           ),
                         ],
                       ),

@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
+import '../theme.dart';
 import 'album_info.dart';
 import 'track_menu_scope.dart';
 
@@ -154,12 +155,23 @@ class _BrowseMenuTargetState extends State<BrowseMenuTarget>
     final showAnchor = anchorWanted;
     updateAnchorVisibility(showAnchor);
     final keyed = KeyedSubtree(key: menuChildKey, child: widget.child);
+    // On phones there is no right-click: press and hold the card opens
+    // the same menu at the press point.
+    final void Function(LongPressStartDetails)? longPress =
+        isCompactLayout(context)
+        ? (details) => openTrackMenu(
+            context,
+            menuController,
+            position: details.localPosition,
+          )
+        : null;
     Widget wrap(Widget child) => GestureDetector(
       onSecondaryTapDown: (details) => openTrackMenu(
         context,
         menuController,
         position: details.localPosition,
       ),
+      onLongPressStart: longPress,
       child: child,
     );
     if (!showAnchor) return wrap(keyed);

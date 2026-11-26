@@ -11,6 +11,8 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+# Dart/Flutter agent skills, fetched by `dart run skills@ get`.
+.agents/
 
 # IntelliJ related
 *.iml
@@ -46,3 +48,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# AAR Libraries
+android/app/libs/*.aar

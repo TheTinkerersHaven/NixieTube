@@ -11,14 +11,14 @@ import 'fakes.dart';
 import 'package:nixietube/core/artwork/artwork_store.dart';
 import 'package:nixietube/core/innertube/inner_tube.dart';
 import 'package:nixietube/core/innertube/stream_resolver.dart';
-import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 
 class _EmptyTube extends InnerTube {
   @override
-  Future<Map<String, List<ShelfItem>>> search(String query) async => {};
+  Future<SearchResults> search(String query, {String? filter}) async =>
+      const SearchResults(sections: {});
 }
 
 Future<AppState> _boot() async {

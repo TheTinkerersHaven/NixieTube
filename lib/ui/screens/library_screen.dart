@@ -52,10 +52,11 @@ class LibraryScreen extends StatelessWidget {
       children: [
         if (opened != null)
           RepaintBoundary(
-            child: ListenableBuilder(
-              listenable: state.paletteTick,
-              builder: (context, _) =>
-                  PaletteBackdrop(palette: _paletteFor(state, opened)),
+            child: ArtworkBackdrop(
+              artUrl: _artUrlFor(opened),
+              paletteFor: state.paletteFor,
+              ensurePalette: state.ensurePalette,
+              tick: state.paletteTick,
             ),
           ),
         // The wash behind stays full-bleed (it is the Stack's own
@@ -201,17 +202,16 @@ class LibraryScreen extends StatelessWidget {
     );
   }
 
-  List<Color> _paletteFor(AppState state, OpenPlaylist opened) {
+  /// Cover whose palette washes the background behind an open
+  /// playlist: the playlist's own art, else the first track's cover.
+  String? _artUrlFor(OpenPlaylist opened) {
     final covers = opened.tracks
         .map((t) => t.displayArtwork)
         .whereType<String>()
         .where((u) => u.isNotEmpty)
         .toSet()
         .toList();
-    return state.paletteFor(
-          opened.playlist.art ?? (covers.isNotEmpty ? covers.first : null),
-        ) ??
-        const <Color>[];
+    return opened.playlist.art ?? (covers.isNotEmpty ? covers.first : null);
   }
 
   Widget _signInPrompt(BuildContext context, AppState state) {

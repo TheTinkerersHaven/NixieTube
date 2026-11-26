@@ -33,19 +33,12 @@ class _CountingRpc implements DiscordRpc {
   Future<void> disconnect() async => isConnected = false;
 }
 
-const _playing = PlayerState(
-  current: null,
-  playing: true,
-);
+const _playing = PlayerState(current: null, playing: true);
 
 void main() {
   test('an unsupported host never talks to a socket', () async {
     final rpc = _CountingRpc();
-    final presence = DiscordPresence(
-      enabled: true,
-      supported: false,
-      rpc: rpc,
-    );
+    final presence = DiscordPresence(enabled: true, supported: false, rpc: rpc);
     addTearDown(presence.dispose);
 
     // The requested "enabled" does not stick: there is nothing to enable.

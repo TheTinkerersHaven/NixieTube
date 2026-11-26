@@ -495,7 +495,8 @@ class HomeScreen extends StatelessWidget {
           track: t,
           width: width,
           playing: t.videoId == playingId,
-          onTap: () => state.playSongs(state.activity, i),
+          onTap: () =>
+              state.playSongs(state.activity, i, sourceName: 'Jump back in'),
         );
       },
     );
@@ -505,9 +506,13 @@ class HomeScreen extends StatelessWidget {
     final playingId = state.playerState.current?.videoId;
     return CardRail(
       title: 'Discover',
-      trailing: M3ETextButton(
-        onPressed: () => state.playSongs(state.discover, 0),
-        child: const Text('Play all'),
+      trailing: SizedBox(
+        height: 40,
+        child: M3ETextButton(
+          onPressed: () =>
+              state.playSongs(state.discover, 0, sourceName: 'Discover'),
+          child: const Text('Play all'),
+        ),
       ),
       itemCount: state.discover.length,
       itemBuilder: (context, i, width) {
@@ -516,7 +521,8 @@ class HomeScreen extends StatelessWidget {
           track: t,
           width: width,
           playing: t.videoId == playingId,
-          onTap: () => state.playSongs(state.discover, i),
+          onTap: () =>
+              state.playSongs(state.discover, i, sourceName: 'Discover'),
         );
       },
     );
@@ -707,10 +713,20 @@ class _QuickPicksGrid extends StatelessWidget {
         // Pins count toward the slots and the row count: sizing the grid
         // from songs alone could drop pins (or leave the last row clipped
         // when they filled it).
-        final m = quickPickMetrics(
+        final compact = isCompactLayout(context);
+        final measured = quickPickMetrics(
           constraints.maxWidth,
           songs.length + pins.length,
         );
+        final mobilePickCount = (songs.length + pins.length).clamp(0, 9);
+        final m = compact
+            ? (
+                cols: 3,
+                shown: mobilePickCount,
+                rows: mobilePickCount == 0 ? 0 : (mobilePickCount / 3).ceil(),
+                tile: constraints.maxWidth / 3,
+              )
+            : measured;
         // Pins first, then the ranked pool in order (per-launch
         // variety already shuffled into it by rankPickSongs).
         final picks = orderQuickPicks(pins: pins, songs: songs, slots: m.shown);
@@ -725,7 +741,7 @@ class _QuickPicksGrid extends StatelessWidget {
               (t) => t.videoId == item.track.videoId,
             );
             if (idx < 0) idx = 0;
-            state.playSongs(playList, idx);
+            state.playSongs(playList, idx, sourceName: 'Quick picks');
           } else if (item is BrowseItem) {
             final id = item.browseId;
             if (id.startsWith('UC') || id.startsWith('MPRE')) {
@@ -737,7 +753,36 @@ class _QuickPicksGrid extends StatelessWidget {
           }
         }
 
-        Widget tile(ShelfItem item) {
+        BorderRadius mobileTileRadius(int index) {
+          if (!compact) {
+            return const BorderRadius.all(Radius.circular(cardRadius));
+          }
+          const radius = Radius.circular(ExpressiveCorners.largeIncreased);
+          const innerRadius = Radius.circular(4);
+          final row = index ~/ 3;
+          final col = index % 3;
+          final lastRow = m.rows - 1;
+          final topLeft = row == 0 && col == 0;
+          final topRight = row == 0 && col == 2;
+          final bottomLeft =
+              row == lastRow && col == 0 && index < mobilePickCount;
+          final bottomRight =
+              row == lastRow &&
+              col == (mobilePickCount - 1) % 3 &&
+              index == mobilePickCount - 1;
+          return BorderRadius.only(
+            topLeft: topLeft ? radius : innerRadius,
+            topRight: topRight ? radius : innerRadius,
+            bottomLeft: bottomLeft ? radius : innerRadius,
+            bottomRight: bottomRight ? radius : innerRadius,
+          );
+        }
+
+        Widget tile(ShelfItem item, int index) {
+          final radius = mobileTileRadius(index);
+          final tilePadding = compact
+              ? EdgeInsets.zero
+              : const EdgeInsets.all(4);
           if (item is SongItem) {
             final t = item.track;
             return QuickPickCard(
@@ -746,6 +791,8 @@ class _QuickPicksGrid extends StatelessWidget {
               art: t.displayArtwork,
               squareCoverKey: t.videoId,
               playing: t.videoId == playingId,
+              padding: tilePadding,
+              borderRadius: radius,
               track: t,
               onTap: () => open(item),
             );
@@ -758,12 +805,16 @@ class _QuickPicksGrid extends StatelessWidget {
             subtitle: b.subtitle,
             art: art,
             playing: false,
+            padding: tilePadding,
+            borderRadius: radius,
+            showArrow:
+                b.browseId.startsWith('UC') || b.browseId.startsWith('MPRE'),
             onTap: () => open(item),
           );
         }
 
-        Widget pickTile(ShelfItem item) {
-          Widget t = tile(item);
+        Widget pickTile(ShelfItem item, int index) {
+          Widget t = tile(item, index);
           if (state.isPinned(item)) {
             final scheme = Theme.of(context).colorScheme;
             t = Stack(
@@ -825,7 +876,11 @@ class _QuickPicksGrid extends StatelessWidget {
                     ),
                     onPressed: playList.isEmpty
                         ? null
-                        : () => state.playSongs(playList, 0),
+                        : () => state.playSongs(
+                            playList,
+                            0,
+                            sourceName: 'Quick picks',
+                          ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.shuffle_rounded),
@@ -844,7 +899,10 @@ class _QuickPicksGrid extends StatelessWidget {
                     ),
                     onPressed: playList.isEmpty
                         ? null
-                        : () => state.playShuffled(playList),
+                        : () => state.playShuffled(
+                            playList,
+                            sourceName: 'Quick picks',
+                          ),
                   ),
                 ],
               ),
@@ -855,12 +913,14 @@ class _QuickPicksGrid extends StatelessWidget {
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: m.cols,
                 childAspectRatio: 1,
+                crossAxisSpacing: compact ? 4 : 0,
+                mainAxisSpacing: compact ? 4 : 0,
               ),
               physics: const NeverScrollableScrollPhysics(),
               shrinkWrap: true,
               itemCount: picks.length,
-              itemBuilder: (context, i) => pickTile(picks[i]),
-              padding: EdgeInsets.symmetric(vertical: 12),
+              itemBuilder: (context, i) => pickTile(picks[i], i),
+              padding: const EdgeInsets.symmetric(vertical: 12),
             ),
           ],
         );
@@ -979,7 +1039,9 @@ class _LikedSideList extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 10),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            onPressed: liked.isEmpty ? null : () => state.playSongs(liked, 0),
+            onPressed: liked.isEmpty
+                ? null
+                : () => state.playSongs(liked, 0, sourceName: 'Liked songs'),
             child: const Text('Play all'),
           ),
         ),
@@ -995,7 +1057,8 @@ class _LikedSideList extends StatelessWidget {
               return TrackRow(
                 track: t,
                 playing: t.videoId == playingId,
-                onPlay: () => state.playSongs(liked, i),
+                onPlay: () =>
+                    state.playSongs(liked, i, sourceName: 'Liked songs'),
                 rateable: true,
                 showPlaylists: true,
               );

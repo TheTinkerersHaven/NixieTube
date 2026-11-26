@@ -189,6 +189,7 @@ void main() {
         ),
       ),
     );
+    expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
     await _rightClick(tester, find.byType(QuickPickCard));
     expect(find.text('Play next'), findsOneWidget);
     state.player.dispose();
@@ -418,6 +419,117 @@ void main() {
     await _pumpRow(tester, state);
     await tester.pump();
     expect(find.byIcon(Icons.explicit), findsNothing);
+    state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('press and hold a row opens the track menu on a phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() => tester.view.resetPhysicalSize);
+    final state = await _boot();
+    await _pumpRow(tester, state);
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byType(TrackRow));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Play next'), findsOneWidget);
+    expect(find.text('Add to playlist'), findsOneWidget);
+    expect(find.text('Copy link'), findsOneWidget);
+    state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('press and hold a row does not open the menu on wide layouts', (
+    tester,
+  ) async {
+    // Pin a wide, mouse-driven surface explicitly (a previous test may
+    // have left the view at phone size).
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() => tester.view.resetPhysicalSize);
+    final state = await _boot();
+    await _pumpRow(tester, state);
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byType(TrackRow));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Play next'), findsNothing);
+    state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('press and hold a quick-pick tile opens the menu on a phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() => tester.view.resetPhysicalSize);
+    final state = await _boot();
+    await _pumpTile(
+      tester,
+      state,
+      SizedBox(
+        width: 160,
+        height: 160,
+        child: QuickPickCard(
+          title: 'One',
+          subtitle: 'Act',
+          art: null,
+          track: const Track(videoId: 'v1', title: 'One'),
+          onTap: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byType(QuickPickCard));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Play next'), findsOneWidget);
+    state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('press and hold a browse card opens the menu on a phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() => tester.view.resetPhysicalSize);
+    final state = await _boot();
+    await _pumpTile(
+      tester,
+      state,
+      BrowseCard(
+        item: const BrowseItem(
+          title: 'Some Album',
+          subtitle: 'Act',
+          browseId: 'MPREb_album',
+          thumbnails: [],
+        ),
+        onTap: () {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byType(BrowseCard));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Play'), findsOneWidget);
+    expect(find.text('Open'), findsOneWidget);
     state.player.dispose();
     await tester.pump();
   });

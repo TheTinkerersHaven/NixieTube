@@ -28,6 +28,8 @@ void main() {
       body = '${r.data}';
       ms = sw.elapsedMilliseconds;
     });
-    debugPrint('STATUS $status in ${ms}ms bodylen=${body.length} head=${body.length > 200 ? body.substring(0, 200) : body}');
+    debugPrint(
+      'STATUS $status in ${ms}ms bodylen=${body.length} head=${body.length > 200 ? body.substring(0, 200) : body}',
+    );
   }, timeout: const Timeout(Duration(seconds: 60)));
 }

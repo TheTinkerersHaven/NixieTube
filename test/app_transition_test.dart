@@ -49,7 +49,7 @@ Future<AppState> _bootShell(WidgetTester tester) async {
   addTearDown(state.dispose);
   final mpris = MprisService(controller: player, artworkStore: art);
   addTearDown(mpris.dispose);
-  final discord = DiscordPresence();
+  final DiscordPresenceBase discord = DiscordPresence();
   addTearDown(discord.dispose);
   final lastfm = LastFmService(config: config);
 

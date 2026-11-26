@@ -48,10 +48,21 @@ Directory configDir() {
 
 /// Application cache dir (`~/.cache/nixietube` on desktop, `cache`
 /// inside the app sandbox on mobile), created on access.
-Directory cacheDir() {
+Directory cacheDir() => Directory(cacheDirPath())..createSync(recursive: true);
+
+/// [cacheDir]'s path, resolved without creating the directory.
+///
+/// Services that only look for a cached file use this instead of
+/// [cacheDir], so a run that never writes (the tests, a first launch)
+/// leaves no directories of the user's behind.
+String cacheDirPath() {
   final root = _mobileRoot;
-  if (root != null) return _mobileDir('cache');
-  return _xdgDir('XDG_CACHE_HOME', '.cache', 'nixietube');
+  if (root != null) return '$root/cache';
+  final configured = Platform.environment['XDG_CACHE_HOME'];
+  final base = (configured != null && configured.isNotEmpty)
+      ? configured
+      : '${Platform.environment['HOME'] ?? '.'}/.cache';
+  return '$base/nixietube';
 }
 
 /// Application log dir (`~/.cache/nixietube/logs`), created on access.

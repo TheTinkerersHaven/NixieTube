@@ -96,6 +96,26 @@ class PlaybackAudioHandler extends BaseAudioHandler {
     );
   }
 
+  /// Closes the app for good: playback stops and the notification is
+  /// taken down, so the notification panel ends in the same state a
+  /// fully closed app leaves behind. Unlike [disconnect] the mirror
+  /// stays connected — when the engine outlives the activity (the app
+  /// was reopened before the process was reaped) the session picks up
+  /// again on the next play.
+  Future<void> closeForGood() async {
+    _controller.stop();
+    mediaItem.add(null);
+    queue.add(const []);
+    playbackState.add(
+      PlaybackState(processingState: AudioProcessingState.idle),
+    );
+  }
+
+  /// The task was removed (the app was swiped away or closed): close
+  /// for good instead of leaving the notification up.
+  @override
+  Future<void> onTaskRemoved() async => closeForGood();
+
   void _onState(PlayerState s) {
     if (!_connected) return;
     final track = s.current;
@@ -408,4 +428,12 @@ Future<void> stopBackgroundAudio() async {
   final handler = backgroundAudio;
   backgroundAudio = null;
   await handler?.disconnect();
+}
+
+/// Closes the app for good on a phone: stops playback and takes the
+/// media notification down. Called when the host reports the app was
+/// closed (the activity finishing) or the task was removed, so the
+/// notification panel ends in the same state as a fully closed app.
+Future<void> closeBackgroundAudioForGood() async {
+  await backgroundAudio?.closeForGood();
 }

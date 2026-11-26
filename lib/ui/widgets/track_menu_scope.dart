@@ -11,6 +11,7 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/models/models.dart';
+import '../theme.dart';
 import 'track_row.dart';
 
 /// Tracks the currently open track menu.
@@ -211,12 +212,22 @@ class _TrackMenuTargetState extends State<TrackMenuTarget>
     // While the previous menu is being replaced, drop the anchor: its
     // dispose removes the overlay immediately, with no jumpy close.
     updateAnchorVisibility(showAnchor);
+    // On phones there is no right-click: press and hold the tile opens
+    // the same menu at the press point.
+    final longPress = isCompactLayout(context)
+        ? (LongPressStartDetails details) => openTrackMenu(
+            context,
+            menuController,
+            position: details.localPosition,
+          )
+        : null;
     Widget wrap(Widget child) => GestureDetector(
       onSecondaryTapDown: (details) => openTrackMenu(
         context,
         menuController,
         position: details.localPosition,
       ),
+      onLongPressStart: longPress,
       child: child,
     );
     final child = KeyedSubtree(key: menuChildKey, child: widget.child);

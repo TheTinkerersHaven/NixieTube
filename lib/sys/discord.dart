@@ -29,6 +29,38 @@ export 'discord_ipc.dart'
         DiscordRpc,
         DiscordTimestamps;
 
+/// The presence surface the app shell and Settings share. Desktop
+/// implements it over the local IPC socket with [DiscordPresence]; phones
+/// implement it over the Discord Social SDK's OAuth2 deep-link flow with
+/// `DiscordSocialPresence` (discord_social.dart).
+abstract class DiscordPresenceBase extends ChangeNotifier {
+  /// Whether this host can show Discord presence at all.
+  bool get supported;
+
+  /// Human-readable link state for the Settings row.
+  String get status;
+
+  bool get enabled;
+  String get appId;
+  DiscordStatusText get statusText;
+
+  /// How long a track may stay paused before its presence is withdrawn.
+  Duration get pauseHideAfter;
+  set pauseHideAfter(Duration value);
+  void setPauseHideMinutes(int minutes);
+
+  void setEnabled(bool value);
+  void setAppId(String value);
+  void setStatusText(DiscordStatusText mode);
+
+  /// Starts background work (mobile: restore the token, listen for the
+  /// deep link, connect the gateway). No-op on desktop.
+  Future<void> start() async {}
+
+  Future<void> update(PlayerState s);
+  Future<void> shutdown() async {}
+}
+
 /// What the user picks for Discord's status line (persisted as
 /// `discord.statusText`), sent as the activity's `name`.
 enum DiscordStatusText { app, song, artists, album }
@@ -168,7 +200,7 @@ const discordSeekRealignment = Duration(milliseconds: 1200);
 const discordPauseHideAfter = Duration(minutes: defaultDiscordPauseHideMinutes);
 
 /// Discord Rich Presence client: IPC lifecycle plus presence pushes.
-class DiscordPresence extends ChangeNotifier {
+class DiscordPresence extends DiscordPresenceBase {
   DiscordPresence({
     String appId = '',
     bool enabled = false,
@@ -201,6 +233,7 @@ class DiscordPresence extends ChangeNotifier {
   /// Whether this host can reach a Discord client at all. False on
   /// phones, where Discord exposes no IPC socket; the presence is then
   /// inert and [status] says why.
+  @override
   bool get supported => _supported;
 
   /// When playback paused on the current track, the moment it paused;
@@ -251,13 +284,18 @@ class DiscordPresence extends ChangeNotifier {
   final Duration maxRetryInterval;
 
   /// How long a track may stay paused before its presence is withdrawn.
+  @override
   Duration pauseHideAfter;
 
   Duration get _retryFloor => _linkedOnce ? reconnectInterval : retryInterval;
 
+  @override
   String get status => _status;
+  @override
   bool get enabled => _enabled;
+  @override
   String get appId => _appId;
+  @override
   DiscordStatusText get statusText => _statusText;
 
   /// Whether the IPC link is up; false before the client even exists.
@@ -272,6 +310,7 @@ class DiscordPresence extends ChangeNotifier {
 
   /// Swaps the API application, dropping the live session: the next
   /// update reconnects under the new id.
+  @override
   void setAppId(String value) {
     if (_appId == value) return;
     _appId = value;
@@ -285,6 +324,7 @@ class DiscordPresence extends ChangeNotifier {
   /// without a Discord socket cannot enable it: the request is reported
   /// through [status] instead of arming a retry loop that could never
   /// connect.
+  @override
   void setEnabled(bool value) {
     if (!supported) {
       if (_enabled) {
@@ -312,6 +352,7 @@ class DiscordPresence extends ChangeNotifier {
   /// Updates how long a paused track stays on Discord before being
   /// withdrawn. Re-evaluates the current presence so a change takes
   /// effect immediately.
+  @override
   void setPauseHideMinutes(int minutes) {
     final value = Duration(minutes: minutes);
     if (pauseHideAfter == value) return;
@@ -324,6 +365,7 @@ class DiscordPresence extends ChangeNotifier {
   /// Switches the status-line mode (persisted by the caller). The dedup
   /// key is forgotten so the very next update re-pushes under the new
   /// mode instead of waiting for the track to change.
+  @override
   void setStatusText(DiscordStatusText value) {
     if (_statusText == value) return;
     _statusText = value;
@@ -425,6 +467,7 @@ class DiscordPresence extends ChangeNotifier {
   }
 
   /// Pushes presence for [s], clearing when there is no track.
+  @override
   Future<void> update(PlayerState s) async {
     _last = s;
     if (!_enabled) {
@@ -558,16 +601,19 @@ class DiscordPresence extends ChangeNotifier {
   /// future, and reusing it after a disconnect would leave
   /// [_initialized] false forever, so re-enabling the presence could
   /// never hand it back — the status line would stay dead until restart.
+  @override
   Future<void> shutdown() async {
     _forgetPresence();
     final wasInitialized = _initialized;
     _initialized = false;
     _initFuture = null;
-    _setStatus(!_supported
-        ? discordUnsupportedStatus
-        : _enabled
-        ? 'idle'
-        : 'disabled');
+    _setStatus(
+      !_supported
+          ? discordUnsupportedStatus
+          : _enabled
+          ? 'idle'
+          : 'disabled',
+    );
     if (wasInitialized) {
       try {
         if (_rpc.isConnected) await _rpc.clearActivity();

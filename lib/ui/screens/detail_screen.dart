@@ -76,6 +76,7 @@ class DetailScreen extends StatelessWidget {
         owner: album.artist,
         tracks: album.tracks,
         numbered: true,
+        isAlbum: true,
         showViews: true,
         topPadding: 16,
       );
@@ -110,8 +111,8 @@ class DetailScreen extends StatelessWidget {
         ),
       );
     }
-    // Album and playlist pages share the library's top sliver: a tinted
-    // backdrop, a back/title/menu header, then the same panel below.
+    // Artist pages keep their own collapsing-banner app bar on every
+    // layout; albums and playlists share the chrome below.
     if (detail.artist != null) return body;
     final title =
         detail.album?.title ?? detail.playlist?.title ?? item?.title ?? '';
@@ -120,40 +121,34 @@ class DetailScreen extends StatelessWidget {
       children: [
         if (item != null)
           RepaintBoundary(
-            child: ListenableBuilder(
-              listenable: state.paletteTick,
-              builder: (context, _) =>
-                  PaletteBackdrop(palette: _paletteFor(state, detail, item)),
+            child: ArtworkBackdrop(
+              artUrl: _artUrlFor(detail, item),
+              paletteFor: state.paletteFor,
+              ensurePalette: state.ensurePalette,
+              tick: state.paletteTick,
             ),
           ),
         // The palette wash is the Stack's own backdrop and stays
         // full-bleed; the header and content clear the status bar.
         SafeArea(
           bottom: false,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              DetailHeader(
-                title: title,
-                onBack: state.goBack,
-                trailing: item != null && detail.album != null
-                    ? DetailMenuButton(item: item, album: detail.album!)
-                    : null,
-              ),
-              Expanded(child: body),
-            ],
+          child: _DetailScrollFade(
+            title: title,
+            onBack: state.goBack,
+            trailing: item != null && detail.album != null
+                ? DetailMenuButton(item: item, album: detail.album!)
+                : null,
+            body: body,
           ),
         ),
       ],
     );
   }
 
-  /// The same cover wash the library uses behind an open playlist header.
-  List<Color> _paletteFor(
-    AppState state,
-    DetailUiState detail,
-    BrowseItem item,
-  ) {
+  /// Cover whose palette washes the background behind an open
+  /// album/playlist: the detail's own art, else the first track's
+  /// cover, else the originating card's thumbnail.
+  String? _artUrlFor(DetailUiState detail, BrowseItem item) {
     final covers =
         (detail.album?.tracks ?? detail.playlist?.tracks ?? const <Track>[])
             .map((t) => t.displayArtwork)
@@ -161,12 +156,67 @@ class DetailScreen extends StatelessWidget {
             .where((u) => u.isNotEmpty)
             .toSet()
             .toList();
-    return state.paletteFor(
-          detail.album?.artworkOr(item) ??
-              detail.playlist?.artworkOr(item) ??
-              (covers.isEmpty ? null : covers.first),
-        ) ??
-        const <Color>[];
+    return detail.album?.artworkOr(item) ??
+        detail.playlist?.artworkOr(item) ??
+        (covers.isEmpty ? null : covers.first);
+  }
+}
+
+/// Album/playlist detail body under the top bar. The page's hero card
+/// shows the title at rest, so on phones the bar's title fades in only
+/// once the list has scrolled ~100dp; the scroll offset reaches the
+/// header through a notifier so scrolling never rebuilds the body.
+class _DetailScrollFade extends StatefulWidget {
+  const _DetailScrollFade({
+    required this.title,
+    required this.onBack,
+    this.trailing,
+    required this.body,
+  });
+
+  final String title;
+  final VoidCallback? onBack;
+  final Widget? trailing;
+  final Widget body;
+
+  @override
+  State<_DetailScrollFade> createState() => _DetailScrollFadeState();
+}
+
+class _DetailScrollFadeState extends State<_DetailScrollFade> {
+  final ValueNotifier<double> _scrollPixels = ValueNotifier<double>(0);
+
+  bool _onScroll(ScrollNotification notification) {
+    final pixels = notification.metrics.pixels;
+    if (pixels != _scrollPixels.value) _scrollPixels.value = pixels;
+    return false;
+  }
+
+  @override
+  void dispose() {
+    _scrollPixels.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DetailHeader(
+          title: widget.title,
+          onBack: widget.onBack,
+          trailing: widget.trailing,
+          scrollPixels: _scrollPixels,
+        ),
+        Expanded(
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _onScroll,
+            child: widget.body,
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -190,6 +240,7 @@ class _DetailSkeleton extends StatelessWidget {
         owner: null,
         tracks: placeholderTracks,
         numbered: numbered,
+        isAlbum: numbered,
       ),
     );
   }

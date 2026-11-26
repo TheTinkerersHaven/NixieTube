@@ -1,5 +1,6 @@
-// Artist page reading order: on a phone the bio ("About") comes after
-// every rail, while a wide window keeps it beside the top songs.
+// Artist page reading order: on a phone the bio ("About") sits between
+// the top songs and the rails, while a wide window keeps it beside the
+// top songs.
 
 import 'dart:io';
 
@@ -79,13 +80,14 @@ double _topOf(WidgetTester tester, String label) =>
     tester.getTopLeft(find.text(label)).dy;
 
 void main() {
-  testWidgets('phone: the About card renders after the last rail', (
+  testWidgets('phone: the About card renders between songs and rails', (
     tester,
   ) async {
     await _pumpArtist(tester, size: const Size(400, 4000));
 
     final aboutY = _topOf(tester, 'About');
-    expect(aboutY, greaterThan(_topOf(tester, 'Similar artists')));
+    expect(aboutY, greaterThan(_topOf(tester, 'Top songs')));
+    expect(aboutY, lessThan(_topOf(tester, 'Albums')));
   });
 
   testWidgets('wide: the About card renders before the rails', (tester) async {
