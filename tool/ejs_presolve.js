@@ -39,6 +39,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const dns = require('node:dns');
+
+// GitHub's runners regularly have no usable IPv6 route, and undici tries
+// AAAA records first: the request then dies as "fetch failed" instead of
+// falling back. IPv4 first costs nothing where IPv6 works.
+dns.setDefaultResultOrder('ipv4first');
 
 /// The vendored EJS bundle, shared with the app (assets/js).
 const BUNDLE_DIR = path.join(__dirname, '..', 'assets', 'js');
@@ -120,7 +126,22 @@ function fail(message) {
 // Network
 // --------------------------------------------------------------------
 
-async function httpGet(url, what, attempts = 3) {
+/// What actually went wrong, not just undici's "fetch failed" wrapper:
+/// the cause carries the DNS/TCP/TLS detail, and that is the difference
+/// between "the runner has no route to YouTube" and "YouTube said 429".
+function describe(error) {
+  if (!error) return 'unknown error';
+  const parts = [error.message ?? String(error)];
+  let cause = error.cause;
+  for (let depth = 0; cause && depth < 3; depth++) {
+    const code = cause.code ? `${cause.code}: ` : '';
+    parts.push(`(${code}${cause.message ?? String(cause)})`);
+    cause = cause.cause;
+  }
+  return parts.join(' ');
+}
+
+async function httpGet(url, what, attempts = 4) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -138,18 +159,31 @@ async function httpGet(url, what, attempts = 3) {
       return body;
     } catch (error) {
       lastError = error;
+      // Every attempt is logged: a run that dies in CI has to say what
+      // was tried and why it failed, or the log is a single opaque line.
+      console.error(
+        `ejs-presolve: ${what}: attempt ${attempt}/${attempts} failed: ` +
+          describe(error),
+      );
       if (attempt < attempts) {
-        await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+        // Backoff with jitter: a runner that just lost its route often
+        // recovers within a few seconds, and identical delays would keep
+        // retrying in lockstep with other jobs.
+        const wait = attempt * 3000 + Math.floor(Math.random() * 2000);
+        await new Promise((resolve) => setTimeout(resolve, wait));
       }
     }
   }
-  throw new Error(`${what}: ${lastError}`);
+  throw new Error(`${what}: ${describe(lastError)}`);
 }
 
 /// The player version and script path the current watch page names.
 async function discoverPlayer(videoId) {
+  // Several entry points: the watch page is the canonical one, but a
+  // blocked or redirected fetch of it must not decide the whole run.
   const pages = [
     `https://www.youtube.com/watch?v=${videoId}&bpctr=9999999999999&has_verified=1`,
+    `https://m.youtube.com/watch?v=${videoId}`,
     `https://www.youtube.com/embed/${videoId}`,
   ];
   for (const page of pages) {

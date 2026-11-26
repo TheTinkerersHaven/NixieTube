@@ -12,10 +12,12 @@ name: Player presolve
 # is slow but correct, so a failed run never breaks playback.
 on:
   schedule:
-    # Player scripts rotate every few days; a run that finds nothing new
-    # costs one watch-page fetch. GitHub delays scheduled runs under
-    # load, so the app may briefly fall back to the local solve.
-    - cron: '*/30 * * * *'
+    # YouTube rotates base.js every few days, not every few minutes: an
+    # hourly check is already far more often than needed, and a missed
+    # rotation only means the app parses that player locally until the
+    # next run. Off the hour so it doesn't queue behind the whole world's
+    # cron jobs.
+    - cron: '23 * * * *'
   workflow_dispatch:
     inputs:
       force:
@@ -46,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
