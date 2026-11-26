@@ -40,6 +40,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const dns = require('node:dns');
+const http = require('node:http');
+const https = require('node:https');
 
 // GitHub's runners regularly have no usable IPv6 route, and undici tries
 // AAAA records first: the request then dies as "fetch failed" instead of
@@ -126,35 +128,84 @@ function fail(message) {
 // Network
 // --------------------------------------------------------------------
 
-/// What actually went wrong, not just undici's "fetch failed" wrapper:
-/// the cause carries the DNS/TCP/TLS detail, and that is the difference
-/// between "the runner has no route to YouTube" and "YouTube said 429".
+/// What actually went wrong, not just a wrapper error: the code and the
+/// cause chain carry the DNS/TCP/TLS/HTTP detail, and that is the
+/// difference between "the runner has no route to YouTube", "the response
+/// was refused before it was read" and "YouTube said 429".
 function describe(error) {
   if (!error) return 'unknown error';
-  const parts = [error.message ?? String(error)];
-  let cause = error.cause;
-  for (let depth = 0; cause && depth < 3; depth++) {
-    const code = cause.code ? `${cause.code}: ` : '';
-    parts.push(`(${code}${cause.message ?? String(cause)})`);
-    cause = cause.cause;
+  const parts = [];
+  let current = error;
+  for (let depth = 0; current && depth < 4; depth++) {
+    const code = current.code ? `${current.code}: ` : '';
+    parts.push(`(${code}${current.message ?? String(current)})`);
+    current = current.cause;
   }
-  return parts.join(' ');
+  return parts.length ? parts.join(' ') : String(error);
+}
+
+/// Google's frontends answer with large header blocks: the watch page
+/// alone sends about 19 KB, of which `connection-allowlist-report-only`
+/// is 7.4 KB and `Content-Security-Policy-Report-Only` 6.1 KB. That is
+/// past undici's (the `fetch` global) 16 KiB ceiling, which it answers
+/// with UND_ERR_HEADERS_OVERFLOW and no way to raise the limit, so the
+/// requests go through node:https, which takes the limit as an option.
+const MAX_HEADER_SIZE = 256 * 1024;
+
+const MAX_REDIRECTS = 5;
+
+const REQUEST_TIMEOUT = 60_000;
+
+const REQUEST_HEADERS = {
+  'User-Agent': USER_AGENT,
+  'Accept-Language': 'en-US,en;q=0.9',
+  Accept: 'text/html,application/xhtml+xml,application/javascript,*/*;q=0.8',
+};
+
+/// One GET, following redirects, with the header limit raised. Resolves
+/// with the UTF-8 body of the final 200 response.
+function get(url, redirectsLeft = MAX_REDIRECTS) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const client = target.protocol === 'http:' ? http : https;
+    const req = client.get(
+      target,
+      { headers: REQUEST_HEADERS, maxHeaderSize: MAX_HEADER_SIZE },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.resume();
+          if (redirectsLeft <= 0) {
+            reject(new Error(`more than ${MAX_REDIRECTS} redirects`));
+            return;
+          }
+          const next = new URL(res.headers.location, target).toString();
+          resolve(get(next, redirectsLeft - 1));
+          return;
+        }
+        if (status !== 200) {
+          res.resume();
+          reject(new Error(`HTTP ${status}`));
+          return;
+        }
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        res.on('error', reject);
+      },
+    );
+    req.setTimeout(REQUEST_TIMEOUT, () => {
+      req.destroy(new Error(`no response within ${REQUEST_TIMEOUT} ms`));
+    });
+    req.on('error', reject);
+  });
 }
 
 async function httpGet(url, what, attempts = 4) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': USER_AGENT,
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        redirect: 'follow',
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.text();
+      const body = await get(url);
       if (!body) throw new Error('empty body');
       return body;
     } catch (error) {
