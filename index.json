@@ -1,0 +1,13 @@
+{
+  "latest": "b485e332",
+  "players": {
+    "b485e332": {
+      "created": "2026-11-26T08:13:11.935Z",
+      "solvedAt": "2026-11-26T08:13:11.935Z",
+      "bytes": 2450886,
+      "sha256": "054fcd30f4bfc715f51bc7578d85360d807b0188e88b6ac0df1b63c1678636a8",
+      "playerBytes": 1722650,
+      "playerSha256": "f9f1023008f55d221113938f4b65a1e6270d5b6e0bd84c71bbfc1c67ced065b4"
+    }
+  }
+}
