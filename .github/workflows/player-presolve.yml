@@ -49,7 +49,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '26'
 
       # The branch is the published store, so the tool has to see it to
       # know which versions are already there. It does not exist until the
