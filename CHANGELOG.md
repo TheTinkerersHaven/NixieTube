@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The "System" color source subtitle matches the platform.** It now says the accent comes from wallpaper colors on Android and notes that iOS reports no system accent, instead of only mentioning the desktop's XDG portal / GTK theme.
 - **Prefetch work can no longer interrupt playback teardown.** Cancelling or disposing a prefetch now invalidates timer and resolver work, preventing stale background updates from reaching the debug UI.
 - **Manual cookie import in Settings keeps its input and signs in.** Pasting a cookie into the Settings account card and pressing "Sign in" previously wiped the text field and failed to log in because the segmented list wrapper re-instantiated the card on focus changes.
-- **Age-restricted songs play when signed in.** The stream resolver now solves YouTube's signatureCipher — and the throttling `n` parameter — for the tracks only WEB_REMIX answers, so they no longer fail. It solves them from a copy of the player script the project has already solved and published, keeping that copy for later plays, so the song starts at once instead of after the script is parsed on the device.
+- **Age-restricted songs play when signed in.** The stream resolver now solves YouTube's signatureCipher — and the throttling `n` parameter — for the tracks only WEB_REMIX answers, so they no longer fail. It solves them from a copy of the player script the project has already solved and published, compiling that copy once per player version and keeping it in the solver, so a later age-restricted song sends only its challenge instead of the whole script and starts at once instead of after the script is parsed on the device.
 
 ### Changed
 

@@ -375,6 +375,9 @@ void main() {
     expect(url.queryParameters['n'], 'solved-n');
     expect(solver.playerJs, 'var player = 1;');
     expect(solver.preprocessedPlayer, isNull);
+    // The raw script's version, so a published artifact for it can be used
+    // by the same solve later.
+    expect(solver.playerId, 'test');
     expect(solver.sigChallenges, ['s-challenge']);
     expect(solver.nChallenges, ['n-challenge']);
 
@@ -459,6 +462,9 @@ void main() {
     // was never downloaded, which is the point of publishing it.
     expect(solver.preprocessedPlayer, _artifact.trim());
     expect(solver.playerJs, isNull);
+    // The version the artifact belongs to: the solver keeps the compiled
+    // script in the engine under it instead of shipping it per play.
+    expect(solver.playerId, 'b485e332');
     expect(artifactRequests.single.path, endsWith('/b485e332.js'));
     expect(
       requests.where((r) => r.uri.path.endsWith('base.js')),
@@ -654,6 +660,7 @@ class _FakeChallengeSolver implements ChallengeSolver {
   _FakeChallengeSolver(this.answers);
 
   final Map<String, String> answers;
+  String? playerId;
   String? playerJs;
   String? preprocessedPlayer;
   List<String> sigChallenges = const [];
@@ -664,11 +671,13 @@ class _FakeChallengeSolver implements ChallengeSolver {
 
   @override
   Future<Map<String, String>> solve({
+    String? playerId,
     String? playerJs,
     String? preprocessedPlayer,
     List<String> sigChallenges = const [],
     List<String> nChallenges = const [],
   }) async {
+    this.playerId = playerId;
     this.playerJs = playerJs;
     this.preprocessedPlayer = preprocessedPlayer;
     this.sigChallenges = sigChallenges;

@@ -34,6 +34,11 @@ final _log = TaggedLog('jsc');
 /// covers the rotations a device can live through without a network.
 const _keepOnDisk = 4;
 
+/// Artifacts kept in memory. Each is a multi-megabyte string, so this stays
+/// below what is kept on disk: a device plays one or two player versions at
+/// a time, and a miss only costs a file read.
+const _keepInMemory = 2;
+
 /// Client for the pre-solved player scripts the project publishes.
 class PresolvedPlayers {
   PresolvedPlayers({
@@ -74,7 +79,8 @@ class PresolvedPlayers {
   final Duration timeout;
 
   /// The last artifacts read, so a screenful of resolves does not re-read
-  /// several megabytes from disk for each track.
+  /// several megabytes from disk for each track. Bounded to the versions in
+  /// play at once: each entry is a multi-megabyte string.
   final Map<String, String> _memory = {};
 
   /// The pre-solved script for [playerId], from memory, then disk, then
@@ -83,10 +89,14 @@ class PresolvedPlayers {
     final id = playerId.trim();
     if (!_validId.hasMatch(id)) return null;
     final inMemory = _memory[id];
-    if (inMemory != null) return inMemory;
+    if (inMemory != null) {
+      // Touched, so the version being played is the last one evicted.
+      _remember(id, inMemory);
+      return inMemory;
+    }
     final cached = _readCached(id);
     if (cached != null) {
-      _memory[id] = cached;
+      _remember(id, cached);
       return cached;
     }
     try {
@@ -102,7 +112,7 @@ class PresolvedPlayers {
         _log.w('pre-solved player for $id is not a solver artifact');
         return null;
       }
-      _memory[id] = body;
+      _remember(id, body);
       _writeCached(id, body);
       _log.d('fetched pre-solved player $id (${body.length} bytes)');
       return body;
@@ -134,6 +144,16 @@ class PresolvedPlayers {
       _prune();
     } catch (error) {
       _log.d('could not cache the pre-solved player $id: $error');
+    }
+  }
+
+  /// Keeps [script] as the most recently used artifact in memory, dropping
+  /// the oldest beyond [_keepInMemory]. Insertion order is the order of use.
+  void _remember(String id, String script) {
+    _memory.remove(id);
+    _memory[id] = script;
+    while (_memory.length > _keepInMemory) {
+      _memory.remove(_memory.keys.first);
     }
   }
 

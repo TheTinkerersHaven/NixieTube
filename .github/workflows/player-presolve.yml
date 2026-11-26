@@ -12,12 +12,11 @@ name: Player presolve
 # is slow but correct, so a failed run never breaks playback.
 on:
   schedule:
-    # YouTube rotates base.js every few days, not every few minutes: an
-    # hourly check is already far more often than needed, and a missed
-    # rotation only means the app parses that player locally until the
-    # next run. Off the hour so it doesn't queue behind the whole world's
+    # YouTube rotates base.js every few days, so one daily check is enough.
+    # A missed rotation only means the app parses that player locally until
+    # the next run. Off the hour so it doesn't queue behind the whole world's
     # cron jobs.
-    - cron: '23 * * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       force:

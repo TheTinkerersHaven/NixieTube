@@ -639,11 +639,14 @@ class StreamResolver {
   }) async {
     final presolved = await _presolvedFor(bootstrap.playerId);
     if (presolved != null && presolved.isNotEmpty) {
-      return _ChallengeSource(preprocessed: presolved);
+      return _ChallengeSource(
+        preprocessed: presolved,
+        playerId: bootstrap.playerId,
+      );
     }
     final js = await _playerScript(authenticated: authenticated);
     if (js == null || js.isEmpty) return null;
-    return _ChallengeSource(playerJs: js);
+    return _ChallengeSource(playerJs: js, playerId: bootstrap.playerId);
   }
 
   /// Resolves the highest-bitrate direct audio URL for [videoId], or null
@@ -1079,6 +1082,7 @@ class StreamResolver {
     Map<String, String> solved;
     try {
       solved = await solver.solve(
+        playerId: source.playerId,
         playerJs: source.playerJs,
         preprocessedPlayer: source.preprocessed,
         sigChallenges: [for (final format in ciphered) format.challenge],
@@ -1213,7 +1217,12 @@ class _PlayerBootstrap {
 /// What the challenge solver should run for one player version: the
 /// pre-solved script published for it, or the raw script as a fallback.
 class _ChallengeSource {
-  const _ChallengeSource({this.preprocessed, this.playerJs});
+  const _ChallengeSource({this.playerId, this.preprocessed, this.playerJs});
+
+  /// The player version both scripts belong to. The solver keeps its
+  /// compiled pre-solved script in the engine under this key, so a repeat
+  /// solve for the same version ships only the challenges.
+  final String? playerId;
 
   /// A script produced by the AST pass, answered without redoing it.
   final String? preprocessed;

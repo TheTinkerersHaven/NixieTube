@@ -130,6 +130,33 @@ void main() {
     expect(kept, {'version2.js', 'version3.js', 'version4.js', 'version5.js'});
   });
 
+  test('only the versions in play are kept in memory', () async {
+    final requested = <String>[];
+    final players = PresolvedPlayers(
+      dio: mockDio((options) async {
+        requested.add(options.uri.pathSegments.last);
+        return (200, _artifact(options.uri.pathSegments.last));
+      }),
+      dir: dir.path,
+    );
+
+    for (final id in ['version1', 'version2', 'version3']) {
+      await players.fetch(id);
+    }
+    // version1 is out of memory and — with its file gone — out of cache, so
+    // it has to come back from the branch. Were memory unbounded this would
+    // be served from `_memory` and never requested again.
+    File('${dir.path}/version1.js').deleteSync();
+    await players.fetch('version1');
+
+    expect(requested, [
+      'version1.js',
+      'version2.js',
+      'version3.js',
+      'version1.js',
+    ]);
+  });
+
   test('a network failure is a miss, not a thrown error', () async {
     final dio = mockDio((options) async => throw const SocketException('down'));
     final players = PresolvedPlayers(dio: dio, dir: dir.path);
