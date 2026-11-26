@@ -19,7 +19,9 @@ import 'log.dart';
 const _log = TaggedLog('discord-sdk');
 
 const MethodChannel _methodChannel = MethodChannel('nixietube/discord_sdk');
-const MethodChannel _eventsChannel = MethodChannel('nixietube/discord_sdk/events');
+const MethodChannel _eventsChannel = MethodChannel(
+  'nixietube/discord_sdk/events',
+);
 
 /// One SET_ACTIVITY frame payload (the JSON string the Discord app's RPC
 /// service expects — identical to the desktop IPC frame body, minus the
@@ -131,17 +133,17 @@ class DiscordSdkPresence extends DiscordPresenceBase {
 
   Future<void> _connect() async {
     if (_connected) return;
-    final installed = await _methodChannel.invokeMethod<bool>('isInstalled') ?? false;
+    final installed =
+        await _methodChannel.invokeMethod<bool>('isInstalled') ?? false;
     if (!installed) {
       _setStatus('Discord app not installed');
       _scheduleRetry();
       return;
     }
     _setStatus('connecting');
-    final ok = await _methodChannel.invokeMethod<bool>(
-      'connect',
-      {'appId': _appId},
-    );
+    final ok = await _methodChannel.invokeMethod<bool>('connect', {
+      'appId': _appId,
+    });
     if (ok == true) {
       _connected = true;
       _setStatus('connected');

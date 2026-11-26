@@ -313,27 +313,30 @@ void main() {
       );
     });
 
-    test('closeForGood stops playback and takes the notification down', () async {
-      final handler = PlaybackAudioHandler(player);
-      addTearDown(handler.disconnect);
-      handler.connect();
+    test(
+      'closeForGood stops playback and takes the notification down',
+      () async {
+        final handler = PlaybackAudioHandler(player);
+        addTearDown(handler.disconnect);
+        handler.connect();
 
-      player.playTracks(const [_track]);
-      await Future<void>.delayed(Duration.zero);
-      expect(handler.playbackState.value.playing, isTrue);
+        player.playTracks(const [_track]);
+        await Future<void>.delayed(Duration.zero);
+        expect(handler.playbackState.value.playing, isTrue);
 
-      // The app was closed: the notification must end like a fully
-      // closed app's — gone, with playback stopped.
-      await handler.closeForGood();
-      await Future<void>.delayed(Duration.zero);
-      expect(player.state.stopped, isTrue);
-      expect(handler.mediaItem.value, isNull);
-      expect(handler.queue.value, isEmpty);
-      expect(
-        handler.playbackState.value.processingState,
-        AudioProcessingState.idle,
-      );
-    });
+        // The app was closed: the notification must end like a fully
+        // closed app's — gone, with playback stopped.
+        await handler.closeForGood();
+        await Future<void>.delayed(Duration.zero);
+        expect(player.state.stopped, isTrue);
+        expect(handler.mediaItem.value, isNull);
+        expect(handler.queue.value, isEmpty);
+        expect(
+          handler.playbackState.value.processingState,
+          AudioProcessingState.idle,
+        );
+      },
+    );
 
     test('onTaskRemoved closes the app for good', () async {
       final handler = PlaybackAudioHandler(player);

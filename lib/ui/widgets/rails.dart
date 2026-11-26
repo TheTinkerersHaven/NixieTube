@@ -200,9 +200,7 @@ class _BrowseRailState extends State<BrowseRail> {
             trailing: widget.trailing,
           ),
           SizedBox(
-            height: compact
-                ? compactRailHeight
-                : (widget.circular ? 210 : 300),
+            height: compact ? compactRailHeight : (widget.circular ? 210 : 300),
             child: SilkyListView.builder(
               controller: _ctrl,
               scrollSpeed: 1.5,

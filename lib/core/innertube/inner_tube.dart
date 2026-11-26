@@ -1068,8 +1068,7 @@ class InnerTube {
       if (section is! Map) continue;
       for (final candidate in _searchCandidates(section)) {
         final card = candidate['musicCardShelfRenderer'];
-        if (card != null ||
-            candidate.containsKey('musicShelfRenderer')) {
+        if (card != null || candidate.containsKey('musicShelfRenderer')) {
           // The card shelf is the best match: parse the entity the card
           // itself stands for, then its rows like any other shelf.
           if (card != null) bestMatch ??= parseSearchCardShelf(card);

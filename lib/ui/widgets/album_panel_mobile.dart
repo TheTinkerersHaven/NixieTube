@@ -106,9 +106,8 @@ class AlbumPlaylistViewMobile extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 'Sort: ${sortLabels[sort]}',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: scheme.onSecondaryContainer,
-                ),
+                style: Theme.of(context).textTheme.labelMedium
+                    ?.copyWith(color: scheme.onSecondaryContainer),
               ),
             ],
           ),
@@ -145,7 +144,8 @@ class AlbumPlaylistViewMobile extends StatelessWidget {
                 child: M3EFilledButton.icon(
                   onPressed: sortedTracks.isEmpty
                       ? null
-                      : () => state.playSongs(sortedTracks, 0, sourceName: title),
+                      : () =>
+                            state.playSongs(sortedTracks, 0, sourceName: title),
                   icon: const Icon(Icons.play_arrow_rounded),
                   label: const Text('Play'),
                   size: M3EButtonSize.fromBase(
@@ -161,7 +161,8 @@ class AlbumPlaylistViewMobile extends StatelessWidget {
                 child: M3EFilledButton.tonalIcon(
                   onPressed: sortedTracks.isEmpty
                       ? null
-                      : () => state.playShuffled(sortedTracks, sourceName: title),
+                      : () =>
+                            state.playShuffled(sortedTracks, sourceName: title),
                   icon: const Icon(Icons.shuffle_rounded),
                   label: const Text('Shuffle'),
                   size: M3EButtonSize.fromBase(
@@ -186,10 +187,8 @@ class AlbumPlaylistViewMobile extends StatelessWidget {
               children: [
                 Text(
                   countLabel,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontSize: 13,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(fontSize: 13, color: scheme.onSurfaceVariant),
                 ),
                 const Spacer(),
                 sortChip(),
@@ -346,9 +345,8 @@ class _AlbumHeaderCard extends StatelessWidget {
                   stats,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],
             ),

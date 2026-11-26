@@ -1275,11 +1275,9 @@ ShelfItem? parseSearchCardShelf(dynamic card) {
     var explicit = false;
     if (explicitBadges is List) {
       for (final b in explicitBadges) {
-        if (str(nav(b, const [
-              'musicInlineBadgeRenderer',
-              'icon',
-              'iconType',
-            ])) ==
+        if (str(
+              nav(b, const ['musicInlineBadgeRenderer', 'icon', 'iconType']),
+            ) ==
             'MUSIC_EXPLICIT_BADGE') {
           explicit = true;
           break;
@@ -1303,7 +1301,9 @@ ShelfItem? parseSearchCardShelf(dynamic card) {
   if (browseId == null || browseId.isEmpty) return null;
   return ShelfItem.browse(
     title: title,
-    subtitle: typeLabel.isNotEmpty ? typeLabel : runsText(nav(card, const ['subtitle', 'runs'])),
+    subtitle: typeLabel.isNotEmpty
+        ? typeLabel
+        : runsText(nav(card, const ['subtitle', 'runs'])),
     browseId: browseId,
     thumbnails: thumbnails,
     kind: detectReleaseKind(typeLabel),

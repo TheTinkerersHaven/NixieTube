@@ -278,7 +278,9 @@ void main() {
   ) async {
     _phoneView(tester);
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: DetailHeader(title: 'Album X'))),
+      const MaterialApp(
+        home: Scaffold(body: DetailHeader(title: 'Album X')),
+      ),
     );
     await tester.pump();
     expect(find.text('Album X'), findsOneWidget);

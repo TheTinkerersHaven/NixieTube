@@ -367,32 +367,35 @@ void main() {
       expect(artist.bestArtwork, 'https://img/artist.jpg');
     });
 
-    test('prefers the audio-only song when the card links to the video', () async {
-      final client = mockDio((options) async {
-        return (
-          200,
-          jsonEncode(
-            _searchResponseWithCard(
-              _songCard(videoId: 'VIDMV'), // the music video's id
-              rows: [_songRow('Kid Again', 'VID9', 'Ivycomb')], // audio row
+    test(
+      'prefers the audio-only song when the card links to the video',
+      () async {
+        final client = mockDio((options) async {
+          return (
+            200,
+            jsonEncode(
+              _searchResponseWithCard(
+                _songCard(videoId: 'VIDMV'), // the music video's id
+                rows: [_songRow('Kid Again', 'VID9', 'Ivycomb')], // audio row
+              ),
             ),
-          ),
-        );
-      });
-      final tube = InnerTube(dio: client);
-      addTearDown(tube.close);
+          );
+        });
+        final tube = InnerTube(dio: client);
+        addTearDown(tube.close);
 
-      final result = await tube.search('kid again');
+        final result = await tube.search('kid again');
 
-      final best = result.bestMatch;
-      expect(best, isA<SongItem>());
-      final track = (best as SongItem).track;
-      // The audio-only recording wins over the music video…
-      expect(track.videoId, 'VID9');
-      expect(track.title, 'Kid Again');
-      // …and keeps the card's artwork, since the row carries none.
-      expect(track.thumbnails.single.url, 'https://img/cover.jpg');
-    });
+        final best = result.bestMatch;
+        expect(best, isA<SongItem>());
+        final track = (best as SongItem).track;
+        // The audio-only recording wins over the music video…
+        expect(track.videoId, 'VID9');
+        expect(track.title, 'Kid Again');
+        // …and keeps the card's artwork, since the row carries none.
+        expect(track.thumbnails.single.url, 'https://img/cover.jpg');
+      },
+    );
 
     test('keeps the card song when it already is the audio version', () async {
       final client = mockDio((options) async {
@@ -441,7 +444,12 @@ void main() {
         final body = jsonDecode(options.data as String) as Map<String, dynamic>;
         sentQuery = body['query'] as String;
         sentParams = body['params'] as String?;
-        return (200, jsonEncode(_searchResponse(rows: [_songRow('Kid Again', 'VID1', 'Ivycomb')])));
+        return (
+          200,
+          jsonEncode(
+            _searchResponse(rows: [_songRow('Kid Again', 'VID1', 'Ivycomb')]),
+          ),
+        );
       });
       final tube = InnerTube(dio: client);
       addTearDown(tube.close);
@@ -494,10 +502,7 @@ void main() {
       final tube = InnerTube(dio: client);
       addTearDown(tube.close);
 
-      expect(
-        await tube.searchSuggestions('ivy'),
-        ['ivycomb', 'ivycomb songs'],
-      );
+      expect(await tube.searchSuggestions('ivy'), ['ivycomb', 'ivycomb songs']);
     });
 
     test('an empty answer yields no suggestions', () async {

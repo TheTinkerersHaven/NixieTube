@@ -17,6 +17,14 @@
 // same bundle, the same answer, no AST pass, and not even the 2.6 MB
 // player download.
 //
+// Requests are kept few on purpose: GitHub's runners share their
+// addresses with a lot of scraping traffic, and YouTube answers a 429
+// when it throttles one. So a run reads at most two pages per round (the
+// watch page, then the embed page) and the player script only when a
+// version is new; a 429 means "come back later": wait per `Retry-After`
+// once per source, then leave the run green with a warning annotation
+// (the hourly job tries again) rather than failing it.
+//
 // Usage:
 //   node tool/ejs_presolve.js --out <dir>
 //       Discover the current player, solve it, write `<dir>/<id>.js` and
@@ -84,7 +92,7 @@ const SAMPLES = {
 // --------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const options = { keep: 5, rounds: 3, force: false, dryRun: false };
+  const options = { keep: 5, rounds: 2, force: false, dryRun: false };
   const valued = {
     '--out': 'out',
     '--keep': 'keep',
@@ -122,6 +130,20 @@ function parseArgs(argv) {
 function fail(message) {
   console.error(`ejs-presolve: ${message}`);
   process.exit(1);
+}
+
+/// Leaves the run green when YouTube throttled the runner: nothing was
+/// published, nothing is broken, and the next cron run tries again. A red
+/// X for a transient 429 trains everyone to ignore the job.
+function rateLimitedSkip(error) {
+  const retryAfter = error.retryAfterMs
+    ? `, Retry-After ${Math.round(error.retryAfterMs / 1000)}s`
+    : '';
+  console.log(
+    `::warning::ejs-presolve: YouTube is rate limiting this runner (429${retryAfter}); ` +
+      'nothing published, the next scheduled run picks it up',
+  );
+  process.exit(0);
 }
 
 // --------------------------------------------------------------------
@@ -162,6 +184,17 @@ const REQUEST_HEADERS = {
   Accept: 'text/html,application/xhtml+xml,application/javascript,*/*;q=0.8',
 };
 
+/// YouTube answering 429: the IP is being throttled, so the only useful
+/// reaction is waiting. Carried as its own error so the caller can tell
+/// "come back later" from "this is broken".
+class RateLimited extends Error {
+  constructor(url, retryAfterMs) {
+    super(`HTTP 429 from ${url}`);
+    this.name = 'RateLimited';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 /// One GET, following redirects, with the header limit raised. Resolves
 /// with the UTF-8 body of the final 200 response.
 function get(url, redirectsLeft = MAX_REDIRECTS) {
@@ -183,6 +216,14 @@ function get(url, redirectsLeft = MAX_REDIRECTS) {
           resolve(get(next, redirectsLeft - 1));
           return;
         }
+        if (status === 429) {
+          res.resume();
+          const header = Number(res.headers['retry-after']);
+          const retryAfterMs =
+            Number.isFinite(header) && header > 0 ? header * 1000 : null;
+          reject(new RateLimited(target.toString(), retryAfterMs));
+          return;
+        }
         if (status !== 200) {
           res.resume();
           reject(new Error(`HTTP ${status}`));
@@ -201,6 +242,11 @@ function get(url, redirectsLeft = MAX_REDIRECTS) {
   });
 }
 
+/// Longest a 429 makes the run wait. `Retry-After` on these is often in
+/// the minutes, which is more idling than a cron run is worth: one wait,
+/// one retry, then the caller skips the run.
+const MAX_RATE_LIMIT_WAIT = 60_000;
+
 async function httpGet(url, what, attempts = 4) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -216,6 +262,22 @@ async function httpGet(url, what, attempts = 4) {
         `ejs-presolve: ${what}: attempt ${attempt}/${attempts} failed: ` +
           describe(error),
       );
+      if (error instanceof RateLimited) {
+        // A 429 is the IP being throttled, not one unlucky request:
+        // waiting per `Retry-After` once is worth it, repeating the
+        // request is not.
+        if (attempt > 1) break;
+        const wait = Math.min(
+          error.retryAfterMs ?? MAX_RATE_LIMIT_WAIT,
+          MAX_RATE_LIMIT_WAIT,
+        );
+        console.error(
+          `ejs-presolve: ${what}: rate limited, waiting ` +
+            `${Math.round(wait / 1000)}s before the retry`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        continue;
+      }
       if (attempt < attempts) {
         // Backoff with jitter: a runner that just lost its route often
         // recovers within a few seconds, and identical delays would keep
@@ -225,29 +287,49 @@ async function httpGet(url, what, attempts = 4) {
       }
     }
   }
-  throw new Error(`${what}: ${describe(lastError)}`);
+  throw lastError instanceof RateLimited
+    ? lastError
+    : new Error(`${what}: ${describe(lastError)}`);
 }
 
-/// The player version and script path the current watch page names.
+/// The player version and script path a YouTube page names.
+///
+/// Two sources, tried in order. The watch page is canonical; the embed
+/// page is the fallback because it is the one Google throttles last (a
+/// run whose watch page returned 429 for every attempt still got an
+/// answer there). Its `player_embed_es6` script is a smaller build of the
+/// same version and answers `sig`/`n` identically to `player_es6`, so an
+/// artifact built from it is interchangeable for the app; when the two
+/// pages name different versions, the artifact is simply published under
+/// the id it came from.
 async function discoverPlayer(videoId) {
-  // Several entry points: the watch page is the canonical one, but a
-  // blocked or redirected fetch of it must not decide the whole run.
-  const pages = [
-    `https://www.youtube.com/watch?v=${videoId}&bpctr=9999999999999&has_verified=1`,
-    `https://m.youtube.com/watch?v=${videoId}`,
+  const sources = [
+    `https://www.youtube.com/watch?v=${videoId}` +
+      '&bpctr=9999999999999&has_verified=1',
     `https://www.youtube.com/embed/${videoId}`,
   ];
-  for (const page of pages) {
+  let limited = null;
+  for (const url of sources) {
     let html;
     try {
-      html = await httpGet(page, `watch page ${page}`);
+      html = await httpGet(url, `page ${url}`);
     } catch (error) {
-      console.error(`ejs-presolve: ${error.message}`);
+      if (error instanceof RateLimited) {
+        limited = error;
+        console.error(`ejs-presolve: ${url}: rate limited, trying next source`);
+      } else {
+        console.error(`ejs-presolve: ${url}: ${error.message}`);
+      }
       continue;
     }
     const match = html.match(WATCH_PLAYER_PATH);
-    if (match) return { playerId: match[1], jsPath: match[0] };
+    if (!match) {
+      console.error(`ejs-presolve: ${url}: no player script path`);
+      continue;
+    }
+    return { playerId: match[1], jsPath: match[0], rateLimited: limited != null };
   }
+  if (limited) throw limited;
   fail('no player script path on the watch page');
 }
 
@@ -426,7 +508,7 @@ function prune(outDir, index, keep) {
 
 /// Solves one player script and publishes it. Returns true when a new
 /// artifact was written.
-function publish(playerId, player, index, options, jsc) {
+function publish(playerId, player, index, options, jsc, jsPath = null) {
   if (player.length < 100_000) {
     fail(`the player script is only ${player.length} bytes; refusing to solve`);
   }
@@ -459,6 +541,11 @@ function publish(playerId, player, index, options, jsc) {
     sha256: sha256(artifact),
     playerBytes: player.length,
     playerSha256: sha256(player),
+    // Which script the artifact was built from: the watch page's
+    // `player_es6` build or the embed page's smaller one. Same version,
+    // same answers, but the branch is easier to reason about with the
+    // provenance recorded.
+    jsPath,
   };
   index.latest = playerId;
 
@@ -484,7 +571,7 @@ async function main() {
       const player = fs.readFileSync(options.playerFile, 'utf8');
       const playerId = options.playerId || sha256(player).slice(0, 16);
       jsc = loadSolver();
-      publish(playerId, player, index, options, jsc);
+      publish(playerId, player, index, options, jsc, options.playerFile);
       if (!options.dryRun) writeIndex(options.outDir, index);
       return;
     }
@@ -493,28 +580,52 @@ async function main() {
     // single discovery can name one while the app is handed the other.
     // Each round looks at the live site again; publishing one version
     // stops it from being solved twice, and the site's other version gets
-    // picked up by the rounds that follow.
+    // picked up by the rounds that follow. Two rounds cover A/B; every
+    // extra round is one more page request that can be rate limited.
     const seen = new Set();
     for (let round = 1; round <= options.rounds; round++) {
-      const discovered = await discoverPlayer(options.video || PROBE_VIDEO);
-      const playerId = discovered.playerId;
-      if (seen.has(playerId)) continue;
-      seen.add(playerId);
-      const publishedBefore = index.players[playerId] != null;
-      if (publishedBefore && !options.force) {
-        console.log(`ejs-presolve: ${playerId} is already published`);
-        if (index.latest !== playerId) index.latest = playerId;
-        continue;
+      try {
+        const discovered = await discoverPlayer(options.video || PROBE_VIDEO);
+        const playerId = discovered.playerId;
+        if (seen.has(playerId)) continue;
+        seen.add(playerId);
+        const publishedBefore = index.players[playerId] != null;
+        if (publishedBefore && !options.force) {
+          console.log(`ejs-presolve: ${playerId} is already published`);
+          if (index.latest !== playerId) index.latest = playerId;
+        } else {
+          console.log(
+            `ejs-presolve: downloading player ${playerId} ` +
+              `(${discovered.jsPath})`,
+          );
+          const player = await httpGet(
+            `https://www.youtube.com${discovered.jsPath}`,
+            'player script',
+          );
+          jsc = jsc || loadSolver();
+          publish(playerId, player, index, options, jsc, discovered.jsPath);
+        }
+        // A throttled source is still throttled seconds later, so another
+        // round would only re-ask the same page and wait again: sampling
+        // for the A/B version can wait for the next run.
+        if (discovered.rateLimited) {
+          console.log(
+            'ejs-presolve: a source was rate limited, not sampling more rounds',
+          );
+          break;
+        }
+      } catch (error) {
+        if (!(error instanceof RateLimited)) throw error;
+        // Everything published above is still written below, so the
+        // branch stays consistent; a run that published nothing is a
+        // skip for this hour, not a failure.
+        if (seen.size === 0) throw error;
+        console.log(
+          '::warning::ejs-presolve: rate limited, stopping after the ' +
+            'versions already published',
+        );
+        break;
       }
-      console.log(
-        `ejs-presolve: downloading player ${playerId} (${discovered.jsPath})`,
-      );
-      const player = await httpGet(
-        `https://www.youtube.com${discovered.jsPath}`,
-        'player script',
-      );
-      jsc = jsc || loadSolver();
-      publish(playerId, player, index, options, jsc);
     }
 
     if (!options.dryRun) {
@@ -526,8 +637,12 @@ async function main() {
     }
     console.log(`ejs-presolve: ${seen.size} player version(s) seen`);
   } catch (error) {
+    if (error instanceof RateLimited) rateLimitedSkip(error);
     fail(error && error.stack ? error.stack : error);
   }
 }
 
-main().catch((error) => fail(error && error.stack ? error.stack : error));
+main().catch((error) => {
+  if (error instanceof RateLimited) rateLimitedSkip(error);
+  fail(error && error.stack ? error.stack : error);
+});

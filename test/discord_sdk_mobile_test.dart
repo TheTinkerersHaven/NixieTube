@@ -45,27 +45,33 @@ void main() {
       e.value.clear();
     }
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('nixietube/discord_sdk'), (
-      call,
-    ) async {
-      final args = call.arguments;
-      calls[call.method]?.add(
-        args is Map ? Map<String, dynamic>.from(args) : <String, dynamic>{},
-      );
-      switch (call.method) {
-        case 'isInstalled':
-          return true;
-        case 'connect':
-          return true;
-        default:
-          return null;
-      }
-    });
+        .setMockMethodCallHandler(
+          const MethodChannel('nixietube/discord_sdk'),
+          (call) async {
+            final args = call.arguments;
+            calls[call.method]?.add(
+              args is Map
+                  ? Map<String, dynamic>.from(args)
+                  : <String, dynamic>{},
+            );
+            switch (call.method) {
+              case 'isInstalled':
+                return true;
+              case 'connect':
+                return true;
+              default:
+                return null;
+            }
+          },
+        );
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('nixietube/discord_sdk'), null);
+        .setMockMethodCallHandler(
+          const MethodChannel('nixietube/discord_sdk'),
+          null,
+        );
   });
 
   test('the SET_ACTIVITY frame mirrors the desktop RPC payload', () {
@@ -140,12 +146,13 @@ void main() {
 
   test('a missing Discord app reports and retries, never throws', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('nixietube/discord_sdk'), (
-      call,
-    ) async {
-      if (call.method == 'isInstalled') return false;
-      return null;
-    });
+        .setMockMethodCallHandler(
+          const MethodChannel('nixietube/discord_sdk'),
+          (call) async {
+            if (call.method == 'isInstalled') return false;
+            return null;
+          },
+        );
     final presence = DiscordSdkPresence(
       appId: _appId,
       enabled: true,

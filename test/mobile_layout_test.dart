@@ -173,83 +173,84 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('opening an album or playlist on a phone shows a horizontal header card', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(() => tester.view.resetPhysicalSize);
+  testWidgets(
+    'opening an album or playlist on a phone shows a horizontal header card',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() => tester.view.resetPhysicalSize);
 
-    final dir = Directory.systemTemp.createTempSync('nt-mobile-plcard-test');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final tube = InnerTube();
-    addTearDown(tube.close);
-    final player = PlayerController(
-      engine: FakeEngine(),
-      tube: tube,
-      configDirPath: dir.path,
-    );
-    addTearDown(player.dispose);
-    final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
-    addTearDown(art.close);
-    final state = AppState(
-      tube: tube,
-      player: player,
-      art: art,
-      config: SysConfig(configPath: '${dir.path}/config.properties'),
-      openUrl: (_) async {},
-    );
-    addTearDown(state.dispose);
+      final dir = Directory.systemTemp.createTempSync('nt-mobile-plcard-test');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final tube = InnerTube();
+      addTearDown(tube.close);
+      final player = PlayerController(
+        engine: FakeEngine(),
+        tube: tube,
+        configDirPath: dir.path,
+      );
+      addTearDown(player.dispose);
+      final art = ArtworkStore(cacheDirPath: '${dir.path}/art');
+      addTearDown(art.close);
+      final state = AppState(
+        tube: tube,
+        player: player,
+        art: art,
+        config: SysConfig(configPath: '${dir.path}/config.properties'),
+        openUrl: (_) async {},
+      );
+      addTearDown(state.dispose);
 
-    Widget panel() => MaterialApp(
-      home: Scaffold(
-        body: ChangeNotifierProvider.value(
-          value: state,
-          child: const AlbumPlaylistView(
-            title: 'My Playlist',
-            subtitle: '',
-            description: '',
-            art: null,
-            owner: ArtistRef('Some Artist'),
-            tracks: [
-              Track(videoId: 'a', title: 'Song A', durationSec: 60),
-              Track(videoId: 'b', title: 'Song B', durationSec: 120),
-            ],
-            numbered: false,
+      Widget panel() => MaterialApp(
+        home: Scaffold(
+          body: ChangeNotifierProvider.value(
+            value: state,
+            child: const AlbumPlaylistView(
+              title: 'My Playlist',
+              subtitle: '',
+              description: '',
+              art: null,
+              owner: ArtistRef('Some Artist'),
+              tracks: [
+                Track(videoId: 'a', title: 'Song A', durationSec: 60),
+                Track(videoId: 'b', title: 'Song B', durationSec: 120),
+              ],
+              numbered: false,
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    // Albums and playlists alike open with one glass hero card: a 20dp
-    // radius translucent card with a hairline border, a 120dp cover
-    // rounded to 12dp padded in on the left, and name/artist/meta to
-    // its right (the glass fill + border of the Now Playing bar).
-    await tester.pumpWidget(panel());
-    await tester.pumpAndSettle();
-    expect(
-      find.byWidgetPredicate(
-        (w) => w is PlaylistArt && w.size == 120 && w.radius == 12,
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.byWidgetPredicate(
-        (w) =>
-            w is Container &&
-            w.decoration is BoxDecoration &&
-            (w.decoration as BoxDecoration).borderRadius ==
-                BorderRadius.circular(20) &&
-            (w.decoration as BoxDecoration).border != null,
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('My Playlist'), findsOneWidget);
-    expect(find.text('Some Artist'), findsOneWidget);
-    expect(find.text('Playlist • 2 songs • 3:00'), findsOneWidget);
-    expect(find.text('2 songs'), findsOneWidget); // tracklist header count
-    expect(tester.takeException(), isNull);
-  });
+      // Albums and playlists alike open with one glass hero card: a 20dp
+      // radius translucent card with a hairline border, a 120dp cover
+      // rounded to 12dp padded in on the left, and name/artist/meta to
+      // its right (the glass fill + border of the Now Playing bar).
+      await tester.pumpWidget(panel());
+      await tester.pumpAndSettle();
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is PlaylistArt && w.size == 120 && w.radius == 12,
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).borderRadius ==
+                  BorderRadius.circular(20) &&
+              (w.decoration as BoxDecoration).border != null,
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('My Playlist'), findsOneWidget);
+      expect(find.text('Some Artist'), findsOneWidget);
+      expect(find.text('Playlist • 2 songs • 3:00'), findsOneWidget);
+      expect(find.text('2 songs'), findsOneWidget); // tracklist header count
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('phone layout swaps Now Playing to mobile view', (tester) async {
     tester.view.physicalSize = const Size(400, 800);

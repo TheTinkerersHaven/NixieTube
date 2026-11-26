@@ -541,10 +541,7 @@ class _HeroIdentityRow extends StatelessWidget {
         ),
         if (onToggleSubscribe != null) ...[
           const SizedBox(width: spaceMd),
-          _SubscribePill(
-            subscribed: subscribed,
-            onPressed: onToggleSubscribe!,
-          ),
+          _SubscribePill(subscribed: subscribed, onPressed: onToggleSubscribe!),
         ],
       ],
     );
