@@ -7,6 +7,7 @@
 // most-recent-first with same-cover tracks held back for the fill pass,
 // so the same artwork never shows twice unless sources run dry.
 
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nixietube/core/models/models.dart';
 import 'package:nixietube/ui/screens/home_screen.dart'
@@ -14,8 +15,13 @@ import 'package:nixietube/ui/screens/home_screen.dart'
         orderQuickPicks,
         pickArtKey,
         quickPickMetrics,
+        quickPickPageHeight,
+        quickPickPageRows,
+        quickPickPages,
         quickPicksHeight,
         rankPickSongs;
+import 'package:nixietube/ui/theme.dart'
+    show sectionHeaderGap, sectionHeadingHeight;
 
 List<ShelfItem> _songs(int n) => [
   for (var i = 0; i < n; i++)
@@ -77,11 +83,44 @@ void main() {
     });
 
     test('height matches header plus the tile grid', () {
-      // 1200px grid: 6 cols, 200px tiles, 3 rows -> 56 + 600.
-      expect(quickPicksHeight(1200, 18), 56 + 600);
-      // 1 row at 1200px -> 56 + 200.
-      expect(quickPicksHeight(1200, 5), 56 + 200);
-      expect(quickPicksHeight(1200, 0), 56);
+      final theme = ThemeData(useMaterial3: true);
+      // The heading row, its gap under it, and the grid's own gap above
+      // the section that follows.
+      final header = sectionHeadingHeight(theme) + sectionHeaderGap * 2;
+      // 1200px grid: 6 cols, 200px tiles, 3 rows.
+      expect(quickPicksHeight(theme, 1200, 18), header + 600);
+      // 1 row at 1200px.
+      expect(quickPicksHeight(theme, 1200, 5), header + 200);
+      expect(quickPicksHeight(theme, 1200, 0), header);
+    });
+  });
+
+  group('quick picks paging', () {
+    test('nine tiles fill a page', () {
+      expect(quickPickPages(0), 0);
+      expect(quickPickPages(1), 1);
+      expect(quickPickPages(9), 1);
+      expect(quickPickPages(10), 2);
+      expect(quickPickPages(20), 3);
+      expect(quickPickPages(30), 4);
+    });
+
+    test('a page is three rows unless the pool runs out', () {
+      expect(quickPickPageRows(0), 0);
+      expect(quickPickPageRows(2), 1);
+      expect(quickPickPageRows(4), 2);
+      expect(quickPickPageRows(9), 3);
+      expect(quickPickPageRows(30), 3);
+    });
+
+    test('a page is its tile rows plus the gap above the dots', () {
+      // 400px wide: (400 - 2 * 4) / 3 tiles, 4dp between the rows. The
+      // space above them belongs to the heading, not the page.
+      const tile = (400 - 8) / 3;
+      expect(quickPickPageHeight(400, 9), sectionHeaderGap + 3 * tile + 8);
+      expect(quickPickPageHeight(400, 4), sectionHeaderGap + 2 * tile + 4);
+      expect(quickPickPageHeight(400, 1), sectionHeaderGap + tile);
+      expect(quickPickPageHeight(400, 0), 0);
     });
   });
 

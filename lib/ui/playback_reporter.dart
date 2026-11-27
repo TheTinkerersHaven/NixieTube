@@ -71,7 +71,7 @@ class PlaybackReporter {
       _log.w(
         'watchtime: LOGIN_INFO expired (logged_in=0): '
         'stats/* beacons will not record history. Re-authenticate in '
-        'Settings → Integrations.',
+        'Settings → Connections.',
       );
     }
     if (ok != loginValid) {

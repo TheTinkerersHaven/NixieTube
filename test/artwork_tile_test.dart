@@ -28,7 +28,11 @@ import 'mock_dio.dart';
 
 class _FakeEngine implements PlayerEngine {
   @override
-  Future<String?> play(String url) async => null;
+  Future<String?> play(String url, {String? nextUrl}) async => null;
+  @override
+  Future<void> setNext(String? url) async {}
+  @override
+  Future<void> promoteNext() async {}
   @override
   Future<void> pause() async {}
   @override

@@ -32,7 +32,7 @@ class _FakeEngine extends FakeEngine {
   bool playing = false;
 
   @override
-  Future<String?> play(String url) async {
+  Future<String?> play(String url, {String? nextUrl}) async {
     playing = true;
     return null;
   }

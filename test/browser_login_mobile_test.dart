@@ -3,8 +3,11 @@
 // out-of-process window. No platform view is involved — the cookie reader
 // is injected, which is exactly how Android hands the header over.
 
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:m3e_core/m3e_core.dart';
 
 import 'package:nixietube/sys/browser_cookies.dart';
 import 'package:nixietube/ui/widgets/browser_login_mobile.dart';
@@ -115,6 +118,51 @@ void main() {
     expect(answer, contains('SAPISID=secret-sapisid'));
     // The dialog closed itself: the flow is done, not waiting on the user.
     expect(find.text('Log in with Google'), findsNothing);
+  });
+
+  testWidgets('the checking spinner stays square instead of stretching', (
+    tester,
+  ) async {
+    // A read that never answers: the dialog holds the checking state, so
+    // the spinner is on screen to be measured.
+    final pending = Completer<String?>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showMobileBrowserLoginDialog(
+                context,
+                page: const ColoredBox(color: Colors.black),
+                readCookies: () => pending.future,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(
+      tester.getCenter(find.text("I've signed in — import session")),
+    );
+    // Bounded pumps: the spinner never stops animating, so settling here
+    // would time out.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final indicator = find.byType(M3ELoadingIndicator);
+    expect(indicator, findsOneWidget);
+    final size = tester.getSize(indicator);
+    // The footer column stretches its children; the spinner must not
+    // inherit that width or it renders as a full-width bar.
+    expect(size.width, size.height);
+    expect(size.width, lessThan(100));
+
+    pending.complete(null);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
   });
 
   testWidgets('a store without a session keeps the dialog open', (

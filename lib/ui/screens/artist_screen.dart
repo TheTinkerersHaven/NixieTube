@@ -511,18 +511,25 @@ class _HeroIdentityRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Phones drop the subscribe pill, so the title stands alone under the
+    // banner and reads better centred; wider layouts keep the name on the
+    // gutter keyline next to the pill.
+    final centred = compact && onToggleSubscribe == null;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Expanded(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: centred
+                ? CrossAxisAlignment.center
+                : CrossAxisAlignment.start,
             children: [
               Text(
                 artist.name,
                 maxLines: compact ? 2 : 1,
                 overflow: TextOverflow.ellipsis,
+                textAlign: centred ? TextAlign.center : null,
                 style: artistTitleStyle(context),
               ),
               if (artist.subscribers.isNotEmpty) ...[
@@ -531,6 +538,7 @@ class _HeroIdentityRow extends StatelessWidget {
                   artist.subscribers,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  textAlign: centred ? TextAlign.center : null,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),

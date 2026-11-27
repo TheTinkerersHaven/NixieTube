@@ -42,13 +42,13 @@ import '../sys/sys_config.dart';
 import '../sys/log.dart';
 import '../core/innertube/stream_resolver.dart';
 import 'state/navigation_state.dart'
-    show Screen, NavigationState, sameNavigationName;
+    show NavEntry, Screen, NavigationState, sameNavigationName;
 import 'state/pinned_picks_state.dart' show PinnedPicksState;
 import 'state/rating_service.dart' show RatingService;
 import 'state/search_state.dart' show SearchState, SearchUiState;
 import 'theme.dart' show ThemeSource, resolveColorScheme;
 
-export 'state/navigation_state.dart' show Screen;
+export 'state/navigation_state.dart' show NavEntry, Screen;
 export 'state/search_state.dart' show SearchUiState;
 
 /// Loads one track's LRCLIB lyrics (with the album LRCLIB knows).
@@ -72,6 +72,9 @@ const _globalTrendingMax = 25;
 class HomeUiState {
   HomeUiState({
     this.loading = true,
+    this.shelvesLoading = true,
+    this.exploreLoading = true,
+    this.chartsLoading = true,
     this.shelves = const [],
     this.explore = const [],
     this.country,
@@ -79,7 +82,21 @@ class HomeUiState {
     this.moods = const [],
     this.error,
   });
+
+  /// Whether any of the three feeds is still on its way. Each one has its
+  /// own flag below; this one stays true until the last lands.
   final bool loading;
+
+  /// Whether the personalized feed (moods and the user's own rows) is
+  /// still on its way.
+  final bool shelvesLoading;
+
+  /// Whether Explore's editorial shelves are still on their way.
+  final bool exploreLoading;
+
+  /// Whether the Charts preview (and the country label) is still on its
+  /// way.
+  final bool chartsLoading;
   final List<Shelf> shelves;
 
   /// Stable editorial shelves from YouTube's Explore feed ("New albums
@@ -108,6 +125,9 @@ class HomeUiState {
 
   HomeUiState copyWith({
     bool? loading,
+    bool? shelvesLoading,
+    bool? exploreLoading,
+    bool? chartsLoading,
     List<Shelf>? shelves,
     List<Shelf>? explore,
     String? country,
@@ -117,6 +137,9 @@ class HomeUiState {
   }) {
     return HomeUiState(
       loading: loading ?? this.loading,
+      shelvesLoading: shelvesLoading ?? this.shelvesLoading,
+      exploreLoading: exploreLoading ?? this.exploreLoading,
+      chartsLoading: chartsLoading ?? this.chartsLoading,
       shelves: shelves ?? this.shelves,
       explore: explore ?? this.explore,
       country: country ?? this.country,
@@ -351,7 +374,6 @@ class AppState extends ChangeNotifier {
     _streamResolver = streamResolver ?? StreamResolver();
     _updater = updater ?? Updater();
     _rating = RatingService(likesTrack: _isLikedTrack);
-    _nav = NavigationState(onLoadDetail: _loadDetail);
     _searchState = SearchState(
       tube: tube,
       stampSections: _stampSearchSections,
@@ -395,7 +417,7 @@ class AppState extends ChangeNotifier {
   late final StreamResolver _streamResolver;
   late final Updater _updater;
   late final RatingService _rating;
-  late final NavigationState _nav;
+  final NavigationState _nav = NavigationState();
   late final SearchState _searchState;
 
   /// Opens [url] in the system's external browser (see the `openUrl`
@@ -636,32 +658,38 @@ class AppState extends ChangeNotifier {
   /// Whether the user can navigate back.
   bool get canGoBack => _nav.canGoBack;
 
-  /// Direction of the latest navigation: false only for back pops.
-  /// Pushes rise from the bottom, pops sink back down.
-  bool get lastNavForward => _nav.lastNavForward;
+  /// The navigation stack, oldest first. The shell renders one route per
+  /// entry; the list only changes when the stack does.
+  List<NavEntry> get navPages => _nav.pages;
 
-  /// Increments on every navigation, including a push that keeps the
-  /// same [Screen] (artist → album). The UI keys its transition on it.
-  int get navRevision => _nav.revision;
-
-  /// Navigates forward, pushing the current screen for [goBack].
-  /// Detail screens kick off their load on arrival.
+  /// Navigates forward, pushing [screen] on top of the current page.
+  /// A detail page starts loading its item before its route is built.
   void go(Screen screen, {BrowseItem? detail}) {
-    _nav.go(screen, detail: detail);
+    if (!_nav.go(screen, detail: detail)) return;
+    if (screen == Screen.detail) _ensureDetail(detail);
     _safeNotify();
   }
 
-  /// Returns to the pushed screen, if any. Detail entries reload on
-  /// arrival so back navigation never shows a stale page.
+  /// Returns to the page below, if any. The popped page's route animates
+  /// out of the way; the page revealed under it is the target's.
   void goBack() {
     if (!_nav.goBack()) return;
+    _safeNotify();
+  }
+
+  /// Drops the page the [Navigator] popped for us, after a system back
+  /// gesture or the platform's back button. A page the app popped itself
+  /// is already gone from the stack, so this is a no-op for it.
+  void navPopped(int id) {
+    if (!_nav.popped(id)) return;
     _safeNotify();
   }
 
   /// Reloads the current detail page in place (used after edits such as
   /// removing a track from an open playlist).
   void reloadDetail() {
-    _nav.reloadDetail();
+    final item = detailItem;
+    if (item != null) _loadDetail(item, force: true);
   }
 
   /// Opens an artist page, resolving unlinked credits first.
@@ -838,7 +866,31 @@ class AppState extends ChangeNotifier {
   // ---------- Home / search / detail ----------
 
   HomeUiState home = HomeUiState();
-  DetailUiState detail = DetailUiState();
+
+  /// Detail pages already loaded, by browse target. Stepping back into an
+  /// opened artist or album shows it at once instead of refetching, and a
+  /// page popping over another one keeps showing its own item.
+  final Map<String, DetailUiState> _details = {};
+  final Map<String, int> _detailGens = {};
+
+  /// Pages whose fetch is in flight, so a page opened again while its
+  /// first load is still running is not restarted (nor left blank).
+  final Set<String> _detailLoading = {};
+
+  /// The detail page for [item]: what has been loaded for it, or a
+  /// loading state while its fetch runs.
+  DetailUiState detailOf(BrowseItem? item) =>
+      _details[_detailKey(item)] ?? DetailUiState();
+
+  /// The detail page the current navigation entry shows.
+  DetailUiState get detail => detailOf(detailItem);
+
+  /// Seeds the current page's detail state. Runtime code loads through
+  /// [go] and the loaders below; tests render a detail page on its own.
+  set detail(DetailUiState value) => _details[_detailKey(detailItem)] = value;
+
+  static String _detailKey(BrowseItem? item) =>
+      '${item?.browseId ?? ''}|${item?.browseParams ?? ''}';
 
   List<Shelf>? _rankedShelvesCache;
   String _rankedShelvesKey = '';
@@ -1036,7 +1088,6 @@ class AppState extends ChangeNotifier {
     playSongs([seed, ...upcoming], 0, sourceName: sourceName ?? 'Your mix');
   }
 
-  int _detailGen = 0;
   int _homeGen = 0;
 
   /// Last queue identity seen on the player stream (video ids only;
@@ -1051,46 +1102,85 @@ class AppState extends ChangeNotifier {
   /// the error state (with Retry) instead of a forever spinner.
   Future<void> loadHome() async {
     final gen = ++_homeGen;
-    home = home.copyWith(loading: true, error: null);
+    home = home.copyWith(
+      loading: true,
+      shelvesLoading: true,
+      exploreLoading: true,
+      chartsLoading: true,
+      error: null,
+    );
     _safeNotify();
+
+    // The three feeds are independent, so each publishes the sections it
+    // owns the moment it answers: the personalized rows and moods paint
+    // while Explore and Charts are still in flight, instead of the whole
+    // screen waiting for the slowest of the three. Explore and Charts are
+    // supplementary, so a failure there still lets the rest through.
+    Future<void> shelves() async {
+      try {
+        final feed = await _tube.home().timeout(const Duration(seconds: 60));
+        if (gen != _homeGen) return;
+        home = home.copyWith(
+          shelves: _stampShelves(withoutLikedPlaylistCard(feed.shelves)),
+          moods: feed.moods,
+          shelvesLoading: false,
+        );
+        _safeNotify();
+        unawaited(_healShelfArtists(gen));
+      } catch (e) {
+        if (gen != _homeGen) return;
+        home = home.copyWith(
+          shelvesLoading: false,
+          error: e is TimeoutException
+              ? 'Home timed out — check connection.'
+              : friendlyError(e),
+        );
+        _safeNotify();
+      }
+    }
+
+    Future<void> explore() async {
+      try {
+        final shelves = await _tube.explore().timeout(
+          const Duration(seconds: 60),
+        );
+        if (gen != _homeGen) return;
+        home = home.copyWith(
+          explore: _stampShelves(withoutLikedPlaylistCard(shelves)),
+          exploreLoading: false,
+        );
+      } catch (_) {
+        if (gen != _homeGen) return;
+        home = home.copyWith(exploreLoading: false);
+      }
+      _safeNotify();
+    }
+
+    Future<void> charts() async {
+      try {
+        final charts = await _tube.charts().timeout(
+          const Duration(seconds: 60),
+        );
+        if (gen != _homeGen) return;
+        home = home.copyWith(
+          country: charts.country,
+          globalTrending: charts.tracks
+              .take(_globalTrendingMax)
+              .toList(growable: false),
+          chartsLoading: false,
+        );
+      } catch (_) {
+        if (gen != _homeGen) return;
+        home = home.copyWith(chartsLoading: false);
+      }
+      _safeNotify();
+    }
+
     try {
-      final homeFuture = _tube.home();
-      // Explore feeds the pinned editorial sections; its failure must
-      // not sink the home feed, so it degrades to no explore shelves.
-      final exploreFuture = _tube.explore().catchError((_) => const <Shelf>[]);
-      // Charts feed the country label and the worldwide chart row; a
-      // failure there must not sink the rest either.
-      final chartsFuture = _tube.charts().catchError(
-        (_) => (country: null, tracks: const <Track>[]),
-      );
-      final feed = await homeFuture.timeout(const Duration(seconds: 60));
-      final exploreShelves = await exploreFuture.timeout(
-        const Duration(seconds: 60),
-        onTimeout: () => const <Shelf>[],
-      );
-      final charts = await chartsFuture.timeout(
-        const Duration(seconds: 60),
-        onTimeout: () => (country: null, tracks: const <Track>[]),
-      );
-      if (gen != _homeGen) return;
-      home = home.copyWith(
-        shelves: _stampShelves(withoutLikedPlaylistCard(feed.shelves)),
-        explore: _stampShelves(withoutLikedPlaylistCard(exploreShelves)),
-        country: charts.country,
-        globalTrending: charts.tracks
-            .take(_globalTrendingMax)
-            .toList(growable: false),
-        moods: feed.moods,
-      );
-      unawaited(_healShelfArtists(gen));
-    } catch (e) {
-      if (gen != _homeGen) return;
-      home = home.copyWith(
-        error: e is TimeoutException
-            ? 'Home timed out — check connection.'
-            : friendlyError(e),
-      );
+      await Future.wait([shelves(), explore(), charts()]);
     } finally {
+      // Stale loads leave the newer state alone; only the current one
+      // closes the spinner.
       if (gen == _homeGen) {
         home = home.copyWith(loading: false);
         _safeNotify();
@@ -1356,34 +1446,57 @@ class AppState extends ChangeNotifier {
   /// column, across up to 3 columns.
   static const artistTopSongsCap = 15;
 
-  void _loadDetail(BrowseItem item) {
-    final gen = ++_detailGen;
-    detail = DetailUiState(loading: true);
+  /// Loads [item]'s detail page unless it is already loaded, so a page
+  /// reached again through back navigation appears without a refetch.
+  void _ensureDetail(BrowseItem? item) {
+    if (item == null) return;
+    final key = _detailKey(item);
+    if (_details.containsKey(key) && !_detailLoading.contains(key)) return;
+    _loadDetail(item);
+  }
+
+  void _loadDetail(BrowseItem item, {bool force = false}) {
+    final key = _detailKey(item);
+    if (!force) {
+      final loaded = _details[key];
+      if (loaded != null && loaded.error == null) return;
+    }
+    final gen = (_detailGens[key] ?? 0) + 1;
+    _detailGens[key] = gen;
+    _detailLoading.add(key);
+    _publishDetail(key, DetailUiState(loading: true));
     _safeNotify();
     unawaited(() async {
       try {
         if (item.browseId.startsWith('UC')) {
-          await _loadArtistDetail(item, gen);
+          await _loadArtistDetail(item, key, gen);
         } else if (item.browseId.startsWith('MPRE')) {
-          await _loadAlbumDetail(item, gen);
+          await _loadAlbumDetail(item, key, gen);
         } else {
-          await _loadPlaylistDetail(item, gen);
+          await _loadPlaylistDetail(item, key, gen);
         }
       } catch (e) {
-        if (gen != _detailGen) return;
-        detail = DetailUiState(loading: false, error: friendlyError(e));
+        if (_detailStale(key, gen)) return;
+        _publishDetail(key, DetailUiState(loading: false, error: friendlyError(e)));
       }
+      if (_detailGens[key] == gen) _detailLoading.remove(key);
       _safeNotify();
     }());
   }
+
+  /// True when a newer load for the same page started, so this one must
+  /// not publish into it.
+  bool _detailStale(String key, int gen) => _detailGens[key] != gen;
+
+  void _publishDetail(String key, DetailUiState detail) => _details[key] = detail;
 
   /// Loads an artist detail, enriching its top songs with durations and
   /// views from the songs playlist BEFORE publishing, so the first paint
   /// already shows durations instead of filling them in later. Falls back
   /// to the preview alone on failure.
-  Future<void> _loadArtistDetail(BrowseItem item, int gen) async {
+  Future<void> _loadArtistDetail(BrowseItem item, String key, int gen) async {
     final artist = await _tube.artist(item.browseId);
-    if (gen != _detailGen) return;
+    if (_detailStale(key, gen)) return;
     ArtistDetail? published = artist;
     if (artist != null && artist.songsPlaylistId != null) {
       try {
@@ -1391,7 +1504,7 @@ class AppState extends ChangeNotifier {
           artist.songsPlaylistId!,
           params: artist.songsPlaylistParams,
         );
-        if (full != null && gen == _detailGen) {
+        if (full != null && !_detailStale(key, gen)) {
           final merged = _mergePlaylistTracksIntoTopSongs(
             artist.topSongs,
             full.tracks,
@@ -1402,8 +1515,8 @@ class AppState extends ChangeNotifier {
         }
       } catch (_) {}
     }
-    if (gen != _detailGen) return;
-    detail = DetailUiState(loading: false, artist: published);
+    if (_detailStale(key, gen)) return;
+    _publishDetail(key, DetailUiState(loading: false, artist: published));
   }
 
   /// Merges a songs-playlist track list into the artist's top songs,
@@ -1440,22 +1553,22 @@ class AppState extends ChangeNotifier {
     return changed ? merged : topSongs;
   }
 
-  Future<void> _loadAlbumDetail(BrowseItem item, int gen) async {
+  Future<void> _loadAlbumDetail(BrowseItem item, String key, int gen) async {
     final album = await _tube.album(item.browseId);
-    if (gen != _detailGen) return;
-    detail = DetailUiState(loading: false, album: album);
-    if (album != null) _stampDetailRatings(gen, album.tracks);
+    if (_detailStale(key, gen)) return;
+    _publishDetail(key, DetailUiState(loading: false, album: album));
+    if (album != null) _stampDetailRatings(key, gen, album.tracks);
   }
 
-  Future<void> _loadPlaylistDetail(BrowseItem item, int gen) async {
+  Future<void> _loadPlaylistDetail(BrowseItem item, String key, int gen) async {
     final playlist = await _tube.playlist(
       item.browseId,
       params: item.browseParams,
     );
-    if (gen != _detailGen) return;
-    detail = DetailUiState(loading: false, playlist: playlist);
+    if (_detailStale(key, gen)) return;
+    _publishDetail(key, DetailUiState(loading: false, playlist: playlist));
     if (playlist != null) {
-      _stampDetailRatings(gen, playlist.tracks);
+      _stampDetailRatings(key, gen, playlist.tracks);
     }
   }
 
@@ -1583,6 +1696,23 @@ class AppState extends ChangeNotifier {
 
   bool _libraryLoading = false;
   bool get libraryLoading => _libraryLoading;
+
+  /// Whether the two slots the quick-picks grid reads — liked songs and
+  /// recent activity — are still on their way. Playlists and followed
+  /// artists take longer and only feed the library screen, so the grid
+  /// stops shimmering as soon as its own data is in.
+  bool _quickPicksLoading = false;
+  bool get quickPicksLoading => _quickPicksLoading;
+
+  /// Whether the Discover rail is still being built; the home reserves
+  /// its slot meanwhile instead of inserting the rail seconds later.
+  bool _discoverLoading = false;
+  bool get discoverLoading => _discoverLoading;
+
+  /// How many liked songs the first fetch serves — enough to fill the
+  /// grid and the rail — and therefore which slice the background tail
+  /// fetch must leave untouched to avoid repainting visible rows.
+  static const _likedHead = 150;
 
   List<Track> _activity = [];
   List<Track> get activity => _activity;
@@ -2082,6 +2212,20 @@ class AppState extends ChangeNotifier {
   /// Falls back to InnerTube home shelves when history is missing.
   Future<void> loadDiscover() async {
     final gen = ++_discoverGen;
+    // Only a signed-in user gets the rail, so only they hold its slot.
+    _discoverLoading = _account != null;
+    _safeNotify();
+    try {
+      await _buildDiscover(gen);
+    } finally {
+      if (gen == _discoverGen) {
+        _discoverLoading = false;
+        _safeNotify();
+      }
+    }
+  }
+
+  Future<void> _buildDiscover(int gen) async {
     List<Track> distinct(List<Track> tracks) {
       final seen = <String>{};
       return tracks.where((t) => seen.add(t.videoId)).toList();
@@ -2222,68 +2366,109 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Loads playlists, activity, subscriptions and liked songs concurrently.
-  /// A failed slot keeps its last-known-good rows: only a successful
-  /// fetch (even an empty one) replaces a list, so a transient blip
-  /// can never wipe the library — liked songs included.
+  /// Loads playlists, activity, subscriptions and liked songs concurrently,
+  /// publishing each as it answers: the library paints in pieces instead of
+  /// waiting for the slowest request.
+  ///
+  /// A failed slot keeps its last-known-good rows: only a successful fetch
+  /// (even an empty one) replaces a list, so a transient blip can never
+  /// wipe the library — liked songs included.
   Future<void> loadLibrary() async {
     final api = _api;
     _libraryLoading = true;
+    _quickPicksLoading = true;
+    // Discover is built from this library, so its slot is held open from
+    // the start: reserving it once the rail begins would insert a row
+    // above sections the user is already reading.
+    _discoverLoading = true;
+    // The liked playlist's own cover does not depend on the liked songs,
+    // so it is fetched now: by the time the card paints, its art is the
+    // one it keeps.
+    if (_likedCover == null) unawaited(_loadLikedCover());
     _safeNotify();
-    try {
-      final results = await Future.wait<Object?>([
-        api.playlists().then<Object?>((v) => v).catchError((_) => null),
-        api.recentActivity().then<Object?>((v) => v).catchError((_) => null),
-        api.subscriptions().then<Object?>((v) => v).catchError((_) => null),
-        api
-            .likedVideos(max: 150)
-            .then<Object?>((v) => v)
-            .catchError((_) => null),
-      ]);
-      final playlists = results[0];
-      if (playlists is List<AccountPlaylist>) _playlists = playlists;
-      // Fire-and-forget: covers pop in per chunk without
-      // parking the library behind the slowest artwork fetch.
-      unawaited(_enrichPlaylistArtwork());
-      final activity = results[1];
-      if (activity is List<Track>) {
+    // The grid reads liked songs and activity only, so it stops shimmering
+    // when those two land, whatever playlists and artists are doing.
+    var gridPending = 2;
+    void gridSlotLanded() {
+      if (--gridPending > 0) return;
+      _quickPicksLoading = false;
+      _safeNotify();
+      // Discover seeds from the liked songs and the activity that just
+      // landed, so it no longer waits for the playlists and the artists.
+      unawaited(loadDiscover());
+    }
+
+    Future<void> playlists() async {
+      try {
+        _playlists = await api.playlists();
+        // The liked entry is derived, not served: re-add it so whichever
+        // slot answers second cannot drop it.
+        _updateLikedPlaylistEntry();
+        // Covers pop in per chunk without parking the library behind the
+        // slowest artwork fetch.
+        unawaited(_enrichPlaylistArtwork());
+      } catch (_) {}
+      _safeNotify();
+    }
+
+    Future<void> activity() async {
+      try {
         _activity = mergeLocalRecents(
-          _stampKnownRatings(_stampTrackMeta(activity)),
+          _stampKnownRatings(_stampTrackMeta(await api.recentActivity())),
           _localRecents,
         );
         _refreshRecentArtists();
-      }
-      final artists = results[2];
-      if (artists is List<ShelfItem>) {
-        _artists = artists.whereType<BrowseItem>().toList();
-      }
-      final liked = results[3];
-      if (liked is List<Track>) {
-        _liked = _stampKnownRatings(_stampTrackMeta(liked));
-        // The playlist's own count, which can exceed the rows the
-        // shelf renders.
+      } catch (_) {}
+      gridSlotLanded();
+      _safeNotify();
+    }
+
+    Future<void> artists() async {
+      try {
+        _artists = (await api.subscriptions()).whereType<BrowseItem>().toList();
+      } catch (_) {}
+      _safeNotify();
+    }
+
+    Future<void> liked() async {
+      try {
+        _liked = _stampKnownRatings(
+          _stampTrackMeta(await api.likedVideos(max: _likedHead)),
+        );
+        // The playlist's own count, which can exceed the rows the shelf
+        // renders.
         _likedCount = api.likedCount;
         _updateLikedPlaylistEntry();
-        // The playlist's own cover, fetched once.
-        if (_likedCover == null) unawaited(_loadLikedCover());
-      }
+      } catch (_) {}
+      gridSlotLanded();
+      _safeNotify();
+    }
+
+    try {
+      await Future.wait([playlists(), activity(), artists(), liked()]);
     } finally {
       _libraryLoading = false;
+      _quickPicksLoading = false;
       _safeNotify();
     }
     // Cached enrichment already painted above; the refresh heals
     // whatever the cache missed, chunk by chunk.
     unawaited(refreshTrackMeta());
-    unawaited(loadDiscover());
     // Full liked list for library completeness, in the background.
     unawaited(() async {
       try {
         final full = await api.likedVideos();
         if (full.length > _liked.length) {
+          // The grid and the liked card read the head of this list, which
+          // the first request already served: repaint only when it moved,
+          // so a longer tail cannot rewrite rows already on screen.
+          final head = _liked.take(_likedHead).map((t) => t.videoId).join();
           _liked = _stampKnownRatings(_stampTrackMeta(full));
           _likedCount = api.likedCount;
           _updateLikedPlaylistEntry();
-          _safeNotify();
+          if (_liked.take(_likedHead).map((t) => t.videoId).join() != head) {
+            _safeNotify();
+          }
           // The longer tail can carry fresh placeholder credits.
           unawaited(refreshTrackMeta());
         }
@@ -3022,13 +3207,17 @@ class AppState extends ChangeNotifier {
     home = home.copyWith(shelves: _stampShelves(home.shelves));
   }
 
-  /// Pushes a new rating into the visible detail and open-playlist track
-  /// lists so like buttons update where the user tapped them.
+  /// Pushes a new rating into every loaded detail page and the
+  /// open-playlist track list, so like buttons update where the user
+  /// tapped them — including a page that is one step back.
   void applyRatingToViews(String videoId, RatingStatus rating) {
     Track update(Track t) =>
         t.videoId == videoId ? t.copyWith(rating: rating) : t;
-    final stamped = _detailWithRatings(detail, update);
-    if (stamped != null) detail = stamped;
+    for (final entry in _details.entries.toList()) {
+      final stamped = _detailWithRatings(entry.value, update);
+      if (stamped != null) _details[entry.key] = stamped;
+    }
+
     final opened = _openPlaylist;
     if (opened != null) {
       _openPlaylist = opened.copyWith(
@@ -3082,26 +3271,28 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  /// Fetches like-state for detail album/playlist tracks and stamps it
-  /// into the visible page (guarded by the detail generation). Without
-  /// this pass liked
-  /// songs never highlight on detail pages.
-  void _stampDetailRatings(int gen, List<Track> tracks) {
+  /// Fetches like-state for a detail page's album/playlist tracks and
+  /// stamps it into that page alone (guarded by its own generation), so a
+  /// load finishing behind another page cannot stamp the wrong one.
+  /// Without this pass liked songs never highlight on detail pages.
+  void _stampDetailRatings(String key, int gen, List<Track> tracks) {
     if (tracks.isEmpty) return;
     unawaited(
       _requestTrackRatings(tracks, (statuses) {
         _log.d(
           '[rating] detail stamp: ${tracks.length} tracks -> ${statuses.length} known',
         );
-        if (statuses.isEmpty || gen != _detailGen) return;
+        if (statuses.isEmpty || _detailStale(key, gen)) return;
+        final current = _details[key];
+        if (current == null) return;
         final stamped = _detailWithRatings(
-          detail,
+          current,
           (t) => statuses[t.videoId] == null
               ? t
               : t.copyWith(rating: statuses[t.videoId]!),
         );
         if (stamped == null) return;
-        detail = stamped;
+        _details[key] = stamped;
         _safeNotify();
       }),
     );
@@ -3919,13 +4110,11 @@ class AppState extends ChangeNotifier {
       }
     } catch (_) {}
     unawaited(_refreshAvatar());
-    // Personal rows + discover need no interaction: refresh like a login
-    // (loadLibrary needs the cookie session). The home feed
-    // refetches too: startup's loadHome ran before the cookie was
-    // restored, so without this it would stay anonymous/generic.
+    // The feeds are started by the caller once the session is known (see
+    // `main`): doing it here would hold them behind the account name and
+    // the playback token, and the anonymous rows from a startup fetch
+    // would be replaced by the account's a few seconds later.
     // History counts seed quick-picks ranking the same way.
-    unawaited(loadLibrary());
-    unawaited(loadHome());
     unawaited(importHistoryCounts());
     // Surface an expired saved session in the UI right away
     // instead of waiting for the first playback heartbeat.

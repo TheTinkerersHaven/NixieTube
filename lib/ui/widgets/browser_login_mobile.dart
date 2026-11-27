@@ -225,7 +225,9 @@ class _MobileBrowserLoginDialogState extends State<_MobileBrowserLoginDialog> {
                   ),
                   if (_checking) ...[
                     const SizedBox(height: 12),
-                    const M3ELoadingIndicator(),
+                    // Centered: the column stretches its children, and a
+                    // tight width turns the spinner into a full-width bar.
+                    const Center(child: M3ELoadingIndicator()),
                   ],
                   const SizedBox(height: 12),
                   M3EFilledButton.icon(

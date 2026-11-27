@@ -27,7 +27,11 @@ import 'package:nixietube/ui/app_state.dart';
 /// player through [PlayerController.playTracks] rather than real audio.
 class FakeEngine implements PlayerEngine {
   @override
-  Future<String?> play(String url) async => null;
+  Future<String?> play(String url, {String? nextUrl}) async => null;
+  @override
+  Future<void> setNext(String? url) async {}
+  @override
+  Future<void> promoteNext() async {}
   @override
   Future<void> pause() async {}
   @override
@@ -125,4 +129,13 @@ Future<AppState> bootAppState(
   );
   addTearDown(state.dispose);
   return state;
+}
+
+/// Opens a category from the Settings index by tapping its row, so a test
+/// lands on the page whose controls it is about.
+Future<void> openSettingsCategory(WidgetTester tester, String title) async {
+  final row = find.text(title);
+  expect(row, findsOneWidget, reason: 'settings category "$title"');
+  await tester.tap(row);
+  await tester.pumpAndSettle();
 }

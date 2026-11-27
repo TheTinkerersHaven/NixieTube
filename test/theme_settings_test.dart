@@ -72,6 +72,7 @@ Future<({AppState state, String configPath})> _pumpSettings(
     ),
   );
   await tester.pump();
+  await openSettingsCategory(tester, 'Appearance');
   return (state: state, configPath: '${dir.path}/config.properties');
 }
 

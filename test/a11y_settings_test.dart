@@ -94,7 +94,11 @@ class _NoopTube extends InnerTube {
 /// same providers the app root registers.
 Future<({AppState state, String configPath})> _pumpSettings(
   WidgetTester tester,
-) => _pumpWith(tester, const SettingsScreen());
+) async {
+  final env = await _pumpWith(tester, const SettingsScreen());
+  await openSettingsCategory(tester, 'Accessibility');
+  return env;
+}
 
 /// The switch inside the toggle row titled [title].
 Finder _switchOf(String title) => find.descendant(

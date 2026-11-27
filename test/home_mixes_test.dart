@@ -19,7 +19,7 @@ import 'package:nixietube/ui/app_state.dart';
 class _FakeEngine extends FakeEngine {
   int pos = 0;
   @override
-  Future<String?> play(String url) async => null;
+  Future<String?> play(String url, {String? nextUrl}) async => null;
   @override
   Future<void> stop() async {
     pos = 0;

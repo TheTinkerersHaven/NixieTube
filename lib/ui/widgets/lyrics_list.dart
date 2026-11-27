@@ -2,6 +2,8 @@
 // lyrics tab and the full-screen lyrics view: tap-to-seek rows,
 // auto-scroll tracking the song position, optional large type.
 
+import 'dart:math' show min;
+
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:motor/motor.dart';
@@ -10,6 +12,7 @@ import 'package:provider/provider.dart';
 import '../../core/models/models.dart';
 import '../a11y.dart';
 import '../app_state.dart';
+import '../theme.dart';
 
 /// Synced lyric lines with a swelling active line that auto-scrolls
 /// into view as [positionMs] advances.
@@ -163,7 +166,15 @@ class _LyricsListState extends State<LyricsList> {
           // scroll offset so the list brings it into view, then
           // the next build cycle will have a valid context for
           // ensureVisible.
-          final estimatedHeight = widget.large ? 64.0 : 44.0;
+          // Every row is laid out in the sung style and merely scaled
+          // down while idle, so the fallback estimate is that style's
+          // line box rather than a guess along the idle one.
+          final activeType = widget.large
+              ? Theme.of(context).textTheme.headlineMedium
+              : Theme.of(context).textTheme.titleLarge;
+          final estimatedHeight =
+              (activeType?.fontSize ?? 22) * (activeType?.height ?? 1.4) +
+              2 * (widget.large ? 12 : 8);
           final target =
               (currentIndex * estimatedHeight - (widget.large ? 32 : 24)).clamp(
                 0.0,
@@ -186,6 +197,11 @@ class _LyricsListState extends State<LyricsList> {
     // may not run inside `itemBuilder` (it would rebuild the
     // whole sliver instead of the row that cares).
     final swell = motionDuration(context, const Duration(milliseconds: 150));
+    // A phone keeps the swell smaller: the active line is scaled up
+    // around its centre, so a full-width line only stays on screen when
+    // the growth is absorbed by the padding (see the constraint below).
+    final compact = isCompactLayout(context);
+    final swellScale = compact ? 0.12 : 0.2;
     // No scrollbar: the list follows playback on its own and a thumb
     // flashing twice a second is visual noise.
     return ScrollConfiguration(
@@ -194,12 +210,50 @@ class _LyricsListState extends State<LyricsList> {
         controller: ctrl,
         padding: EdgeInsets.symmetric(
           vertical: widget.large ? 32 : 24,
-          horizontal: 8,
+          horizontal: compact ? 4 : 8,
         ),
         itemCount: lyrics.length,
         itemBuilder: (context, i) {
           final line = lyrics[i];
           final active = i == currentIndex;
+          // One set of metrics for the whole list, taken from the sung
+          // style. The line is laid out in it whether it is sung or not,
+          // so its words break in one place and never move: the idle
+          // line is that same layout drawn smaller, and a transform is
+          // the one kind of emphasis that cannot re-wrap anything. The
+          // weight is fixed for the same reason — wght changes glyph
+          // advances, so a lighter idle weight would re-break its words
+          // the moment they were sung.
+          final type = Theme.of(context).textTheme;
+          final idleSize = (widget.large ? type.titleLarge : type.bodyLarge)
+              ?.fontSize;
+          final sung =
+              (widget.large ? type.headlineMedium : type.titleLarge) ??
+              DefaultTextStyle.of(context).style;
+          final layout = sung.copyWith(
+            fontWeight: FontWeight.w400,
+            // Rebuild the axis list rather than replacing it: the other
+            // axes (optical size, roundness) are the font's look, and
+            // only the weight is pinned, so that every row shares one
+            // set of advances.
+            fontVariations: [
+              for (final axis in sung.fontVariations ?? const <FontVariation>[])
+                if (axis.axis != 'wght') axis,
+              const FontVariation('wght', 400),
+            ],
+          );
+          // How much smaller the idle line is drawn: bodyLarge next to
+          // titleLarge on a phone, titleLarge next to headlineMedium in
+          // the full-screen view.
+          final idleScale = ((idleSize ?? 16) / (layout.fontSize ?? 22)).clamp(
+            0.5,
+            1.0,
+          );
+          final color = active
+              ? scheme.primary
+              : (timed
+                    ? scheme.onSurfaceVariant.withValues(alpha: 0.55)
+                    : scheme.onSurface);
           return InkWell(
             key: _rowKeys[i],
             onTap: line.timeMs >= 0
@@ -208,66 +262,64 @@ class _LyricsListState extends State<LyricsList> {
             child: Padding(
               padding: EdgeInsets.symmetric(
                 vertical: widget.large ? 12 : 8,
-                horizontal: 16,
+                horizontal: compact ? 12 : 16,
               ),
-              // A 0.5 damping ratio overshoots by ~16% at the
-              // first peak and then rings back twice: pop in,
-              // spring back, spring forward, slight spring back.
-              // 0.75 cuts the ring to ~3%, which lands as a single
-              // small overshoot: the swell settles instead of
-              // rocking.
-              child: SingleMotionBuilder(
-                motion: M3EMotion.custom(
-                  stiffness: 300,
-                  damping: 0.75,
-                ).toMotion(),
-                value: active ? 1.0 : 0.0,
-                active: !reducedMotion,
-                builder: (context, scale, _) {
-                  return Transform.scale(
-                    scale: 1.0 + scale * 0.2,
-                    child: AnimatedDefaultTextStyle(
-                      duration: swell,
-                      curve: Curves.easeOut,
-                      textAlign: TextAlign.center,
-                      style:
-                          (active
-                                  ? (widget.large
-                                        ? Theme.of(context)
-                                              .textTheme
-                                              .headlineMedium
-                                        : Theme.of(context)
-                                              .textTheme
-                                              .titleLarge)
-                                  : (widget.large
-                                        ? Theme.of(context).textTheme.titleLarge
-                                        : Theme.of(context)
-                                              .textTheme
-                                              .bodyLarge))
-                              ?.copyWith(
-                                // Inactive lines wear a 300 cut so the
-                                // sung line is the only w500 weight in
-                                // the list — the theme caps its type
-                                // scale at w500, so the light weight is
-                                // set here. The bundled font is the full
-                                // variable cut (wght 1–1000), so 300
-                                // resolves as a real instance.
-                                fontWeight: active
-                                    ? FontWeight.w500
-                                    : FontWeight.w300,
-                                fontVariations: active
-                                    ? null
-                                    : [FontVariation('wght', 300)],
-                                color: active
-                                    ? scheme.primary
-                                    : (timed
-                                          ? scheme.onSurfaceVariant.withValues(
-                                              alpha: 0.55,
-                                            )
-                                          : scheme.onSurface),
-                              ) ??
-                          DefaultTextStyle.of(context).style,
-                      child: Text(line.text),
+              // Lines are measured against the width they have, not the
+              // window: a lyrics column that runs edge to edge is hard to
+              // read on a phone and unreadable on a wide monitor, so the
+              // text takes a capped measure, centred, and the swell is
+              // absorbed by that cap instead of pushing the line off
+              // screen.
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final measure = min(
+                    widget.large ? 720.0 : 560.0,
+                    constraints.maxWidth / (1 + swellScale),
+                  );
+                  // The line has one layout for its whole life: being
+                  // sung changes the colour and the scale, never the
+                  // metrics. The row is therefore already the height it
+                  // will be when active, and no line below it moves when
+                  // the highlight arrives.
+                  return Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: measure),
+                      // A 0.5 damping ratio overshoots by ~16% at the
+                      // first peak and then rings back twice: pop in,
+                      // spring back, spring forward, slight spring
+                      // back. 0.75 cuts the ring to ~3%, which lands
+                      // as a single small overshoot: the swell settles
+                      // instead of rocking.
+                      child: SingleMotionBuilder(
+                        motion: M3EMotion.custom(
+                          stiffness: 300,
+                          damping: 0.75,
+                        ).toMotion(),
+                        value: active ? 1.0 : 0.0,
+                        active: !reducedMotion,
+                        builder: (context, scale, _) {
+                          // Idle size → sung size, with the spring's
+                          // overshoot on top so the line swells past its
+                          // resting size and settles back. Both ends are
+                          // the sizes the type scale asks for; only the
+                          // transform moves.
+                          final grow = idleScale + (1 - idleScale) * scale;
+                          return Transform.scale(
+                            scale: grow * (1 + scale * swellScale),
+                            child: AnimatedDefaultTextStyle(
+                              duration: swell,
+                              curve: Curves.easeOut,
+                              textAlign: TextAlign.center,
+                              // Colour is the only thing that animates:
+                              // every metric is the same in both states,
+                              // so the paragraph is laid out once and
+                              // its words stay where they are.
+                              style: layout.copyWith(color: color),
+                              child: Text(line.text),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   );
                 },

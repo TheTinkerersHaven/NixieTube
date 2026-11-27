@@ -29,7 +29,7 @@ class _FakeEngine extends FakeEngine {
   final List<String> playedUrls = [];
 
   @override
-  Future<String?> play(String url) async {
+  Future<String?> play(String url, {String? nextUrl}) async {
     playedUrls.add(url);
     return null;
   }

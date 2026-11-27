@@ -30,17 +30,25 @@ DetailKind _detailKind(String? browseId) {
   return DetailKind.playlist;
 }
 
-/// Album/artist/playlist detail page for [AppState.detailItem].
+/// Album/artist/playlist detail page for one browse item.
 class DetailScreen extends StatelessWidget {
-  const DetailScreen({super.key});
+  const DetailScreen({super.key, this.item});
+
+  /// The item this page was opened for, as its navigation entry records
+  /// it. Null reads the current entry instead, so the page can be built
+  /// on its own (tests, previews) without a navigator around it.
+  final BrowseItem? item;
 
   @override
   Widget build(BuildContext context) {
-    final detail = context.select<AppState, DetailUiState>((s) => s.detail);
-    final item = context.select<AppState, BrowseItem?>((s) => s.detailItem);
+    final target =
+        item ?? context.select<AppState, BrowseItem?>((s) => s.detailItem);
+    final detail = context.select<AppState, DetailUiState>(
+      (s) => s.detailOf(target),
+    );
     final state = context.read<AppState>();
     if (detail.loading) {
-      switch (_detailKind(item?.browseId)) {
+      switch (_detailKind(target?.browseId)) {
         case DetailKind.album:
           return const _DetailSkeleton(numbered: true);
         case DetailKind.artist:
@@ -55,9 +63,7 @@ class DetailScreen extends StatelessWidget {
       return Center(
         child: ErrorBox(
           message: detail.error!,
-          onRetry: () {
-            if (item != null) state.go(Screen.detail, detail: item);
-          },
+          onRetry: state.reloadDetail,
         ),
       );
     }
@@ -67,12 +73,12 @@ class DetailScreen extends StatelessWidget {
     } else if (detail.album != null) {
       final album = detail.album!;
       body = AlbumPlaylistView(
-        title: album.title.isNotEmpty ? album.title : (item?.title ?? 'Album'),
+        title: album.title.isNotEmpty ? album.title : (target?.title ?? 'Album'),
         subtitle: album.subtitle.isNotEmpty
             ? album.subtitle
-            : (item?.subtitle ?? ''),
+            : (target?.subtitle ?? ''),
         description: album.description,
-        art: album.artworkOr(item),
+        art: album.artworkOr(target),
         owner: album.artist,
         tracks: album.tracks,
         numbered: true,
@@ -83,10 +89,10 @@ class DetailScreen extends StatelessWidget {
     } else if (detail.playlist != null) {
       final pl = detail.playlist!;
       body = AlbumPlaylistView(
-        title: pl.title.isNotEmpty ? pl.title : (item?.title ?? 'Playlist'),
-        subtitle: pl.subtitle.isNotEmpty ? pl.subtitle : (item?.subtitle ?? ''),
+        title: pl.title.isNotEmpty ? pl.title : (target?.title ?? 'Playlist'),
+        subtitle: pl.subtitle.isNotEmpty ? pl.subtitle : (target?.subtitle ?? ''),
         description: '',
-        art: pl.artworkOr(item),
+        art: pl.artworkOr(target),
         owner: pl.author,
         tracks: pl.tracks,
         numbered: false,
@@ -115,33 +121,44 @@ class DetailScreen extends StatelessWidget {
     // layout; albums and playlists share the chrome below.
     if (detail.artist != null) return body;
     final title =
-        detail.album?.title ?? detail.playlist?.title ?? item?.title ?? '';
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (item != null)
-          RepaintBoundary(
-            child: ArtworkBackdrop(
-              artUrl: _artUrlFor(detail, item),
-              paletteFor: state.paletteFor,
-              ensurePalette: state.ensurePalette,
-              tick: state.paletteTick,
+        detail.album?.title ?? detail.playlist?.title ?? target?.title ?? '';
+    final artUrl = target == null ? null : _artUrlFor(detail, target);
+    // The page's own controls (hero pills, the sort chip, like state,
+    // sliders) take the cover's accent; the wash behind them was already
+    // derived from the same palette. Rebuilt on paletteTick so a cover
+    // resolved after the page opened still tints it.
+    return ListenableBuilder(
+      listenable: state.paletteTick,
+      builder: (context, _) => CoverAccent(
+        palette: state.paletteFor(artUrl),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (artUrl != null)
+              RepaintBoundary(
+                child: ArtworkBackdrop(
+                  artUrl: artUrl,
+                  paletteFor: state.paletteFor,
+                  ensurePalette: state.ensurePalette,
+                  tick: state.paletteTick,
+                ),
+              ),
+            // The palette wash is the Stack's own backdrop and stays
+            // full-bleed; the header and content clear the status bar.
+            SafeArea(
+              bottom: false,
+              child: _DetailScrollFade(
+                title: title,
+                onBack: state.goBack,
+                trailing: target != null && detail.album != null
+                    ? DetailMenuButton(item: target, album: detail.album!)
+                    : null,
+                body: body,
+              ),
             ),
-          ),
-        // The palette wash is the Stack's own backdrop and stays
-        // full-bleed; the header and content clear the status bar.
-        SafeArea(
-          bottom: false,
-          child: _DetailScrollFade(
-            title: title,
-            onBack: state.goBack,
-            trailing: item != null && detail.album != null
-                ? DetailMenuButton(item: item, album: detail.album!)
-                : null,
-            body: body,
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 

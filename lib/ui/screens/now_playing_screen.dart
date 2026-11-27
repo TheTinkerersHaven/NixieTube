@@ -60,14 +60,20 @@ class NowPlayingScreen extends StatelessWidget {
     );
     final backdrop = Theme.of(context).colorScheme.surface;
     if (full) {
-      return _FullscreenLyricsView(
-        track: track,
+      return CoverAccent(
         palette: palette,
-        backdrop: backdrop,
+        child: _FullscreenLyricsView(
+          track: track,
+          palette: palette,
+          backdrop: backdrop,
+        ),
       );
     }
     final compact = isCompactLayout(context);
-    return Scaffold(
+    // The transport, the chips and the slider take the cover's accent,
+    // over the wash derived from the same palette. The player bar and the
+    // navigation sit outside this, on the scheme's own accent.
+    final page = Scaffold(
       backgroundColor: backdrop,
       body: Stack(
         fit: StackFit.expand,
@@ -105,6 +111,7 @@ class NowPlayingScreen extends StatelessWidget {
         ],
       ),
     );
+    return CoverAccent(palette: palette, child: page);
   }
 }
 
@@ -390,13 +397,7 @@ class _TrackHeader extends StatelessWidget {
       children: [
         Text(
           track.title,
-          style: text.headlineLarge!.copyWith(
-            height: 1.15,
-            fontVariations: const [
-              FontVariation('ROND', 50),
-              FontVariation('wdth', 105),
-            ],
-          ),
+          style: nowPlayingTitleStyle(context),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,

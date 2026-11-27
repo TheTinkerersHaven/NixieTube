@@ -130,6 +130,7 @@ _pumpSettings(WidgetTester tester) async {
     ),
   );
   await tester.pump();
+  await openSettingsCategory(tester, 'Connections');
 
   await discord.update(_playing());
   return (state: state, discord: discord, rpc: rpc, configPath: dir.path);

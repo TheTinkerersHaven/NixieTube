@@ -152,6 +152,7 @@ void main() {
       ),
     );
     await tester.pump();
+    await openSettingsCategory(tester, 'Setup');
 
     // The settings list is built eagerly but can still sit below the
     // fold: scroll the button into view before tapping it.

@@ -102,6 +102,8 @@ class PlayerController implements PlayerEngineListener {
     Future<void> Function()? refreshStream,
     Future<void> Function()? resetStream,
     PlayerEngine Function()? createEngine,
+    Future<void> Function(String videoId)? downloadTrack,
+    int Function()? downloadAhead,
     Random? random,
     String? configDirPath,
     this.playTimeout = playOpenTimeout,
@@ -110,6 +112,8 @@ class PlayerController implements PlayerEngineListener {
     _tube = tube;
     _resetStream = resetStream;
     _createEngine = createEngine;
+    _downloadTrack = downloadTrack;
+    _downloadAhead = downloadAhead;
     if (resolveStream != null) {
       _resolveStream = resolveStream;
       _refreshStream = refreshStream;
@@ -142,6 +146,31 @@ class PlayerController implements PlayerEngineListener {
   /// restart for the native backend (fresh handle: DNS, pooled
   /// connections, demuxer state). Null disables engine recycling.
   PlayerEngine Function()? _createEngine;
+
+  /// Asks the audio cache to download a track, so the queue keeps playing
+  /// once the connection stops answering. Null when caching is disabled
+  /// (or under test doubles).
+  Future<void> Function(String videoId)? _downloadTrack;
+
+  /// How many queue rows past the playing one to download, consulted on
+  /// each pass so the Settings slider applies without a restart. Null
+  /// falls back to [_prefetchLookahead].
+  int Function()? _downloadAhead;
+
+  /// Most rows [_downloadAhead] may ask for, matching the Settings
+  /// slider's top step.
+  static const _maxDownloadAhead = 10;
+
+  /// The queue row queued behind the playing one inside the player, and
+  /// the URL it was queued as. One player holds both entries, so the
+  /// backend hands over to the next track without closing the audio
+  /// device (and a skip that lands on it is a seek, not an open).
+  String? _windowVideoId;
+  String? _windowUrl;
+
+  /// The URL the playing entry was opened with, for a repeat that reuses
+  /// it instead of resolving the same track again.
+  String? _loadedUrl;
   late final Random _random;
   late final String? _configDirPath;
 
@@ -277,12 +306,22 @@ class PlayerController implements PlayerEngineListener {
     _ticker?.cancel();
     _ticker = null;
     _prefetchGen++;
+    _windowVideoId = null;
+    _windowUrl = null;
     unawaited(_states.close());
   }
 
   @override
   void onFinished() {
     unawaited(_onTrackFinished());
+  }
+
+  @override
+  void onAdvanced() {
+    // The queued entry took over inside the player: adopt it here rather
+    // than opening the stream again, which would cost the very gap the
+    // window exists to avoid.
+    _adoptQueued();
   }
 
   @override
@@ -376,6 +415,11 @@ class PlayerController implements PlayerEngineListener {
     if (token != _playToken || stream == null) return false;
     if (await _playUrl(stream.url) != null) return false;
     if (token != _playToken) return false;
+    // The reopen replaced the playlist, so nothing is queued any more: a
+    // belief left over from the engine that just died would make the next
+    // skip claim a handover that cannot happen.
+    _windowVideoId = null;
+    _windowUrl = null;
     if (resumeAt != null && resumeAt > 0) {
       await _engine.seekTo(resumeAt);
       if (token != _playToken) return false;
@@ -384,7 +428,9 @@ class PlayerController implements PlayerEngineListener {
     _update(_state.copyWith(loading: false, playing: true));
     updateTrackStats(track.videoId, stream.likes, stream.dislikes);
     _startTicker();
-    _schedulePrefetch();
+    // Refills the window the reopen dropped, rather than only timing the
+    // prefetch for a playlist that no longer holds a second entry.
+    refreshPrefetch();
     return true;
   }
 
@@ -396,10 +442,10 @@ class PlayerController implements PlayerEngineListener {
   /// and error surfacing can take over instead of spinning forever. The
   /// reason travels all the way to the user: a signed CDN URL refused by
   /// the edge is otherwise indistinguishable from a missing stream.
-  Future<String?> _playUrl(String url) async {
+  Future<String?> _playUrl(String url, {String? nextUrl}) async {
     try {
       return await _engine
-          .play(url)
+          .play(url, nextUrl: nextUrl)
           .timeout(
             playTimeout,
             onTimeout: () => 'timed out opening the stream',
@@ -434,10 +480,16 @@ class PlayerController implements PlayerEngineListener {
           !now.stopped) {
         _update(now.copyWith(loading: true, error: () => null));
         if (await _playUrl(stream.url) == null) {
+          // The reopen replaced the window with the one entry: queuing the
+          // next row again keeps a skip instant, and clears the belief
+          // that would otherwise claim an entry that is no longer there.
+          _windowVideoId = null;
+          _windowUrl = null;
           await _engine.seekTo(resumeAt);
           _loadedVideoId = track.videoId;
           _update(_state.copyWith(loading: false, playing: true));
           _startTicker();
+          refreshPrefetch();
           return;
         }
       }
@@ -741,6 +793,9 @@ class PlayerController implements PlayerEngineListener {
     unawaited(_engine.stop());
     _cancelPrefetchTimer();
     _clearPrefetch();
+    _windowVideoId = null;
+    _windowUrl = null;
+    _loadedUrl = null;
     _loadedVideoId = null;
     _pendingSeekTargetMs = null;
     _pendingSeekAt = null;
@@ -1207,6 +1262,11 @@ class PlayerController implements PlayerEngineListener {
     _streamRetries = 0;
     _recycledForEpisode = false;
     _loadedVideoId = null;
+    // The entry about to be opened replaces the whole window, so nothing
+    // queued in the player survives this start.
+    _windowVideoId = null;
+    _windowUrl = null;
+    _loadedUrl = null;
     // Consume the prefetched stream when it matches; otherwise drop it.
     // Prefetch only ever skips the resolve step — the engine still
     // opens/buffers the URL, so a stale (expired) URL falls back to a
@@ -1221,7 +1281,13 @@ class PlayerController implements PlayerEngineListener {
     // while the next stream is resolving.
     _ticker?.cancel();
     _ticker = null;
-    unawaited(_engine.stop());
+    // Silenced, not stopped: stopping releases the backend's player, and
+    // the open that follows then has to build a new one — a native player
+    // torn down and re-created on every skip that cannot use the queued
+    // entry, which is also the moment just_audio's playlist edits start
+    // waiting on a platform that is no longer there. The next open
+    // replaces the playlist anyway.
+    unawaited(_engine.pause());
     _pendingSeekTargetMs = null;
     _pendingSeekAt = null;
     _update(
@@ -1237,6 +1303,76 @@ class PlayerController implements PlayerEngineListener {
     );
     saveSession();
     unawaited(_startCurrentAsync(track, token, usable));
+  }
+
+  /// The queue position that plays next when the handoff is already
+  /// decided, or null when it is not.
+  ///
+  /// Only a decided handoff is allowed into the player: the entry sits in
+  /// the backend's playlist, so it has to be the track that actually
+  /// comes next or the wrong song would play. Shuffle picks its next row
+  /// at the handoff from a history, and the end of the queue may turn
+  /// into radio, so both stay undecided until the track ends.
+  int? _decidedNextIndex() {
+    final s = _state;
+    if (s.current == null || s.stopped) return null;
+    if (s.queue.isEmpty || s.index < 0 || s.index >= s.queue.length) {
+      return null;
+    }
+    if (s.repeat == RepeatMode.one) return s.index;
+    if (s.shuffle) return null;
+    final next = s.index + 1;
+    if (next < s.queue.length) return next;
+    if (s.repeat == RepeatMode.all) return 0;
+    return null;
+  }
+
+  /// The URL [target] will be played from, when it is already known: the
+  /// prefetch cache, or — for a repeat — the stream that is playing now.
+  String? _windowUrlFor(Track target) {
+    if (target.videoId == _state.current?.videoId) return _loadedUrl;
+    final stream = _prefetchedStreams[target.videoId];
+    return (stream != null && stream.cacheable) ? stream.url : null;
+  }
+
+  /// The URL to queue behind an entry opened with [currentUrl].
+  ///
+  /// Unlike [_windowUrlFor] this runs before the open, so a repeat has to
+  /// be answered with the stream being opened rather than the one still
+  /// loaded in the engine.
+  String? _nextWindowUrl(String currentUrl) {
+    final index = _decidedNextIndex();
+    if (index == null) return null;
+    final target = _state.queue[index];
+    if (target.videoId == _state.current?.videoId) return currentUrl;
+    final stream = _prefetchedStreams[target.videoId];
+    return (stream != null && stream.cacheable) ? stream.url : null;
+  }
+
+  /// Keeps the entry queued inside the player in step with the queue.
+  ///
+  /// Called whenever the queue, the handoff decision or the prefetch
+  /// changes. When the next track is not decided, or its URL is not
+  /// resolved yet, the queued entry is cleared: the handoff then reopens
+  /// the stream the ordinary way instead of playing something stale.
+  void _syncWindow() {
+    // While a start is in flight the playlist is being replaced; the
+    // start path queues the entry itself and syncs once it is up.
+    if (_disposed || _state.loading) return;
+    final index = _decidedNextIndex();
+    final target = index == null ? null : _state.queue[index];
+    final url = target == null ? null : _windowUrlFor(target);
+    if (target == null || url == null) {
+      if (_windowVideoId == null) return;
+      _windowVideoId = null;
+      _windowUrl = null;
+      unawaited(_engine.setNext(null).catchError((Object _) {}));
+      return;
+    }
+    if (target.videoId == _windowVideoId && url == _windowUrl) return;
+    _windowVideoId = target.videoId;
+    _windowUrl = url;
+    unawaited(_engine.setNext(url).catchError((Object _) {}));
   }
 
   Future<void> _startCurrentAsync(
@@ -1264,7 +1400,10 @@ class PlayerController implements PlayerEngineListener {
       );
       return;
     }
-    var failure = await _playUrl(stream.url);
+    // The decided next track rides along in the same player, so the album
+    // runs into it without closing the audio device.
+    var queueNext = _nextWindowUrl(stream.url);
+    var failure = await _playUrl(stream.url, nextUrl: queueNext);
     // URLs can die server-side before expiry (edge 403 on fresh,
     // IP-correct URLs); retry once under a fresh visitor, whether the
     // dead URL came from prefetch or a direct resolve.
@@ -1273,7 +1412,8 @@ class PlayerController implements PlayerEngineListener {
       if (token != _playToken) return;
       if (fresh != null) {
         stream = fresh;
-        failure = await _playUrl(fresh.url);
+        queueNext = _nextWindowUrl(fresh.url);
+        failure = await _playUrl(fresh.url, nextUrl: queueNext);
       }
     }
     if (token != _playToken) return;
@@ -1291,7 +1431,18 @@ class PlayerController implements PlayerEngineListener {
       );
       return;
     }
-    if (token == _playToken) _loadedVideoId = track.videoId;
+    if (token == _playToken) {
+      _loadedVideoId = track.videoId;
+      _loadedUrl = stream.url;
+      // What the open actually queued, so the first sync sees no
+      // difference (and does not add the entry a second time). A target
+      // whose URL is not resolved yet was not queued at all.
+      final nextIndex = _decidedNextIndex();
+      _windowVideoId = queueNext == null || nextIndex == null
+          ? null
+          : _state.queue[nextIndex].videoId;
+      _windowUrl = queueNext;
+    }
     _update(_state.copyWith(loading: false, playing: true));
     updateTrackStats(track.videoId, stream.likes, stream.dislikes);
     _startTicker(freshStart: true);
@@ -1300,6 +1451,94 @@ class PlayerController implements PlayerEngineListener {
     // waiting. If already within the lead window, resolves immediately.
     if (token == _playToken) {
       _schedulePrefetch();
+      _cacheUpcoming();
+    }
+  }
+
+  /// Adopts the entry that took over by itself as the playing track.
+  ///
+  /// The backend moved inside one audio device, so there is nothing to
+  /// open: the state follows the queue, the ticker restarts at zero and
+  /// the window is refilled with the track after it.
+  void _adoptQueued() {
+    final s = _state;
+    final index = _decidedNextIndex();
+    final queuedId = _windowVideoId;
+    final url = _windowUrl;
+    // Cleared first: the handover is accounted for, and a second event
+    // for the same move must not adopt it twice.
+    _windowVideoId = null;
+    _windowUrl = null;
+    if (queuedId == null) {
+      // Nothing is queued, so this is not the queued row taking over: a
+      // report that arrives after the window was cleared — a sync that
+      // dropped the entry, or an open that replaced the playlist — names
+      // no track this queue can adopt. Advancing on it would skip a row,
+      // and reopening would cut off the start it might belong to, so it
+      // is left alone; the next skip or the end of the track repairs it.
+      return;
+    }
+    if (index == null ||
+        index >= s.queue.length ||
+        s.queue[index].videoId != queuedId) {
+      // The player moved somewhere the queue did not choose — the queue
+      // changed under the window. Redo the handoff the ordinary way.
+      next(manual: false);
+      return;
+    }
+    final track = s.queue[index];
+    final stream = _prefetchedStreams.remove(track.videoId);
+    _playToken++;
+    _streamRetries = 0;
+    _recycledForEpisode = false;
+    _loadedVideoId = track.videoId;
+    _loadedUrl = url;
+    _pendingSeekTargetMs = null;
+    _pendingSeekAt = null;
+    _update(
+      s.copyWith(
+        current: () => track,
+        index: index,
+        loading: false,
+        playing: true,
+        stopped: false,
+        positionMs: 0,
+        durationMs: track.durationSec * 1000,
+        error: () => null,
+      ),
+    );
+    if (stream != null) {
+      updateTrackStats(track.videoId, stream.likes, stream.dislikes);
+      if (stream.durationSec > 0) {
+        updateTrackDurations({track.videoId: stream.durationSec});
+      }
+    }
+    _startTicker(freshStart: true);
+    unawaited(_engine.promoteNext().catchError((Object _) {}));
+    saveSession();
+    refreshPrefetch();
+    _cacheUpcoming();
+  }
+
+
+  /// Downloads the next few queue rows so a weak or dead connection only
+  /// costs the track that is already buffered.
+  ///
+  /// The current track is not downloaded: the stream proxy captures it as
+  /// it plays, which stores the same file without a second copy of the
+  /// audio coming down the link.
+  void _cacheUpcoming() {
+    final download = _downloadTrack;
+    if (download == null) return;
+    final s = _state;
+    if (s.shuffle || s.repeat == RepeatMode.one) return;
+    final start = s.index < 0 ? 0 : s.index;
+    final ahead = (_downloadAhead?.call() ?? _prefetchLookahead)
+        .clamp(1, _maxDownloadAhead);
+    for (var i = start + 1; i < s.queue.length; i++) {
+      if (i > start + ahead) break;
+      final videoId = s.queue[i].videoId;
+      unawaited(download(videoId).catchError((Object _) {}));
     }
   }
 
@@ -1387,18 +1626,22 @@ class PlayerController implements PlayerEngineListener {
     });
   }
 
-  /// Re-resolves the expected next track for the current queue position.
+  /// Re-resolves the expected next track for the current queue position
+  /// and brings the entry queued in the player in line with it.
   void refreshPrefetch() {
     final s = _state;
     if (s.current == null || s.stopped) {
       _clearPrefetch();
+      _syncWindow();
       return;
     }
     if (s.queue.isEmpty || s.index < 0 || s.index >= s.queue.length) {
       _clearPrefetch();
+      _syncWindow();
       return;
     }
     _schedulePrefetch();
+    _syncWindow();
   }
 
   /// Resolves a single track's stream in the background and stores it in
@@ -1421,6 +1664,7 @@ class PlayerController implements PlayerEngineListener {
     if (_disposed || gen != _prefetchGen) return;
     if (stream == null || !stream.cacheable) return;
     _prefetchedStreams[videoId] = stream;
+    _syncWindow();
   }
 
   /// Resolves [videoIds] in order, stopping when the prefetch generation
@@ -1488,8 +1732,15 @@ class PlayerController implements PlayerEngineListener {
 
   /// Whether a raw engine [pos] read during a fresh-start hold is the
   /// restarted track (clears the hold) rather than the old track's
-  /// ghost. True when back near zero, when moving between polls, or
-  /// when the hold times out so a wedged engine never pins 0 forever.
+  /// ghost. True when back near zero, when the position went backwards
+  /// between polls, or when the hold times out so a wedged engine never
+  /// pins 0 forever.
+  ///
+  /// A position that merely *moved* proves nothing: the outgoing track's
+  /// ghost keeps advancing for a moment after the next one opens, and
+  /// letting it through is what made the bar jump forward and then back
+  /// to the start on every track change. Only a value at the start of a
+  /// track, or one below the last one, is the restart.
   bool _isFreshEnginePosition(int pos) {
     final start = _freshHoldStart;
     final timedOut =
@@ -1497,7 +1748,7 @@ class PlayerController implements PlayerEngineListener {
         DateTime.now().difference(start) >= freshPositionTimeout;
     final restarted =
         pos <= freshPositionThresholdMs ||
-        (_lastRawEnginePos != null && pos != _lastRawEnginePos);
+        (_lastRawEnginePos != null && pos < _lastRawEnginePos!);
     if (timedOut || restarted) {
       _awaitingFreshPosition = false;
       return true;

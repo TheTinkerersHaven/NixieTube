@@ -36,6 +36,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart' show rootBundle;
@@ -150,6 +151,16 @@ String presolvedSolveScript({
 })()''';
 }
 
+/// Encodes the solver input off the UI isolate.
+///
+/// The payload is the artifact plus the challenge list: megabytes of text
+/// whose encoding took ~0.15 s on a desktop and several hundred on a phone,
+/// all of it on the thread that draws the frame — a visible hitch exactly
+/// when a track starts. The string is copied to the worker and the result
+/// back, which is milliseconds either way.
+Future<String> _encodeInput(Map<String, Object?> input) =>
+    Isolate.run(() => jsonEncode(input));
+
 /// [ChallengeSolver] backed by the vendored EJS bundle.
 class JsChallengeSolver implements ChallengeSolver {
   JsChallengeSolver({this.timeout = const Duration(seconds: 45)});
@@ -259,7 +270,7 @@ class JsChallengeSolver implements ChallengeSolver {
         );
       }
     } else {
-      final input = jsonEncode({
+      final input = await _encodeInput({
         if (usePresolved) ...{
           'type': 'preprocessed',
           'preprocessed_player': presolved,

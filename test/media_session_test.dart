@@ -236,6 +236,62 @@ void main() {
     });
   });
 
+  group('positionDrifted', () {
+    test('a tick that advances as the OS already projected is not drift', () {
+      expect(
+        positionDrifted(
+          sent: const Duration(seconds: 30),
+          elapsed: const Duration(milliseconds: 500),
+          live: const Duration(milliseconds: 30500),
+          playing: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('a seek is drift, whichever way it goes', () {
+      expect(
+        positionDrifted(
+          sent: const Duration(seconds: 30),
+          elapsed: const Duration(milliseconds: 500),
+          live: const Duration(seconds: 10),
+          playing: true,
+        ),
+        isTrue,
+      );
+      expect(
+        positionDrifted(
+          sent: const Duration(seconds: 10),
+          elapsed: const Duration(milliseconds: 500),
+          live: const Duration(seconds: 120),
+          playing: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a paused session projects nothing, so any move is drift', () {
+      expect(
+        positionDrifted(
+          sent: const Duration(seconds: 30),
+          elapsed: const Duration(seconds: 5),
+          live: const Duration(seconds: 30),
+          playing: false,
+        ),
+        isFalse,
+      );
+      expect(
+        positionDrifted(
+          sent: const Duration(seconds: 30),
+          elapsed: const Duration(seconds: 5),
+          live: const Duration(seconds: 5),
+          playing: false,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('PlaybackAudioHandler', () {
     late Directory dir;
     late PlayerController player;
@@ -275,6 +331,37 @@ void main() {
       player.pause();
       await Future<void>.delayed(Duration.zero);
       expect(handler.playbackState.value.playing, isFalse);
+    });
+
+    test('a seek re-sends the position the notification projects', () async {
+      final handler = PlaybackAudioHandler(player);
+      addTearDown(handler.disconnect);
+      handler.connect();
+
+      player.playTracks(const [_track]);
+      await Future<void>.delayed(Duration.zero);
+      expect(handler.playbackState.value.updatePosition, Duration.zero);
+
+      // Nothing in the state signature changes on a seek, so an emission
+      // here only happens because the position left the window the last
+      // one implies. Without it the OS keeps projecting the old
+      // position and the notification's bar never goes back.
+      player.seekTo(90000);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        handler.playbackState.value.updatePosition,
+        const Duration(seconds: 90),
+      );
+
+      // Settle the state the first poll reports, then watch a window
+      // covering one more poll: a tick that only advances the way the OS
+      // already assumes must not reach the session.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      final emissions = <PlaybackState>[];
+      final sub = handler.playbackState.skip(1).listen(emissions.add);
+      addTearDown(sub.cancel);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(emissions, isEmpty);
     });
 
     test('a request from the OS drives the player', () async {

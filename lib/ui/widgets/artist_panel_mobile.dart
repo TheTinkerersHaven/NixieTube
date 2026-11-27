@@ -200,12 +200,24 @@ class ArtistPanelMobile extends StatelessWidget {
         actionBar(),
         if (hasSongs) ...[
           const SizedBox(height: spaceMd),
+          // The title keeps the left keyline and the actions line up on
+          // the right edge, the way the track rows below them do. The
+          // title takes what it needs, so a long one ellipsises instead of
+          // pushing the buttons off the row.
           Row(
             children: [
               Expanded(
-                child: SectionHeader(title: 'Top songs', onSeeAll: seeAll),
+                child: Text(
+                  'Top songs',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
               ),
-              const SizedBox(width: spaceSm),
+              if (seeAll != null) ...[
+                M3ETextButton(onPressed: seeAll, child: const Text('See all')),
+                const SizedBox(width: spaceSm),
+              ],
               M3EFilledButton.icon(
                 onPressed: onPlayAll,
                 icon: const Icon(Icons.play_arrow_rounded),

@@ -4,6 +4,10 @@
          the update check hits GitHub: release builds need the network
          permission too (debug/profile manifests only add it for tooling). -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Android 13+ hides every notification, the playback
+         foreground-service one included, until this is granted; the app
+         asks on the first launch (see nixietube/permissions). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Background playback: the media session keeps a foreground
          service alive for as long as audio plays, and a partial wake
          lock keeps the CPU running with the screen off. -->

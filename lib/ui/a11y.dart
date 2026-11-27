@@ -46,6 +46,11 @@ Duration motionDuration(BuildContext context, Duration d) =>
 Duration readMotionDuration(BuildContext context, Duration d) =>
     _reduced(context, false) ? Duration.zero : d;
 
+/// True when motion should collapse to a cut. Registers a dependency
+/// (call it inside `build`), so a page transition rebuilds when the
+/// setting flips.
+bool reducedMotionOf(BuildContext context) => _reduced(context, true);
+
 /// True when the high-contrast theme is on. Registers a
 /// dependency (call within `build`) so the widget rebuilds
 /// when the setting flips; false when no [AppState] is in

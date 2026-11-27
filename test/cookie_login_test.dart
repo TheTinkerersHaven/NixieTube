@@ -82,6 +82,7 @@ Future<({AppState state, List<String> opened})> _pumpSettings(
     ),
   );
   await tester.pump();
+  await openSettingsCategory(tester, 'Account');
   return (state: state, opened: opened);
 }
 

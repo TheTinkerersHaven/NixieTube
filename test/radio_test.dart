@@ -34,7 +34,7 @@ class _FakeEngine extends FakeEngine {
   int pos = 0;
 
   @override
-  Future<String?> play(String url) async {
+  Future<String?> play(String url, {String? nextUrl}) async {
     playedUrls.add(url);
     return null;
   }
@@ -365,6 +365,42 @@ void main() {
       expect(env.state.home.loading, isFalse);
       expect(env.state.home.error, isNull);
       expect(env.state.home.shelves.map((s) => s.title), ['Fresh']);
+    });
+
+    test('each feed paints as it lands', () async {
+      final env = _app();
+      final exploreGate = Completer<List<Shelf>>();
+      final chartsGate = Completer<({String? country, List<Track> tracks})>();
+      env.tube.homeHook = () async => [
+        Shelf('For you', [SongItem(_track('h'))]),
+      ];
+      env.tube.exploreHook = () => exploreGate.future;
+      env.tube.chartsHook = () => chartsGate.future;
+
+      final load = env.state.loadHome();
+      await _settle();
+      // The personalized feed is on screen while the other two are
+      // still in flight: no waiting for the slowest request.
+      expect(env.state.home.shelves.map((s) => s.title), ['For you']);
+      expect(env.state.home.shelvesLoading, isFalse);
+      expect(env.state.home.exploreLoading, isTrue);
+      expect(env.state.home.chartsLoading, isTrue);
+      expect(env.state.home.loading, isTrue);
+
+      exploreGate.complete([
+        Shelf('Trending', [SongItem(_track('t'))]),
+      ]);
+      await _settle();
+      expect(env.state.home.explore.map((s) => s.title), ['Trending']);
+      expect(env.state.home.exploreLoading, isFalse);
+      expect(env.state.home.chartsLoading, isTrue);
+
+      chartsGate.complete((country: 'Italy', tracks: [_track('c')]));
+      await load;
+      expect(env.state.home.country, 'Italy');
+      expect(env.state.home.globalTrending.map((t) => t.videoId), ['c']);
+      expect(env.state.home.chartsLoading, isFalse);
+      expect(env.state.home.loading, isFalse);
     });
 
     test('failures surface an error instead of sticking', () async {

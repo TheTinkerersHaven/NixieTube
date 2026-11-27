@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Resources the release build would otherwise delete.
+
+     Release builds shrink resources, and the shrinker only keeps what
+     the Java/Kotlin and XML code references. The playback notification's
+     buttons are named from Dart instead: `MediaControl.androidIcon`
+     strings that audio_service resolves at runtime with
+     `getIdentifier(...)`, which the shrinker cannot see. Without this
+     file every action icon is stripped from the resource table, the
+     lookups return 0, and the notification shows blank buttons.
+
+     `ic_nixietube_thumb_up` is the like button (lib/sys/media_session.dart);
+     the `audio_service_*` family is the plugin's own transport set. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_nixietube_thumb_up,@drawable/audio_service_*" />

@@ -62,6 +62,11 @@ class _SeekSliderState extends State<SeekSlider> with TickerProviderStateMixin {
   double _lastFraction = 0.0;
   int _changesThisGesture = 0;
 
+  // Track the sweep belongs to. A new track starts at the start, so
+  // whatever the previous one was showing is dropped rather than glided
+  // across: the bar belongs to one song at a time.
+  String? _trackKey;
+
   @override
   void initState() {
     super.initState();
@@ -112,6 +117,19 @@ class _SeekSliderState extends State<SeekSlider> with TickerProviderStateMixin {
     final max = _currentMax();
     final s = widget.state.player.state;
     final fraction = s.positionMs.toDouble().clamp(0, max) / max;
+    final key = s.current?.videoId;
+    if (key != _trackKey) {
+      // Another song took over. Its position starts at the start, and
+      // the previous track's fraction is not a place to glide from —
+      // cancel whatever was running and show the new value at once.
+      _trackKey = key;
+      _cancelSlide();
+      _sweep = null;
+      _sweepCtrl.stop();
+      _dragValue = null;
+      _lastFraction = fraction;
+      return;
+    }
     // A non-user backward jump = the song ended (or a
     // repeat): sweep from where it was back to the start
     // instead of teleporting the thumb.

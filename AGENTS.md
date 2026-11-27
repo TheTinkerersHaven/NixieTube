@@ -85,6 +85,7 @@ flutter build linux --release  # must succeed
 - Real `dart:io` futures never complete under `FakeAsync`; this suite uses real short delays in plain `test()` (no `fake_async`).
 - `mockDio` builds on `newHttpClient()` so injected dios have no retry interceptor.
 - A sandbox (a custom `SysConfig` path, as the tests use) must never touch the real keyring.
+- `flutter test` rewrites `android/…/GeneratedPluginRegistrant.java` in *debug* form, which registers the `integration_test` dev dependency. A release build of the Android app then fails at `compileReleaseJavaWithJavac` with `package dev.flutter.plugins.integration_test does not exist`, because release variants leave dev-dependency plugins off the classpath. It is a stale generated file, not a code error: run `flutter build apk --release --config-only` (or `flutter clean`) to regenerate it before the build.
 
 ## Domain knowledge
 

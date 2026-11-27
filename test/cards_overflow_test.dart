@@ -1,4 +1,4 @@
-// Regression: rail cards sit in a fixed-height rail (216dp on phones),
+// Regression: rail cards sit in a fixed-height rail (206dp on phones),
 // and their art + two text lines used to overflow that by a pixel.
 
 import 'dart:io';
@@ -58,7 +58,7 @@ void main() {
             body: ChangeNotifierProvider.value(
               value: state,
               child: Center(
-                // The compact rail's fixed box: 160dp card in a 216dp rail.
+                // The compact rail's fixed box: 160dp card in a 206dp rail.
                 child: SizedBox(
                   height: compactRailHeight,
                   child: TrackRailCard(
@@ -219,7 +219,10 @@ void main() {
           matching: find.byType(ArtworkImage),
         ),
       );
-      expect(artRect.width, 146.0);
+      // The art fills the card's inner width, leaving no dead space
+      // beside a cover inside its card.
+      expect(artRect.width, compactRailCardWidth - 4.0);
+      expect(artRect.right, cardRect.right - 2.0);
       final titleRect = tester.getRect(
         find.text(id == 'v1' ? 'Tiny' : longTrack.title),
       );
@@ -228,5 +231,70 @@ void main() {
       expect(titleRect.top, firstTitle.top);
       expect(titleRect.height, firstTitle.height);
     }
+  });
+
+  testWidgets('compact rail gaps are the whole space between covers', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    final dir = Directory.systemTemp.createTempSync('nt-rail-gap');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = FakeTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: FakeEngine(),
+      tube: tube,
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: _compactMedia,
+          child: Scaffold(
+            body: ChangeNotifierProvider.value(
+              value: state,
+              child: CardRail(
+                title: 'Albums',
+                itemCount: 3,
+                itemBuilder: (context, i, width) => BrowseCard(
+                  item: BrowseItem(
+                    title: 'Album $i',
+                    subtitle: 'Album \u2022 10 songs',
+                    browseId: 'MPREb$i',
+                    thumbnails: const [],
+                  ),
+                  width: width,
+                  contextMenu: false,
+                  onTap: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Cards sit one gap apart, and the only thing between two covers is
+    // that gap plus the 2dp each card keeps for its ink well.
+    final firstCard = tester.getRect(find.byType(BrowseCard).at(0));
+    final secondCard = tester.getRect(find.byType(BrowseCard).at(1));
+    expect(secondCard.left - firstCard.right, compactRailGap);
+    final firstArt = tester.getRect(find.byType(ArtworkImage).at(0));
+    final secondArt = tester.getRect(find.byType(ArtworkImage).at(1));
+    expect(secondArt.left - firstArt.right, compactRailGap + 4.0);
   });
 }

@@ -30,9 +30,6 @@ abstract class SecureStore {
 
   /// Drops the value stored under [key].
   Future<void> delete(String key);
-
-  /// Every stored value, keyed by its key.
-  Future<Map<String, String>> readAll();
 }
 
 /// The platform secret store.
@@ -50,9 +47,6 @@ class PlatformSecureStore implements SecureStore {
 
   @override
   Future<void> delete(String key) => _storage.delete(key: key);
-
-  @override
-  Future<Map<String, String>> readAll() => _storage.readAll();
 }
 
 /// A store that keeps everything in memory, for sandboxes.
@@ -73,7 +67,4 @@ class MemorySecureStore implements SecureStore {
   Future<void> delete(String key) async {
     _values.remove(key);
   }
-
-  @override
-  Future<Map<String, String>> readAll() async => Map.of(_values);
 }

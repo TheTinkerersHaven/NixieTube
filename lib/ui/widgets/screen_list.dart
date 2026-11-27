@@ -51,10 +51,10 @@ Widget screenColumn({
     silkyScrollDuration: const Duration(milliseconds: 700),
     animationCurve: Curves.easeOutQuart,
     padding: EdgeInsets.fromLTRB(
-      screenPadding,
+      screenGutterOf(context),
       topPadding + (topInset ? MediaQuery.viewPaddingOf(context).top : 0),
-      screenPadding,
-      screenPadding + bottomClearance,
+      screenGutterOf(context),
+      screenGutterOf(context) + bottomClearance,
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

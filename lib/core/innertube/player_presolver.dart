@@ -94,7 +94,7 @@ class PresolvedPlayers {
       _remember(id, inMemory);
       return inMemory;
     }
-    final cached = _readCached(id);
+    final cached = await _readCached(id);
     if (cached != null) {
       _remember(id, cached);
       return cached;
@@ -113,7 +113,7 @@ class PresolvedPlayers {
         return null;
       }
       _remember(id, body);
-      _writeCached(id, body);
+      await _writeCached(id, body);
       _log.d('fetched pre-solved player $id (${body.length} bytes)');
       return body;
     } catch (error) {
@@ -127,20 +127,22 @@ class PresolvedPlayers {
   /// cache untouched.
   String _path(String id) => '${dir ?? '${cacheDirPath()}/players'}/$id.js';
 
-  String? _readCached(String id) {
+  /// Reads the artifact from the cache. The read is a multi-megabyte file,
+  /// so it stays off the isolate that draws the frame.
+  Future<String?> _readCached(String id) async {
     try {
       final file = File(_path(id));
-      if (!file.existsSync()) return null;
-      final script = file.readAsStringSync();
+      if (!await file.exists()) return null;
+      final script = await file.readAsString();
       return looksPreprocessed(script) ? script : null;
     } catch (_) {
       return null;
     }
   }
 
-  void _writeCached(String id, String script) {
+  Future<void> _writeCached(String id, String script) async {
     try {
-      writeAtomicSync(_path(id), script);
+      await writeAtomic(_path(id), script);
       _prune();
     } catch (error) {
       _log.d('could not cache the pre-solved player $id: $error');

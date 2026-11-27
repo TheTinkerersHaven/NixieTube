@@ -322,11 +322,18 @@ class _AlbumHeaderCard extends StatelessWidget {
                   title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    height: 1.15,
+                  // The Now Playing title's width at the card's own 20sp,
+                  // set bold: the hero name is the one thing on the page
+                  // that has to read at a glance.
+                  style: nowPlayingTitleStyle(context).copyWith(
+                    fontSize: 24,
                     color: scheme.onSurface,
+                    fontWeight: FontWeight.w700,
+                    fontVariations: const [
+                      FontVariation('wght', 700),
+                      FontVariation('ROND', 50),
+                      FontVariation('wdth', 105),
+                    ],
                   ),
                 ),
                 if (owner != null && owner!.name.trim().isNotEmpty) ...[
@@ -336,7 +343,10 @@ class _AlbumHeaderCard extends StatelessWidget {
                     fallbackAvatarUrl: ownerAvatarUrl,
                     avatarSize: 22,
                     textStyle: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(fontWeight: FontWeight.w500),
+                        ?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontVariations: const [FontVariation('wght', 600)],
+                        ),
                     padding: EdgeInsets.zero,
                   ),
                 ],
@@ -345,8 +355,11 @@ class _AlbumHeaderCard extends StatelessWidget {
                   stats,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                    fontVariations: const [FontVariation('wght', 500)],
+                  ),
                 ),
               ],
             ),

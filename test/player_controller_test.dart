@@ -29,6 +29,11 @@ class FakeEngine implements PlayerEngine {
   /// [playResult] when empty.
   final List<bool> playScript = [];
   final List<String> playedUrls = [];
+
+  /// URL of the entry last handed to [setNext] (null: window cleared).
+  String? queued;
+  final List<String?> window = [];
+  int promotes = 0;
   String? lastUrl;
   int pos = 0;
   int dur = 0;
@@ -45,10 +50,22 @@ class FakeEngine implements PlayerEngine {
   }
 
   @override
-  Future<String?> play(String url) async {
+  Future<void> setNext(String? url) async {
+    queued = url;
+    window.add(url);
+  }
+
+  @override
+  Future<void> promoteNext() async {
+    promotes++;
+  }
+
+  @override
+  Future<String?> play(String url, {String? nextUrl}) async {
     if (playHook != null) return playHook!(url);
     lastUrl = url;
     playedUrls.add(url);
+    queued = nextUrl;
     final ok = playScript.isNotEmpty ? playScript.removeAt(0) : playResult;
     if (ok) {
       playing = true;
@@ -105,6 +122,13 @@ class FakeEngine implements PlayerEngine {
   void finish() {
     for (final l in List.of(listeners)) {
       l.onFinished();
+    }
+  }
+
+  /// Simulates the backend moving into the queued entry on its own.
+  void advance() {
+    for (final l in List.of(listeners)) {
+      l.onAdvanced();
     }
   }
 
@@ -961,6 +985,30 @@ void main() {
       engine.pos = 2500;
       await Future<void>.delayed(const Duration(milliseconds: 600));
       expect(c.state.positionMs, 2500);
+    });
+
+    test('a ghost that keeps advancing is still held at the start', () async {
+      final engine = FakeEngine()..dur = 200000;
+      final c = await playingQueue(engine, ['v1', 'v2']);
+      c.next();
+      await _settle();
+      expect(c.state.current?.videoId, 'v2');
+      expect(c.state.positionMs, 0);
+      // The outgoing track's position keeps running for a poll or two
+      // after the next one opens. Moving is not proof of a restart: the
+      // bar has to stay at the start instead of jumping forward and
+      // sweeping back.
+      engine.pos = 180000;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      engine.pos = 181500;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(c.state.positionMs, 0);
+      // Back near zero is the restart: progress flows from there.
+      engine.pos = 0;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      engine.pos = 900;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(c.state.positionMs, 900);
     });
 
     test('insertAt restores a removed song for undo', () async {

@@ -11,14 +11,20 @@ import '../theme.dart';
 import 'cards.dart';
 
 /// Phone rail metrics: shared by the home card rails and the artist page
-/// rails so every phone rail lines up (one card width, one gap).
+/// rails so every phone rail lines up (one card width, one gap). Cards
+/// draw their art at the card's full inner width, so a cover fills its
+/// card and two covers sit this gap plus each card's 2dp padding apart.
 const double compactRailCardWidth = 160.0;
-const double compactRailGap = 12.0;
-const double compactRailHeight = 196.0;
+const double compactRailGap = 8.0;
+const double compactRailHeight = 206.0;
 
 /// Section header with title plus scroll-left/right buttons, mirroring
 /// the rail header. Each press transitions exactly one viewport
 /// page ([step] only covers the pre-layout window with no viewport).
+///
+/// The row is one fixed height — a line of title on a phone, the arrows'
+/// own 48dp on a desk — and [trailing] is built for it, so a button can
+/// never make this section's heading taller than the one above or below.
 class RailHeader extends StatelessWidget {
   const RailHeader({
     super.key,
@@ -32,7 +38,10 @@ class RailHeader extends StatelessWidget {
   final String title;
   final ScrollController controller;
   final double step;
-  final Widget? trailing;
+
+  /// The controls on the right, built for the heading's height: size them
+  /// to it instead of letting their own height set the row.
+  final Widget Function(double height)? trailing;
   final bool showArrows;
 
   void _scroll(BuildContext context, int direction) {
@@ -54,29 +63,44 @@ class RailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final compact = isCompactLayout(context);
-    return Row(
-      children: [
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(bottom: compact ? 4 : 8),
-            child: Text(title, style: Theme.of(context).textTheme.titleLarge),
-          ),
+    // Phones swipe the rail, so the arrows are only drawn where there is
+    // room for their 48dp buttons; without them the heading is exactly a
+    // line of title, like every other section heading.
+    final arrows = showArrows && !compact;
+    // A desk keeps the arrows' row height even where the arrows are
+    // hidden (a rail whose cards all fit), so those headings are not
+    // shorter than the ones beside them.
+    final height = compact ? sectionHeadingHeight(theme) : railHeadingHeight;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: sectionHeaderGap),
+      child: SizedBox(
+        height: height,
+        child: Row(
+          children: [
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(title, style: theme.textTheme.titleLarge),
+              ),
+            ),
+            if (arrows) ...[
+              IconButton(
+                icon: const Icon(Icons.chevron_left_rounded),
+                tooltip: 'Scroll left',
+                onPressed: () => _scroll(context, -1),
+              ),
+              IconButton(
+                icon: const Icon(Icons.chevron_right_rounded),
+                tooltip: 'Scroll right',
+                onPressed: () => _scroll(context, 1),
+              ),
+            ],
+            if (trailing case final build?) build(height),
+          ],
         ),
-        if (showArrows) ...[
-          IconButton(
-            icon: const Icon(Icons.chevron_left_rounded),
-            tooltip: 'Scroll left',
-            onPressed: () => _scroll(context, -1),
-          ),
-          IconButton(
-            icon: const Icon(Icons.chevron_right_rounded),
-            tooltip: 'Scroll right',
-            onPressed: () => _scroll(context, 1),
-          ),
-        ],
-        if (trailing case final Widget t) t,
-      ],
+      ),
     );
   }
 }
@@ -164,7 +188,9 @@ class BrowseRail extends StatefulWidget {
   final void Function(BrowseItem item) onOpen;
   final bool circular;
   final ScrollController? controller;
-  final Widget? trailing;
+
+  /// The controls on the right of the heading, built for its height.
+  final Widget Function(double height)? trailing;
 
   /// When true, card widths scale so a whole number of cards fits
   /// edge to edge, and the scroll arrows hide when everything fits.
@@ -201,7 +227,7 @@ class _BrowseRailState extends State<BrowseRail> {
           ),
           SizedBox(
             height: compact ? compactRailHeight : (widget.circular ? 210 : 300),
-            child: SilkyListView.builder(
+            child: SilkyListView.separated(
               controller: _ctrl,
               scrollSpeed: 1.5,
               silkyScrollDuration: const Duration(milliseconds: 700),
@@ -209,8 +235,13 @@ class _BrowseRailState extends State<BrowseRail> {
               mouseWheelVerticalDeltaBehavior: MouseWheelVerticalDeltaBehavior
                   .forwardToVerticalAncestorOrSelf,
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              // Same page gutter and cover-to-cover gap as the fill-width
+              // rails, so a rail lines up with the section title above it.
+              padding: EdgeInsets.zero,
               itemCount: widget.items.length,
+              separatorBuilder: (_, _) => SizedBox(
+                width: compact ? compactRailGap : 0,
+              ),
               itemBuilder: (context, i) {
                 final item = widget.items[i];
                 return widget.circular
@@ -305,7 +336,9 @@ class CardRail extends StatefulWidget {
   });
 
   final String title;
-  final Widget? trailing;
+
+  /// The controls on the right of the heading, built for its height.
+  final Widget Function(double height)? trailing;
   final double height;
   final int itemCount;
 
@@ -329,9 +362,9 @@ class _CardRailState extends State<CardRail> {
 
   @override
   Widget build(BuildContext context) {
-    // Phones use the same metrics as the artist page rails: a 152dp card
-    // with a 16dp gap and a 224dp rail, so every home rail reads like
-    // those. Desktop keeps the large cover cards.
+    // Phones use the shared compact metrics — one card width, one gap and
+    // one rail height — so every home rail reads like the artist page
+    // rails. Desktop keeps the large cover cards.
     final compact = isCompactLayout(context);
     final cardW = compact ? compactRailCardWidth : 208.0;
     final height = compact ? compactRailHeight : widget.height;

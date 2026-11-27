@@ -1,5 +1,5 @@
-// Application shell: navigation rail, screen body, mini player bar,
-// Now Playing overlay, and playlist dialog.
+// Application shell: navigation rail, the navigator that holds the
+// screens, mini player bar, Now Playing overlay, and playlist dialog.
 
 import 'dart:async' show unawaited;
 
@@ -9,23 +9,54 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'app_state.dart';
-import 'a11y.dart';
 import 'app_shell_desktop.dart';
 import 'app_shell_mobile.dart';
-import 'screens/detail_screen.dart';
-import 'screens/home_screen.dart';
-import 'screens/library_screen.dart';
+import 'navigation.dart';
 import 'screens/now_playing_screen.dart';
 import 'screens/onboarding_screen.dart';
-import 'screens/search_screen.dart';
-import 'screens/settings_screen.dart';
 import 'theme.dart';
 import 'widgets/playlist_dialog.dart';
 import '../sys/updater.dart' show UpdateInfo;
 
 /// Single-window shell with rail navigation and overlays.
-class AppShell extends StatelessWidget {
+class AppShell extends StatefulWidget {
   const AppShell({super.key});
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  /// The shell's navigator. The system back press is forwarded to it, and
+  /// each page in it is a real route, so the platform's predictive-back
+  /// gesture can drive a pop itself.
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  /// What a back press does, in the order the user sees it: close what
+  /// covers the page, then step back a page, then leave the app.
+  void _handleBack() {
+    final state = context.read<AppState>();
+    if (state.lyricsFull) {
+      state.collapseLyrics();
+      return;
+    }
+    if (state.nowOpen) {
+      state.closeNow();
+      return;
+    }
+    if (state.screen == Screen.library && state.openedPlaylist != null) {
+      state.closePlaylist();
+      return;
+    }
+    final navigator = _navigatorKey.currentState;
+    if (navigator != null && navigator.canPop()) {
+      // maybePop, not pop: the page may consume it (a settings category
+      // returns to the index instead of leaving Settings).
+      unawaited(navigator.maybePop());
+      return;
+    }
+    unawaited(SystemNavigator.pop());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,59 +67,26 @@ class AppShell extends StatelessWidget {
     }
     final compact = isCompactLayout(context);
     final screen = context.select<AppState, Screen>((s) => s.screen);
-    final canGoBack = context.select<AppState, bool>((s) => s.canGoBack);
-    final nowOpen = context.select<AppState, bool>((s) => s.nowOpen);
-    final lyricsFull = context.select<AppState, bool>((s) => s.lyricsFull);
-    final playlistOpen = context.select<AppState, bool>(
-      (s) => s.openedPlaylist != null,
-    );
-    // A playlist opened from search or home makes the library screen a
-    // pushed view too, so back has to close it before leaving the app.
-    final playlistOverlay = playlistOpen && screen == Screen.library;
     // On phones the bar keeps the section the pushed screen belongs to
     // highlighted; on desktop a pushed screen leaves the rail unselected.
     final navIndex = compact
         ? _mobileNavIndex(screen, context.read<AppState>().parentScreen)
         : _navIndex(screen);
+    final body = _ScreenWithBanners(navigatorKey: _navigatorKey);
     final shell = compact
-        ? AppShellMobile(
-            body: const _ScreenWithBanners(),
-            navIndex: navIndex,
-            onNavTap: _onNavTap,
-          )
-        : AppShellDesktop(
-            body: const _ScreenWithBanners(),
-            navIndex: navIndex,
-            onNavTap: _onNavTap,
-          );
-    // Android's back gesture should close the phone overlays first and
-    // pop the in-app stack otherwise; root destinations stay popped so
-    // back still exits from a tab.
-    final atRoot =
-        screen == Screen.home ||
-        screen == Screen.search ||
-        screen == Screen.library;
-    // Overlays that back closes before navigating: the phone Now Playing
-    // view, fullscreen lyrics, and a playlist covering the library.
-    final hasOverlay = nowOpen || lyricsFull || playlistOverlay;
+        ? AppShellMobile(body: body, navIndex: navIndex, onNavTap: _onNavTap)
+        : AppShellDesktop(body: body, navIndex: navIndex, onNavTap: _onNavTap);
     return PopScope(
-      canPop: !hasOverlay && (atRoot || !canGoBack),
+      // The shell owns the platform's back press, because the screens
+      // below live in a nested navigator the system cannot address. It
+      // closes a covering overlay, steps the navigator back a page, and
+      // leaves the app only when both are exhausted. The *gesture*
+      // never reaches here: the Android predictive-back transition on
+      // the top page drives that pop, preview included.
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        final state = context.read<AppState>();
-        if (state.lyricsFull) {
-          state.collapseLyrics();
-          return;
-        }
-        if (state.nowOpen) {
-          state.closeNow();
-          return;
-        }
-        if (state.screen == Screen.library && state.openedPlaylist != null) {
-          state.closePlaylist();
-          return;
-        }
-        state.goBack();
+        _handleBack();
       },
       child: Focus(
         autofocus: true,
@@ -186,15 +184,26 @@ void _onNavTap(BuildContext context, int index) {
   }
 }
 
-/// The screen body plus the banners that float above it.
+/// The navigator that holds the screens, plus the banners floating above
+/// it.
 class _ScreenWithBanners extends StatelessWidget {
-  const _ScreenWithBanners();
+  const _ScreenWithBanners({required this.navigatorKey});
+
+  final GlobalKey<NavigatorState> navigatorKey;
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        Column(children: [Expanded(child: _Body())]),
+        Column(
+          children: [
+            // No SafeArea here: each screen owns its own top inset so its
+            // backdrop (the home gradient, the library/detail wash) can
+            // run behind the transparent status bar while its content
+            // stays clear.
+            Expanded(child: _NavBody(navigatorKey: navigatorKey)),
+          ],
+        ),
         // Banners overlay the content (never push the layout), stacked
         // so session + backend notes can show together. On phones they
         // start below the status bar.
@@ -219,57 +228,30 @@ class _ScreenWithBanners extends StatelessWidget {
   }
 }
 
-class _Body extends StatelessWidget {
+/// The navigation stack as routes: one page per entry, so back pops the
+/// top one and the page under it is still the page the user left.
+class _NavBody extends StatelessWidget {
+  const _NavBody({required this.navigatorKey});
+
+  final GlobalKey<NavigatorState> navigatorKey;
+
   @override
   Widget build(BuildContext context) {
-    final screen = context.select<AppState, Screen>((s) => s.screen);
-    final forward = context.select<AppState, bool>((s) => s.lastNavForward);
-    // Every push and pop gets a fresh key, including a move that stays
-    // on the same screen (artist → album, album → related album): the
-    // transition then runs exactly like it does for Settings.
-    final revision = context.select<AppState, int>((s) => s.navRevision);
-    // Router-aware switch: pushes rise from the bottom, back pops
-    // sink down, always over a fade. Only the incoming child stays
-    // mounted (the outgoing one drops at once), so lists never
-    // double-mount mid-transition.
-    //
-    // No SafeArea here: each screen owns its own top inset so its
-    // backdrop (the home gradient, the library/detail wash) can run
-    // behind the transparent status bar while its content stays clear.
-    return AnimatedSwitcher(
-      duration: motionDuration(context, const Duration(milliseconds: 220)),
-      switchInCurve: Curves.easeOut,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: SlideTransition(
-          position: Tween(
-            begin: Offset(0, forward ? 0.05 : -0.04),
-            end: Offset.zero,
-          ).animate(animation),
-          child: child,
-        ),
-      ),
-      layoutBuilder: (currentChild, previousChildren) =>
-          Stack(children: [?currentChild]),
-      child: KeyedSubtree(key: ValueKey(revision), child: _screenFor(screen)),
+    final pages = context.select<AppState, List<NavEntry>>((s) => s.navPages);
+    final state = context.read<AppState>();
+    return Navigator(
+      key: navigatorKey,
+      // A page-based route popped from outside the app (a system back
+      // gesture, the platform's back button) comes back this way; the
+      // stack has to follow it or the page would be shown again.
+      onDidRemovePage: (page) {
+        if (page is NavScreenPage) state.navPopped(page.entry.id);
+      },
+      pages: [
+        for (final entry in pages)
+          NavScreenPage(key: ValueKey<int>(entry.id), entry: entry),
+      ],
     );
-  }
-
-  Widget _screenFor(Screen screen) {
-    switch (screen) {
-      case Screen.home:
-      case Screen.detail:
-        if (screen == Screen.detail) {
-          return const DetailScreen();
-        }
-        return const HomeScreen();
-      case Screen.search:
-        return const SearchScreen();
-      case Screen.library:
-        return const LibraryScreen();
-      case Screen.settings:
-        return const SettingsScreen();
-    }
   }
 }
 

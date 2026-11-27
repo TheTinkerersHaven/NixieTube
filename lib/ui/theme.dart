@@ -4,9 +4,21 @@
 
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:skeletonizer/skeletonizer.dart';
+
+import 'widgets/page_swap.dart' show NixiePageTransitionsBuilder;
 
 /// Shared outer padding applied by every top-level screen.
 const double screenPadding = 20.0;
+
+/// Outer padding for a phone: a 6-inch screen cannot spare the desktop
+/// inset on both sides, so the gutter narrows while the content keeps the
+/// same left edge on both layouts.
+const double compactScreenPadding = 12.0;
+
+/// The horizontal gutter for the current layout.
+double screenGutterOf(BuildContext context) =>
+    isCompactLayout(context) ? compactScreenPadding : screenPadding;
 
 /// Horizontal gutter for the artist detail page: a fixed inset on
 /// both sides instead of a centering formula, so the hero text, rows
@@ -26,6 +38,18 @@ TextStyle artistTitleStyle(BuildContext context) =>
       ],
     );
 
+/// The style a hero title is set in: the Now Playing track title's own
+/// weight and width (a wide, rounded cut of Google Sans Flex), which the
+/// opened playlist's name copies so both surfaces read as one voice.
+TextStyle nowPlayingTitleStyle(BuildContext context) =>
+    Theme.of(context).textTheme.headlineLarge!.copyWith(
+      height: 1.15,
+      fontVariations: const [
+        FontVariation('ROND', 50),
+        FontVariation('wdth', 105),
+      ],
+    );
+
 /// Small spacing scale used inside detail/panel layouts.
 const double spaceXs = 4.0;
 const double spaceSm = 8.0;
@@ -34,7 +58,79 @@ const double spaceLg = 24.0;
 const double spaceXl = 32.0;
 
 /// Even vertical spacing between home sections.
-const double homeSectionSpacing = 20.0;
+const double homeSectionSpacing = 28.0;
+
+/// Vertical spacing between home sections on a phone, where the screen is
+/// shorter and rows sit closer together.
+const double compactHomeSectionSpacing = 24.0;
+
+/// The vertical spacing between home sections for the current layout.
+double homeSectionSpacingOf(BuildContext context) =>
+    isCompactLayout(context) ? compactHomeSectionSpacing : homeSectionSpacing;
+
+/// Height of a section heading row: exactly one line of the section
+/// title, not the tallest control beside it.
+///
+/// Every heading (home rails, the personal block, the artist page rails)
+/// is this tall, so a trailing button or scroll arrow can never make one
+/// section's header taller than the next one's and shift the rhythm of
+/// the feed.
+double sectionHeadingHeight(ThemeData theme) {
+  final style = theme.textTheme.titleLarge;
+  final size = style?.fontSize ?? 22;
+  return size * (style?.height ?? 1.3);
+}
+
+/// Space a section heading leaves between itself and the rail or list
+/// under it.
+const double sectionHeaderGap = 8.0;
+
+/// Heading row height for the rails, which carry scroll arrows: the
+/// arrow buttons keep their 48dp touch targets, so their header is a
+/// row tall rather than a line of text.
+const double railHeadingHeight = 48.0;
+
+/// The three tones the skeleton shimmer interpolates between: the bone,
+/// a shoulder either side of the crest, and the crest itself.
+const _skeletonBone = Color(0xFF2C2C2E);
+const _skeletonShoulder = Color(0xFF36363A);
+const _skeletonCrest = Color(0xFF434348);
+
+/// The loading shimmer, shared by every skeleton scope in the app (home
+/// feed, artwork tiles, rows, lyrics).
+///
+/// The package default is a narrow highlight skewed to one side of the
+/// gradient with a long flat tail, which reads as a bright line crossing
+/// the bones; its dark-mode default is nearly invisible on this theme.
+/// This one is a wide, symmetric bell — flat bone in the outer sixth at
+/// each edge, a ramp across the middle 0.64 of the width — so the light
+/// rolls over the layout like a wave rather than slicing through it, and
+/// it crests a shade dimmer so bones brighten without flashing.
+///
+/// Each bone paints its own gradient, so the sweep runs from -1 to 1
+/// width instead of the default -0.5 to 1.5: at both ends the band sits
+/// entirely outside the bone, which is what keeps the light entering from
+/// the edge — with the package's bounds a third of every tile is already
+/// lit on the first frame and the wrap re-lights it mid-tile, so the
+/// shimmer appeared to start inside the cards.
+///
+/// [reduced] swaps the movement for a static solid bone: the placeholders
+/// stay, the animation goes.
+PaintingEffect skeletonEffect({bool reduced = false}) => reduced
+    ? const SolidColorEffect(color: _skeletonBone)
+    : const ShimmerEffect.raw(
+        colors: [
+          _skeletonBone,
+          _skeletonShoulder,
+          _skeletonCrest,
+          _skeletonShoulder,
+          _skeletonBone,
+        ],
+        stops: [0.16, 0.35, 0.5, 0.65, 0.84],
+        lowerBound: -1.0,
+        upperBound: 1.0,
+        duration: Duration(milliseconds: 1800),
+      );
 
 /// Material 3 Expressive corner scale (10 steps, dp). The three newest
 /// steps (largeIncreased, extraLargeIncreased, extraExtraLarge) serve
@@ -90,8 +186,9 @@ const double playerBarClearance = 150.0;
 const double mobileNavHeight = 64.0;
 
 /// Height of the compact mobile mini player bar, including its margins
-/// and the progress line. The navigation bar sits directly below it.
-const double mobilePlayerBarHeight = 65.0;
+/// (8dp all round) and the progress line. The navigation bar sits
+/// directly below it.
+const double mobilePlayerBarHeight = 73.0;
 
 /// Narrow (phone) layout: bottom navigation instead of the desktop rail.
 bool isCompactLayout(BuildContext context) =>
@@ -200,6 +297,18 @@ ThemeData buildTheme({bool highContrast = false, ColorScheme? scheme}) {
         : effective.surface,
     useMaterial3: true,
     fontFamily: 'GoogleSansFlex',
+    // Page motion. The platform's own builders stay (Android keeps the
+    // predictive-back transition the system drives with the gesture, iOS
+    // its edge swipe); the desktop gets the app's own rise over a fade,
+    // the way the in-place swaps move.
+    pageTransitionsTheme: PageTransitionsTheme(
+      builders: {
+        ...const PageTransitionsTheme().builders,
+        TargetPlatform.linux: const NixiePageTransitionsBuilder(),
+        TargetPlatform.windows: const NixiePageTransitionsBuilder(),
+        TargetPlatform.fuchsia: const NixiePageTransitionsBuilder(),
+      },
+    ),
   );
   return base.copyWith(
     // De-bolded hierarchy: nothing above w500 anywhere. Emphasis

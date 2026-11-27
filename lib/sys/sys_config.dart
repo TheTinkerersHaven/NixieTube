@@ -32,6 +32,27 @@ const defaultDiscordAppId = '1552404006498869318';
 /// withdrawn, when the user has not chosen another value.
 const defaultDiscordPauseHideMinutes = 15;
 
+/// Size caps the audio cache slider steps through, in MB.
+const audioCacheMbSteps = <int>[128, 256, 512, 1024, 2048, 4096];
+
+/// Cap used when the user has not picked one.
+const defaultAudioCacheMb = 512;
+
+/// Queue rows downloaded ahead of the playhead by default, and the
+/// most the slider offers.
+const defaultAudioDownloadAhead = 3;
+const maxAudioDownloadAhead = 10;
+
+/// The entry of [steps] closest to [value], so a stored number always
+/// names a slider position even when the file was hand-edited.
+int _nearestStep(int value, List<int> steps) {
+  var best = steps.first;
+  for (final step in steps) {
+    if ((step - value).abs() < (best - value).abs()) best = step;
+  }
+  return best;
+}
+
 /// Unescapes Java-properties escape sequences from a raw value string:
 /// `\uXXXX` → the Unicode code point, then `\n` → newline, `\t` → tab,
 /// `\\` → backslash.
@@ -151,6 +172,27 @@ bool _isAuthKey(String key) =>
     key.startsWith('lastfm.') ||
     key == 'listenbrainz.token';
 
+/// Every credential the app stores under its own name.
+///
+/// Loading asks for these one at a time instead of taking the store's
+/// whole contents. The Android backend's bulk read only returns items
+/// whose key carries the legacy `VGhpcyBpcyB0aGUgcHJlZml4…` prefix,
+/// while the same plugin writes new items under the bare key — so a
+/// cookie saved by the app was invisible on the next launch and every
+/// start looked signed out until a per-key read replaced it.
+const _credentialKeys = <String>[
+  'cookie',
+  'sapisidHash',
+  'sessionToken',
+  'lastfm.enabled',
+  'lastfm.apiKey',
+  'lastfm.secret',
+  'lastfm.sessionKey',
+  'lastfm.username',
+  'listenbrainz.enabled',
+  'listenbrainz.token',
+];
+
 /// Keys the retired OAuth sign-in wrote; they are dropped on load.
 bool _isRetiredOAuthKey(String key) =>
     key == 'client_id' ||
@@ -222,20 +264,16 @@ class SysConfig {
   Future<void> loadCredentials() => _credentialsLoad ??= _loadCredentials();
 
   Future<void> _loadCredentials() async {
-    Map<String, String> stored = {};
-    try {
-      stored = await _secure.readAll();
-    } catch (_) {
-      // No keyring (no session daemon): the legacy file stays the
-      // source of truth.
+    // One key at a time: a bulk read is not portable (see
+    // [_credentialKeys]). A store that refuses a read (no keyring, no
+    // session daemon) leaves that value to the legacy file below.
+    final ours = <String, String>{};
+    for (final key in _credentialKeys) {
+      try {
+        final value = await _secure.read(key);
+        if (value != null) ours[key] = value;
+      } catch (_) {}
     }
-    // The platform store can hold other apps' items (the Linux
-    // implementation keeps them under one schema), so keep only the
-    // keys that are ours.
-    final ours = <String, String>{
-      for (final entry in stored.entries)
-        if (_isAuthKey(entry.key)) entry.key: entry.value,
-    };
     _values.addAll(ours);
     final legacy = readProperties(_authFile);
     final credentials = <String, String>{
@@ -405,6 +443,26 @@ class SysConfig {
 
   /// Whether plays report watchtime beacons to YouTube history.
   bool get reportPlayback => getBool('reportPlayback');
+
+  /// Whether played and upcoming tracks are kept on disk. On by default:
+  /// a queue that outlasts a dead connection is the point of the cache.
+  bool get audioCacheEnabled => getBool('audio.cache', true);
+
+  /// Cap on the on-disk audio cache, in MB. A stored value that is not
+  /// one of [audioCacheMbSteps] snaps to the nearest step, so the
+  /// slider always has a position.
+  int get audioCacheMb =>
+      _nearestStep(int.tryParse(get('audio.cacheMb')) ?? defaultAudioCacheMb,
+          audioCacheMbSteps);
+  set audioCacheMb(int v) => set('audio.cacheMb', '$v');
+
+  /// How many queue rows past the playing one are downloaded in
+  /// advance, so a skip works without the network.
+  int get audioDownloadAhead =>
+      (int.tryParse(get('audio.downloadAhead')) ?? defaultAudioDownloadAhead)
+          .clamp(1, maxAudioDownloadAhead);
+  set audioDownloadAhead(int v) =>
+      set('audio.downloadAhead', '${v.clamp(1, maxAudioDownloadAhead)}');
 
   /// Lyrics provider key (`LyricsSource.name`, defaults to LRCLIB).
   String get lyricsSource => get('lyrics.source', 'lrclib');

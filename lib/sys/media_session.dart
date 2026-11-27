@@ -15,9 +15,9 @@
 // cover that job there.
 
 import 'dart:async';
-import 'dart:ui' show Color;
 
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/services.dart';
 
 import '../core/models/models.dart';
 import '../core/player/player_controller.dart';
@@ -53,6 +53,12 @@ class PlaybackAudioHandler extends BaseAudioHandler {
   String _queueKey = '';
   String _playbackKey = '';
 
+  /// Position the last [playbackState] emission carried, and when it went
+  /// out. The OS projects the live position from those two, so a later
+  /// state is compared against them to notice a seek.
+  Duration _sentPosition = Duration.zero;
+  DateTime? _sentAt;
+
   /// Whether the notification shows a like button, and what tapping it
   /// does. Wired by [connectRatings] once the app state exists.
   bool Function()? _canRate;
@@ -73,6 +79,19 @@ class PlaybackAudioHandler extends BaseAudioHandler {
     if (_connected) _onState(_controller.state);
   }
 
+  /// Re-sends the current state even when nothing about it changed.
+  ///
+  /// Used after the notification permission is granted: Android drops the
+  /// foreground-service notification while it is denied and draws it
+  /// again on the next update, which this forces.
+  void repost() {
+    if (!_connected) return;
+    _mediaKey = '';
+    _queueKey = '';
+    _playbackKey = '';
+    _onState(_controller.state);
+  }
+
   /// Starts mirroring the player. Idempotent: a second call is a no-op.
   void connect() {
     if (_connected) return;
@@ -89,6 +108,7 @@ class PlaybackAudioHandler extends BaseAudioHandler {
     _mediaKey = '';
     _queueKey = '';
     _playbackKey = '';
+    _sentAt = null;
     mediaItem.add(null);
     queue.add(const []);
     playbackState.add(
@@ -148,6 +168,12 @@ class PlaybackAudioHandler extends BaseAudioHandler {
     // real position: [PlaybackState.updatePosition] is the position at
     // [updateTime], and clients project the live value from there, so a
     // zero would jump the seek bar back to the start.
+    //
+    // That projection is also why an unchanged signature is not enough to
+    // skip an emission: a seek changes nothing the signature covers, and
+    // the OS would keep projecting the pre-seek position as if the track
+    // were still running from there. A position that no longer matches
+    // what the last emission implies re-sends the state.
     final canRate = _canRate?.call() ?? false;
     final signature = playbackSignature(
       state: s,
@@ -155,10 +181,26 @@ class PlaybackAudioHandler extends BaseAudioHandler {
       queueKey: queueKey,
       canRate: canRate,
     );
-    if (signature == _playbackKey) return;
+    if (signature == _playbackKey && !_positionDrifted(s)) return;
     _playbackKey = signature;
+    _sentPosition = Duration(milliseconds: s.positionMs);
+    _sentAt = DateTime.now();
 
     playbackState.add(playbackStateFor(s, canRate: canRate));
+  }
+
+  /// Whether [s]'s position has left the window the last emission
+  /// implies, which means the OS is projecting a position the player no
+  /// longer has (a seek, or a stream restarting).
+  bool _positionDrifted(PlayerState s) {
+    final at = _sentAt;
+    if (at == null) return true;
+    return positionDrifted(
+      sent: _sentPosition,
+      elapsed: DateTime.now().difference(at),
+      live: Duration(milliseconds: s.positionMs),
+      playing: s.playing && processingStateOf(s) == AudioProcessingState.ready,
+    );
   }
 
   // --- requests from the OS -------------------------------------------
@@ -387,6 +429,32 @@ String playbackSignature({
   canRate,
 ].join('|');
 
+/// How far the player's position may sit from what the last emission
+/// implies before the session re-sends it.
+///
+/// The player publishes its position every 500ms while the OS projects
+/// the live one in between, so ordinary ticks land well inside this
+/// window; a seek — or a stream restarting the track — is orders of
+/// magnitude larger and must reach the OS, which otherwise keeps
+/// projecting the position it was told.
+const playbackDriftTolerance = Duration(milliseconds: 1200);
+
+/// Whether [live] has left the window an emission of [sent] at that
+/// moment implies, [elapsed] later, while [playing].
+///
+/// A paused session does not project at all, so any change there is a
+/// drift by definition.
+bool positionDrifted({
+  required Duration sent,
+  required Duration elapsed,
+  required Duration live,
+  required bool playing,
+  Duration tolerance = playbackDriftTolerance,
+}) {
+  final expected = playing ? sent + elapsed : sent;
+  return (live - expected).abs() > tolerance;
+}
+
 /// The live handler, once [startBackgroundAudio] has registered one.
 /// Process-wide: a second session would fight the first for the OS media
 /// session, and the platform allows one notification.
@@ -420,7 +488,32 @@ Future<PlaybackAudioHandler?> startBackgroundAudio(
     return null;
   }
   backgroundAudio!.connect();
+  unawaited(_askForNotifications());
   return backgroundAudio;
+}
+
+/// Asks for the notification permission (Android 13+).
+///
+/// Without it every notification is dropped, the playback one — a
+/// foreground-service notification — included, so the media session
+/// would run with nothing to show. A refusal is not an error: playback
+/// keeps working and the notification stays hidden until the user
+/// grants it from the system settings.
+Future<void> _askForNotifications() async {
+  const channel = MethodChannel('nixietube/permissions');
+  try {
+    final granted = await channel.invokeMethod<bool>('notificationsGranted');
+    if (granted ?? true) return;
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'notificationsResult' && call.arguments == true) {
+        backgroundAudio?.repost();
+      }
+      return null;
+    });
+    await channel.invokeMethod<bool>('requestNotifications');
+  } catch (error) {
+    _log.w('notification permission unavailable: $error');
+  }
 }
 
 /// Drops the media session (and its notification).

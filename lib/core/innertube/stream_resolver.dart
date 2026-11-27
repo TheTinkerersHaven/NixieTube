@@ -672,7 +672,13 @@ class StreamResolver {
         entry != null &&
         entry.stream.cacheable &&
         DateTime.now().isBefore(entry.expiry)) {
-      return entry.stream;
+      // The cache keeps the URL the player request minted, not the loopback
+      // one the engine plays: finishing it here is what makes a cached
+      // stream as playable as a freshly resolved one. Handing the raw URL
+      // back instead skips the proxy, and a range-limited URL opens, plays
+      // a fraction of a second and then stalls — every skip served from
+      // this cache played the wrong thing or nothing at all.
+      return await _finish(videoId, entry.stream, proxy);
     }
 
     final provider = _authProvider;
@@ -894,8 +900,11 @@ class StreamResolver {
       'Resolved stream for $videoId via ${client.name} '
       '${client.version}: ${stream.bitrate} bps',
     );
-    // A PO token lifts the edge's megabyte ceiling: the URL then answers
-    // an open-ended range with the whole track, so it needs no proxy.
+    // A PO token lifts the edge's megabyte ceiling: the URL answers an
+    // open-ended range with the whole track. It is still range-limited as
+    // far as the player goes, because the tokenized URL is a deciphered
+    // one: handing that to a platform engine is what 403s on the first
+    // request, while the same URL answers the proxy's own request.
     final tokenized = streamToken != null && streamToken.isNotEmpty;
     if (tokenized && stream.codec != 'hls') {
       return ResolvedStream(
@@ -906,6 +915,7 @@ class StreamResolver {
         dislikes: stream.dislikes,
         durationSec: stream.durationSec,
         cacheable: stream.cacheable,
+        rangeLimited: client.rangeLimited,
       );
     }
     if (!client.rangeLimited) return stream;
@@ -923,14 +933,45 @@ class StreamResolver {
 
   /// Applies the loopback proxy to range-limited URLs (when [proxy] is
   /// set) and returns the stream to hand to the engine.
+  ///
+  /// While the audio cache is on, every stream goes through the proxy even
+  /// when its URL serves ranges directly: the cache only sees what the
+  /// proxy relays, and a loopback URL stays valid for the whole track
+  /// instead of expiring with the signed one underneath it.
   Future<ResolvedStream?> _finish(
     String videoId,
     ResolvedStream? stream,
     bool proxy,
   ) async {
     if (stream == null) return null;
-    if (!proxy || !stream.rangeLimited) return stream;
-    return _proxyStream(stream, videoId);
+    final cached = StreamProxy.instance.servesCache;
+    final wanted =
+        proxy && stream.codec != 'hls' && (stream.rangeLimited || cached);
+    if (!wanted) {
+      _log.d('stream for $videoId: ${_shapeOf(stream.url)}');
+      return stream;
+    }
+    final proxied = await _proxyStream(stream, videoId);
+    if (proxied != null) {
+      _log.d('stream for $videoId: ${_shapeOf(proxied.url)}');
+    }
+    return proxied;
+  }
+
+  /// What a resolved URL carries, for the log: the host, and whether the
+  /// signature, the `n` challenge and the PO token made it onto the URL.
+  ///
+  /// Their values stay out of the log, but their presence is what separates
+  /// a URL the edge refuses (403 on the first request) from one that never
+  /// got its answers, and a `loopback` here says the proxy will absorb the
+  /// refusal itself.
+  static String _shapeOf(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return 'unparseable';
+    if (uri.host == '127.0.0.1') return 'loopback';
+    final params = uri.queryParameters;
+    bool has(String name) => (params[name] ?? '').isNotEmpty;
+    return 'host=${uri.host} sig=${has('sig')} n=${has('n')} pot=${has('pot')}';
   }
 
   /// Routes a range-limited googlevideo URL through the loopback proxy.

@@ -1,5 +1,8 @@
 package com.example.nixietube
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.webkit.CookieManager
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -17,6 +20,9 @@ import io.flutter.plugin.common.MethodChannel
  */
 class MainActivity : AudioServiceActivity() {
     private var flutterEngine: FlutterEngine? = null
+
+    /** Request code for the Android 13+ notification permission. */
+    private val notificationsRequest = 1001
 
     /**
      * Cookie reader for the in-app sign-in page.
@@ -44,6 +50,54 @@ class MainActivity : AudioServiceActivity() {
                     result.success(CookieManager.getInstance().getCookie(url))
                 }
                 else -> result.notImplemented()
+            }
+        }
+        // Notification permission: Android 13+ suppresses the playback
+        // notification, foreground-service one included, until the user
+        // grants it. Dart asks once at startup and reposts the media
+        // state when the answer is yes.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "nixietube/permissions",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "notificationsGranted" -> result.success(hasNotificationPermission())
+                "requestNotifications" -> {
+                    if (hasNotificationPermission() || Build.VERSION.SDK_INT < 33) {
+                        result.success(true)
+                    } else {
+                        requestPermissions(
+                            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                            notificationsRequest,
+                        )
+                        result.success(false)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** Whether notifications may be posted (always true below Android 13). */
+    private fun hasNotificationPermission(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == notificationsRequest) {
+            // Tell Dart whether it can draw the playback notification now.
+            try {
+                MethodChannel(
+                    flutterEngine!!.dartExecutor.binaryMessenger,
+                    "nixietube/permissions",
+                ).invokeMethod("notificationsResult", hasNotificationPermission())
+            } catch (_: Exception) {
             }
         }
     }

@@ -47,6 +47,9 @@ class HomeScreen extends StatelessWidget {
       (s) => s.historyTracks,
     );
     final discover = context.select<AppState, List<Track>>((s) => s.discover);
+    final discoverLoading = context.select<AppState, bool>(
+      (s) => s.discoverLoading,
+    );
     final liked = context.select<AppState, List<Track>>((s) => s.liked);
     final pins = context.select<AppState, List<ShelfItem>>(
       (s) => s.pinnedPicks,
@@ -54,11 +57,20 @@ class HomeScreen extends StatelessWidget {
     final accountAvatar = context.select<AppState, String?>(
       (s) => s.accountAvatar,
     );
-    final libraryLoading = context.select<AppState, bool>(
-      (s) => s.libraryLoading,
+    // The grid's own readiness: liked songs and recent activity, not the
+    // whole library (playlists and artists take longer).
+    final quickPicksLoading = context.select<AppState, bool>(
+      (s) => s.quickPicksLoading,
     );
     final state = context.read<AppState>();
-    final loading = home.loading && home.shelves.isEmpty;
+    // Phones stack the sections a little tighter than the desktop does.
+    final sectionGap = homeSectionSpacingOf(context);
+    // Each feed owns its own sections and its own skeleton: the
+    // personalized rows paint as soon as their feed answers, Explore's
+    // rails and the Charts preview follow as theirs do.
+    final shelvesPending = home.shelvesLoading;
+    final explorePending = home.exploreLoading;
+    final chartsPending = home.chartsLoading;
     if (home.error != null && home.shelves.isEmpty) {
       return Center(
         child: ErrorBox(message: home.error!, onRetry: () => state.loadHome()),
@@ -78,30 +90,30 @@ class HomeScreen extends StatelessWidget {
     // again, Forgotten favorites), Explore the stable editorial rails
     // (New releases, Trending) and the Charts feed the worldwide chart.
     // Placeholders while loading keep the layout from popping in.
-    final listenAgain = loading
+    final listenAgain = shelvesPending
         ? _placeholderSongShelf()
         : firstShelfWithTitle(home.shelves, const ['listen again']);
-    final forgotten = loading
+    final forgotten = shelvesPending
         ? _placeholderBrowseShelf()
         : firstShelfWithTitle(home.shelves, const ['forgotten']);
-    final newReleases = loading
+    final newReleases = explorePending
         ? _placeholderBrowseShelf()
         : firstShelfWithTitle(home.explore, const ['new album', 'new release']);
     // The country row's feed shelf is region-derived, so its header names
     // the country the Charts feed reports; before that lands (or when it
     // is unknown) the shelf keeps its own name.
-    final trending = loading
+    final trending = explorePending
         ? _placeholderSongShelf()
         : firstShelfWithTitle(home.explore, const ['trend']);
     final trendingTitle = home.country == null
         ? 'Trending'
         : 'Trending in ${home.country}';
-    final globalTrending = loading
+    final globalTrending = chartsPending
         ? _placeholderSongShelf()
         : home.globalTrending.isEmpty
         ? null
         : Shelf('', [for (final t in home.globalTrending) ShelfItem.song(t)]);
-    final recaps = loading
+    final recaps = shelvesPending
         ? const <Shelf>[]
         : [
             for (final s in home.shelves)
@@ -113,7 +125,7 @@ class HomeScreen extends StatelessWidget {
     // "Albums made for you" (via [AppState.mixes]), so a leftover shelf
     // that contains mixes (e.g. a mood playlist shelf) would otherwise
     // show the same cards twice.
-    final leftovers = loading
+    final leftovers = shelvesPending
         ? const <Shelf>[]
         : [
                 for (final s in home.shelves)
@@ -132,16 +144,16 @@ class HomeScreen extends StatelessWidget {
               )
               .where((s) => s.items.isNotEmpty)
               .toList();
-    final rankedShelves = loading
+    final rankedShelves = shelvesPending
         ? const <Shelf>[]
         : state.rankedHomeShelves(leftovers);
     // The quick-picks grid keeps its skeleton until ITS data (account +
-    // library activity) is loaded — not just until the home shelves
-    // land — so it never shimmers, disappears, then pops in.
+    // library activity) is loaded — not until the home shelves land — so
+    // it paints as soon as the liked songs and activity arrive.
     // Only signed-in users get it.
-    final gridLoading = loading || (account != null && libraryLoading);
-    final gridSongs = gridLoading ? _skeletonPicks() : songs;
-    final showGrid = gridLoading ? account != null : showPersonalPicks;
+    final gridLoading =
+        account != null && (quickPicksLoading || home.shelvesLoading);
+    final showGrid = gridLoading || showPersonalPicks;
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -158,7 +170,7 @@ class HomeScreen extends StatelessWidget {
       child: Skeletonizer(
         // While the feed loads, the whole layout renders as skeletons and
         // reveals in place (the shimmer comes from the theme config).
-        enabled: loading,
+        enabled: shelvesPending,
         enableSwitchAnimation: true,
         child: SilkyListView(
           scrollSpeed: 1.5,
@@ -168,14 +180,14 @@ class HomeScreen extends StatelessWidget {
           // The top inset keeps the greeting below the transparent
           // status bar while the gradient above runs behind it.
           padding: EdgeInsets.fromLTRB(
-            screenPadding,
+            screenGutterOf(context),
             screenPadding + MediaQuery.viewPaddingOf(context).top,
-            screenPadding,
+            screenGutterOf(context),
             screenPadding + playerBarClearance,
           ),
           children: [
             _greeting(context, account: account, accountAvatar: accountAvatar),
-            const SizedBox(height: homeSectionSpacing),
+            SizedBox(height: sectionGap),
             _moods(context, state),
             // Personal block next, no matter what: the quick-picks
             // grid (and the liked list on wide windows) or the
@@ -192,53 +204,82 @@ class HomeScreen extends StatelessWidget {
                 child: _personal(
                   context,
                   state,
-                  gridSongs,
+                  songs,
+                  loading: gridLoading,
                   pins: gridLoading ? const <ShelfItem>[] : pins,
                 ),
               ),
-            ] else if (!loading && account != null && activity.isNotEmpty) ...[
+            ] else if (account != null && activity.isNotEmpty) ...[
               _jumpBackIn(context, state),
-              const SizedBox(height: homeSectionSpacing),
+              SizedBox(height: sectionGap),
             ],
             // Personal sections first, then the editorial and trending
             // rows. Browsable shelves render as horizontal cover rails;
             // song-only shelves render as columns of rows that scroll
             // sideways, save for the ones asked to read as covers (see
             // [_ShelfSection.songRail]).
-            if (!loading && discover.isNotEmpty) ...[
+            if (discover.isNotEmpty) ...[
               _discover(context, state),
-              const SizedBox(height: homeSectionSpacing),
+              SizedBox(height: sectionGap),
+            ] else if (account != null && discoverLoading) ...[
+              // The rail is built from the library that just landed, so
+              // its slot is held open rather than inserting a row above
+              // the sections once the radios come back.
+              Skeletonizer(
+                enabled: true,
+                enableSwitchAnimation: true,
+                child: _discover(context, state, items: _placeholderDiscover()),
+              ),
+              SizedBox(height: sectionGap),
             ],
             if (listenAgain != null) ...[
-              _ShelfSection(shelf: listenAgain, title: 'Listen Again'),
-              const SizedBox(height: homeSectionSpacing),
+              _pending(
+                shelvesPending,
+                _ShelfSection(shelf: listenAgain, title: 'Listen Again'),
+              ),
+              SizedBox(height: sectionGap),
             ],
             if (forgotten != null) ...[
-              _ShelfSection(
-                shelf: forgotten,
-                title: 'Forgotten favorites',
-                songRail: true,
+              _pending(
+                shelvesPending,
+                _ShelfSection(
+                  shelf: forgotten,
+                  title: 'Forgotten favorites',
+                  songRail: true,
+                ),
               ),
-              const SizedBox(height: homeSectionSpacing),
+              SizedBox(height: sectionGap),
             ],
             if (newReleases != null) ...[
-              _ShelfSection(shelf: newReleases, title: 'New releases'),
-              const SizedBox(height: homeSectionSpacing),
+              _pending(
+                explorePending,
+                _ShelfSection(shelf: newReleases, title: 'New releases'),
+              ),
+              SizedBox(height: sectionGap),
             ],
-            _albumsMadeForYou(context, state, loading, recaps),
+            _albumsMadeForYou(context, state, shelvesPending, recaps),
             for (final shelf in rankedShelves) ...[
               _ShelfSection(shelf: shelf),
-              const SizedBox(height: homeSectionSpacing),
+              SizedBox(height: sectionGap),
             ],
             // Trending closes the screen, country first: the region row
             // Explore serves, then the worldwide chart.
             if (trending != null) ...[
-              _ShelfSection(shelf: trending, title: trendingTitle),
-              const SizedBox(height: homeSectionSpacing),
+              _pending(
+                explorePending,
+                _ShelfSection(shelf: trending, title: trendingTitle),
+              ),
+              SizedBox(height: sectionGap),
             ],
             if (globalTrending != null) ...[
-              _ShelfSection(shelf: globalTrending, title: 'Trending globally'),
-              const SizedBox(height: homeSectionSpacing),
+              _pending(
+                chartsPending,
+                _ShelfSection(
+                  shelf: globalTrending,
+                  title: 'Trending globally',
+                ),
+              ),
+              SizedBox(height: sectionGap),
             ],
           ],
         ),
@@ -246,11 +287,20 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  /// Keeps a section shimmering on its own once the personalized feed has
+  /// painted: the outer scope is only enabled while those shelves are on
+  /// their way, so a feed that is still in flight brings its own.
+  Widget _pending(bool pending, Widget child) => pending
+      ? Skeletonizer(enabled: true, enableSwitchAnimation: true, child: child)
+      : child;
+
   /// Placeholder quick-picks while the personal data loads, so the grid
-  /// is skeletonized instead of popping in later.
-  List<ShelfItem> _skeletonPicks() {
+  /// is skeletonized instead of popping in later. The count is the grid's
+  /// own cell count — three rows of [cols] tiles — so every tile it lays
+  /// out is a bone: nine on a phone, up to eighteen on a wide window.
+  List<ShelfItem> _skeletonPicks(int cols) {
     return [
-      for (var i = 0; i < 8; i++)
+      for (var i = 0; i < cols * 3; i++)
         ShelfItem.song(
           Track(
             videoId: 'skeleton-song-$i',
@@ -294,6 +344,11 @@ class HomeScreen extends StatelessWidget {
     required String? accountAvatar,
   }) {
     final scheme = Theme.of(context).colorScheme;
+    // A phone gets a compact header: a smaller avatar, a title in
+    // titleLarge instead of headlineMedium, and the name on one tight
+    // line, so the first row of content is visible without scrolling.
+    final compact = isCompactLayout(context);
+    final avatarSize = compact ? 32.0 : 44.0;
     final hour = DateTime.now().hour;
     final greeting = hour >= 5 && hour <= 11
         ? 'Good morning'
@@ -309,14 +364,14 @@ class HomeScreen extends StatelessWidget {
               if (accountAvatar != null && accountAvatar.isNotEmpty)
                 ArtworkImage(
                   accountAvatar,
-                  size: 44,
+                  size: avatarSize,
                   circular: true,
-                  iconSize: 24,
+                  iconSize: compact ? 18 : 24,
                 )
               else
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: avatarSize,
+                  height: avatarSize,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: scheme.surfaceContainerHigh,
@@ -324,25 +379,39 @@ class HomeScreen extends StatelessWidget {
                   alignment: Alignment.center,
                   child: Text(
                     account.substring(0, 1).toUpperCase(),
-                    style: Theme.of(context).textTheme.titleMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                    style:
+                        (compact
+                                ? Theme.of(context).textTheme.bodyMedium
+                                : Theme.of(context).textTheme.titleMedium)
+                            ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
-              const SizedBox(width: 12),
+              SizedBox(width: compact ? 10 : 12),
             ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     greeting,
-                    style: Theme.of(context).textTheme.headlineMedium,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: compact
+                        ? Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w600)
+                        : Theme.of(context).textTheme.headlineMedium,
                   ),
                   if (account != null)
                     Text(
                       account,
-                      style: Theme.of(context).textTheme.bodyLarge
-                          ?.copyWith(color: scheme.onSurfaceVariant),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          (compact
+                                  ? Theme.of(context).textTheme.bodySmall
+                                  : Theme.of(context).textTheme.bodyLarge)
+                              ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                 ],
               ),
@@ -433,7 +502,7 @@ class HomeScreen extends StatelessWidget {
             );
           },
         ),
-        const SizedBox(height: homeSectionSpacing),
+        SizedBox(height: homeSectionSpacingOf(context)),
       ],
     );
   }
@@ -442,12 +511,22 @@ class HomeScreen extends StatelessWidget {
     BuildContext context,
     AppState state,
     List<ShelfItem> songs, {
+    bool loading = false,
     List<ShelfItem> pins = const [],
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
-        final grid = _QuickPicksGrid(songs: songs, pins: pins);
+        // The grid's own width, known before it lays out: the skeleton
+        // fills exactly the cells it will use, and the liked list is cut
+        // to the same height.
+        final gridWidth = wide
+            ? (constraints.maxWidth - 16) * 155 / 255
+            : constraints.maxWidth;
+        final picks = loading
+            ? _skeletonPicks(quickPickCols(gridWidth))
+            : songs;
+        final grid = _QuickPicksGrid(songs: picks, pins: pins);
         if (!wide) {
           // Phones keep just the grid: liked songs live in the
           // library's "Liked songs" playlist there.
@@ -464,7 +543,6 @@ class HomeScreen extends StatelessWidget {
         }
         // Wide: cut the liked list to the grid's exact height so its rows
         // scroll/clip where the quick-pick tiles end.
-        final gridW = (constraints.maxWidth - 16) * 155 / 255;
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -473,7 +551,11 @@ class HomeScreen extends StatelessWidget {
             Expanded(
               flex: 100,
               child: SizedBox(
-                height: quickPicksHeight(gridW, songs.length + pins.length),
+                height: quickPicksHeight(
+                  Theme.of(context),
+                  gridWidth,
+                  picks.length + pins.length,
+                ),
                 child: _LikedSideList(liked: state.liked),
               ),
             ),
@@ -502,32 +584,57 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _discover(BuildContext context, AppState state) {
+  /// Discover placeholders: a rail's worth of cards while the rail is
+  /// still being built from the library that just landed.
+  List<Track> _placeholderDiscover() => [
+    for (var i = 0; i < 12; i++)
+      Track(
+        videoId: 'skeleton-d$i',
+        title: 'Song title',
+        artists: const [],
+        thumbnails: const [],
+      ),
+  ];
+
+  /// The Discover rail; [items] renders its placeholders while loading.
+  Widget _discover(BuildContext context, AppState state, {List<Track>? items}) {
+    final tracks = items ?? state.discover;
+    final loading = items != null;
     final playingId = state.playerState.current?.videoId;
     return CardRail(
       title: 'Discover',
-      trailing: SizedBox(
-        height: 40,
-        child: M3ETextButton(
-          onPressed: () =>
-              state.playSongs(state.discover, 0, sourceName: 'Discover'),
-          child: const Text('Play all'),
+      trailing: (height) => M3ETextButton(
+        // As tall as the heading text, so this rail's header is the same
+        // height as the ones without a button.
+        decoration: M3EButtonDecoration(
+          minimumSize: Size(0, height),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
+        onPressed: loading
+            ? () {}
+            : () => state.playSongs(tracks, 0, sourceName: 'Discover'),
+        child: const Text('Play all'),
       ),
-      itemCount: state.discover.length,
+      itemCount: tracks.length,
       itemBuilder: (context, i, width) {
-        final t = state.discover[i];
+        final t = tracks[i];
         return TrackRailCard(
           track: t,
           width: width,
-          playing: t.videoId == playingId,
-          onTap: () =>
-              state.playSongs(state.discover, i, sourceName: 'Discover'),
+          playing: !loading && t.videoId == playingId,
+          onTap: loading
+              ? () {}
+              : () => state.playSongs(tracks, i, sourceName: 'Discover'),
         );
       },
     );
   }
 }
+
+/// Columns the quick-picks grid lays out at [gridWidth]. Shared by the
+/// grid metrics and the loading skeleton, which fills every cell.
+int quickPickCols(double gridWidth) => (gridWidth / 170).floor().clamp(3, 6);
 
 /// Grid geometry shared by [_QuickPicksGrid] and the liked-list height
 /// computation, so both agree on the rendered grid height.
@@ -538,18 +645,56 @@ class HomeScreen extends StatelessWidget {
   double gridWidth,
   int pickCount,
 ) {
-  final cols = (gridWidth / 170).floor().clamp(3, 6);
+  final cols = quickPickCols(gridWidth);
   final shown = pickCount.clamp(0, cols * 3);
   final rows = shown == 0 ? 0 : (shown / cols).ceil();
   final tile = gridWidth / cols;
   return (cols: cols, shown: shown, rows: rows, tile: tile);
 }
 
-/// Full rendered height of [_QuickPicksGrid] for [gridWidth]: 48px header
-/// row (IconButtons) + 8px spacing + the (3-row) tile grid.
-double quickPicksHeight(double gridWidth, int pickCount) {
+/// Full rendered height of [_QuickPicksGrid] for [gridWidth]: the
+/// heading row + its [sectionHeaderGap] + the tile grid with the room
+/// under it, so the liked column can be cut to the same height.
+double quickPicksHeight(ThemeData theme, double gridWidth, int pickCount) {
   final m = quickPickMetrics(gridWidth, pickCount);
-  return 48 + 8 + m.rows * m.tile;
+  return sectionHeadingHeight(theme) +
+      sectionHeaderGap +
+      m.rows * m.tile +
+      sectionHeaderGap;
+}
+
+/// Tiles in one phone quick-picks page: three rows of three.
+const int phonePicksPerPage = 9;
+
+/// Space between quick-pick tiles, and between the rows of a page.
+const double quickPickGap = 4.0;
+
+/// Breathing room under a quick-picks block, above the dot row on a
+/// phone and the section gap on a desk. The space above the tiles comes
+/// from the heading's own [sectionHeaderGap].
+const EdgeInsets quickPickGridPadding = EdgeInsets.only(
+  bottom: sectionHeaderGap,
+);
+
+/// Pages the phone quick-picks grid needs for [pickCount] picks.
+int quickPickPages(int pickCount) => pickCount <= 0
+    ? 0
+    : (pickCount + phonePicksPerPage - 1) ~/ phonePicksPerPage;
+
+/// Rows in one phone quick-picks page: three for a full page, fewer when
+/// the pool cannot fill it.
+int quickPickPageRows(int pickCount) {
+  final shown = pickCount < phonePicksPerPage ? pickCount : phonePicksPerPage;
+  return shown <= 0 ? 0 : (shown + 2) ~/ 3;
+}
+
+/// Height of one phone quick-picks page at [gridWidth]: the tile rows
+/// plus the gap above the dot row.
+double quickPickPageHeight(double gridWidth, int pickCount) {
+  final rows = quickPickPageRows(pickCount);
+  if (rows == 0) return 0;
+  final tile = (gridWidth - quickPickGap * 2) / 3;
+  return sectionHeaderGap + rows * tile + (rows - 1) * quickPickGap;
 }
 
 /// Quick-picks source pool in three tiers: replayed songs first
@@ -689,10 +834,13 @@ List<ShelfItem> orderQuickPicks({
   return out;
 }
 
-/// Responsive quick-picks grid: up to 3 rows of song tiles (variable
-/// columns), art-diverse so the same cover never shows twice, with
-/// user pins first. Play/shuffle follow the displayed order.
-class _QuickPicksGrid extends StatelessWidget {
+/// Quick picks: a responsive grid on wide windows, and on phones the
+/// same three rows of tiles as one page of a swipeable set, with a dot
+/// per page under them.
+///
+/// Art-diverse, so the same cover never shows twice, with user pins
+/// first. Play/shuffle follow the displayed order.
+class _QuickPicksGrid extends StatefulWidget {
   const _QuickPicksGrid({required this.songs, this.pins = const []});
 
   /// Recent songs, most recent first (duplicates already removed).
@@ -701,6 +849,31 @@ class _QuickPicksGrid extends StatelessWidget {
   /// User pins, rendered ahead of the songs. Empty while the
   /// grid shows skeletons (pins never mix with placeholders).
   final List<ShelfItem> pins;
+
+  @override
+  State<_QuickPicksGrid> createState() => _QuickPicksGridState();
+}
+
+class _QuickPicksGridState extends State<_QuickPicksGrid> {
+  /// Pages the phone grid sideways; unused (and untouched) on wide
+  /// windows, where the grid renders in one block.
+  final PageController _controller = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _goToPage(int page) {
+    if (!_controller.hasClients) return;
+    _controller.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -716,21 +889,22 @@ class _QuickPicksGrid extends StatelessWidget {
         final compact = isCompactLayout(context);
         final measured = quickPickMetrics(
           constraints.maxWidth,
-          songs.length + pins.length,
+          widget.songs.length + widget.pins.length,
         );
-        final mobilePickCount = (songs.length + pins.length).clamp(0, 9);
-        final m = compact
-            ? (
-                cols: 3,
-                shown: mobilePickCount,
-                rows: mobilePickCount == 0 ? 0 : (mobilePickCount / 3).ceil(),
-                tile: constraints.maxWidth / 3,
-              )
-            : measured;
+        // Phones page through every pick the pool offers; wide windows
+        // keep the single three-row block.
+        final slots = compact
+            ? widget.songs.length + widget.pins.length
+            : measured.shown;
         // Pins first, then the ranked pool in order (per-launch
         // variety already shuffled into it by rankPickSongs).
-        final picks = orderQuickPicks(pins: pins, songs: songs, slots: m.shown);
-        // Playback follows the displayed order (pins included).
+        final picks = orderQuickPicks(
+          pins: widget.pins,
+          songs: widget.songs,
+          slots: slots,
+        );
+        // Playback follows the displayed order (pins included), and on a
+        // phone it spans every page rather than the one on screen.
         final playList = [
           for (final item in picks)
             if (item is SongItem) item.track,
@@ -753,33 +927,28 @@ class _QuickPicksGrid extends StatelessWidget {
           }
         }
 
-        BorderRadius mobileTileRadius(int index) {
+        // [index] and [count] describe the block the tile belongs to: the
+        // whole grid on a wide window, one page on a phone.
+        BorderRadius tileRadius(int index, int count) {
           if (!compact) {
             return const BorderRadius.all(Radius.circular(cardRadius));
           }
           const radius = Radius.circular(ExpressiveCorners.largeIncreased);
           const innerRadius = Radius.circular(4);
           final row = index ~/ 3;
-          final col = index % 3;
-          final lastRow = m.rows - 1;
-          final topLeft = row == 0 && col == 0;
-          final topRight = row == 0 && col == 2;
-          final bottomLeft =
-              row == lastRow && col == 0 && index < mobilePickCount;
-          final bottomRight =
-              row == lastRow &&
-              col == (mobilePickCount - 1) % 3 &&
-              index == mobilePickCount - 1;
+          final lastRow = (count / 3).ceil() - 1;
           return BorderRadius.only(
-            topLeft: topLeft ? radius : innerRadius,
-            topRight: topRight ? radius : innerRadius,
-            bottomLeft: bottomLeft ? radius : innerRadius,
-            bottomRight: bottomRight ? radius : innerRadius,
+            topLeft: row == 0 && index % 3 == 0 ? radius : innerRadius,
+            topRight: row == 0 && index % 3 == 2 ? radius : innerRadius,
+            bottomLeft: row == lastRow && index % 3 == 0 ? radius : innerRadius,
+            bottomRight: row == lastRow && index == count - 1
+                ? radius
+                : innerRadius,
           );
         }
 
-        Widget tile(ShelfItem item, int index) {
-          final radius = mobileTileRadius(index);
+        Widget tile(ShelfItem item, int index, int count) {
+          final radius = tileRadius(index, count);
           final tilePadding = compact
               ? EdgeInsets.zero
               : const EdgeInsets.all(4);
@@ -813,8 +982,8 @@ class _QuickPicksGrid extends StatelessWidget {
           );
         }
 
-        Widget pickTile(ShelfItem item, int index) {
-          Widget t = tile(item, index);
+        Widget pickTile(ShelfItem item, int index, int count) {
+          Widget t = tile(item, index, count);
           if (state.isPinned(item)) {
             final scheme = Theme.of(context).colorScheme;
             t = Stack(
@@ -850,78 +1019,134 @@ class _QuickPicksGrid extends StatelessWidget {
           );
         }
 
+        final heading = _PersonalHeading(
+          title: 'Quick picks',
+          trailing: (height) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.play_arrow_rounded),
+                tooltip: 'Play quick picks',
+                // As tall as the heading text, not the 48px default.
+                padding: EdgeInsets.zero,
+                iconSize: height * 0.8,
+                splashRadius: height / 2,
+                // No 48px tap-target padding: the button is exactly
+                // as tall as the heading text.
+                style: const ButtonStyle(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints: BoxConstraints.tightFor(
+                  height: height,
+                  width: height,
+                ),
+                onPressed: playList.isEmpty
+                    ? null
+                    : () => state.playSongs(
+                        playList,
+                        0,
+                        sourceName: 'Quick picks',
+                      ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.shuffle_rounded),
+                tooltip: 'Shuffle quick picks',
+                padding: EdgeInsets.zero,
+                iconSize: height * 0.8,
+                splashRadius: height / 2,
+                // No 48px tap-target padding: the button is exactly
+                // as tall as the heading text.
+                style: const ButtonStyle(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints: BoxConstraints.tightFor(
+                  height: height,
+                  width: height,
+                ),
+                onPressed: playList.isEmpty
+                    ? null
+                    : () => state.playShuffled(
+                        playList,
+                        sourceName: 'Quick picks',
+                      ),
+              ),
+            ],
+          ),
+        );
+
+        if (!compact) {
+          // Wide: one grid, sized by the row count the metrics give (the
+          // liked column beside it is cut to the same height).
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              heading,
+              GridView.builder(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: measured.cols,
+                  childAspectRatio: 1,
+                  crossAxisSpacing: 0,
+                  mainAxisSpacing: 0,
+                ),
+                physics: const NeverScrollableScrollPhysics(),
+                shrinkWrap: true,
+                itemCount: picks.length,
+                itemBuilder: (context, i) =>
+                    pickTile(picks[i], i, picks.length),
+                padding: quickPickGridPadding,
+              ),
+            ],
+          );
+        }
+
+        // Phone: pages of nine tiles, each page its own 3x3 block so the
+        // expressive corners wrap the page instead of the whole grid.
+        final pages = quickPickPages(picks.length);
+        final page = pages == 0 ? 0 : _page.clamp(0, pages - 1);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _PersonalHeading(
-              title: 'Quick picks',
-              trailing: (height) => Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    tooltip: 'Play quick picks',
-                    // As tall as the heading text, not the 48px default.
-                    padding: EdgeInsets.zero,
-                    iconSize: height * 0.8,
-                    splashRadius: height / 2,
-                    // No 48px tap-target padding: the button is exactly
-                    // as tall as the heading text.
-                    style: const ButtonStyle(
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    constraints: BoxConstraints.tightFor(
-                      height: height,
-                      width: height,
-                    ),
-                    onPressed: playList.isEmpty
-                        ? null
-                        : () => state.playSongs(
-                            playList,
-                            0,
-                            sourceName: 'Quick picks',
-                          ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.shuffle_rounded),
-                    tooltip: 'Shuffle quick picks',
-                    padding: EdgeInsets.zero,
-                    iconSize: height * 0.8,
-                    splashRadius: height / 2,
-                    // No 48px tap-target padding: the button is exactly
-                    // as tall as the heading text.
-                    style: const ButtonStyle(
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    constraints: BoxConstraints.tightFor(
-                      height: height,
-                      width: height,
-                    ),
-                    onPressed: playList.isEmpty
-                        ? null
-                        : () => state.playShuffled(
-                            playList,
-                            sourceName: 'Quick picks',
-                          ),
-                  ),
-                ],
+            heading,
+            SizedBox(
+              height: quickPickPageHeight(constraints.maxWidth, picks.length),
+              child: PageView.builder(
+                controller: _controller,
+                itemCount: pages,
+                onPageChanged: (i) => setState(() => _page = i),
+                itemBuilder: (context, pageIndex) {
+                  final start = pageIndex * phonePicksPerPage;
+                  final end = (start + phonePicksPerPage).clamp(
+                    0,
+                    picks.length,
+                  );
+                  final pagePicks = picks.sublist(start, end);
+                  return GridView.builder(
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          childAspectRatio: 1,
+                          crossAxisSpacing: quickPickGap,
+                          mainAxisSpacing: quickPickGap,
+                        ),
+                    physics: const NeverScrollableScrollPhysics(),
+                    // Only the room under the tiles sits in the grid: the
+                    // gap above them is the heading's, like every other
+                    // section heading.
+                    padding: quickPickGridPadding,
+                    itemCount: pagePicks.length,
+                    itemBuilder: (context, i) =>
+                        pickTile(pagePicks[i], i, pagePicks.length),
+                  );
+                },
               ),
             ),
-            // The grid sizes itself to its content so the last row is
-            // never clipped by a miscalculated fixed height.
-            GridView.builder(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: m.cols,
-                childAspectRatio: 1,
-                crossAxisSpacing: compact ? 4 : 0,
-                mainAxisSpacing: compact ? 4 : 0,
-              ),
-              physics: const NeverScrollableScrollPhysics(),
-              shrinkWrap: true,
-              itemCount: picks.length,
-              itemBuilder: (context, i) => pickTile(picks[i], i),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
+            // A single page keeps the dot row's space anyway, so the
+            // loading skeleton (one page of bones) and the loaded grid are
+            // the same height and nothing below them jumps.
+            if (pages > 1)
+              _PageDots(count: pages, index: page, onSelect: _goToPage)
+            else
+              const SizedBox(height: _PageDots.height),
           ],
         );
       },
@@ -929,15 +1154,69 @@ class _QuickPicksGrid extends StatelessWidget {
   }
 }
 
-/// The height of a personal-block heading: the title's line height.
-///
-/// The row hugs the text instead of the tallest control in it, and the
-/// trailing controls are built for exactly this height.
-double _headingHeight(ThemeData theme) {
-  final style = theme.textTheme.titleLarge;
-  final size = style?.fontSize ?? 22;
-  return size * (style?.height ?? 1.3);
+/// Page indicator for the phone quick-picks grid: one dot per page, the
+/// page on screen drawn as a wider pill. Tapping a dot turns to it.
+class _PageDots extends StatelessWidget {
+  const _PageDots({
+    required this.count,
+    required this.index,
+    required this.onSelect,
+  });
+
+  /// Height the row takes: a 6dp dot in a 24dp tap target, under a 6dp
+  /// gap. A single-page grid reserves the same space.
+  static const double height = 30;
+
+  final int count;
+  final int index;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var i = 0; i < count; i++)
+            Semantics(
+              button: true,
+              selected: i == index,
+              label: 'Page ${i + 1} of $count',
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onSelect(i),
+                // A fixed slot per dot, so the row keeps its width and
+                // the other dots do not shift as the pill moves.
+                child: SizedBox(
+                  width: 22,
+                  height: 24,
+                  child: Center(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
+                      width: i == index ? 18 : 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: i == index
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant.withValues(alpha: 0.38),
+                        borderRadius: const BorderRadius.all(
+                          Radius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
+
 
 /// The heading of a personal-block column.
 ///
@@ -963,8 +1242,10 @@ class _PersonalHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final height = _headingHeight(theme);
-    return Row(
+    final height = sectionHeadingHeight(theme);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: sectionHeaderGap),
+      child: Row(
       children: [
         Expanded(
           child: SizedBox(
@@ -1005,6 +1286,7 @@ class _PersonalHeading extends StatelessWidget {
         ),
         trailing(height),
       ],
+      ),
     );
   }
 }
@@ -1045,7 +1327,6 @@ class _LikedSideList extends StatelessWidget {
             child: const Text('Play all'),
           ),
         ),
-        const SizedBox(height: 8),
         Expanded(
           child: screenListBuilder(
             itemCount: liked.length,

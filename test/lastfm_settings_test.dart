@@ -90,6 +90,7 @@ void main() {
         child: MaterialApp(home: Scaffold(body: SettingsScreen())),
       ),
     );
+    await openSettingsCategory(tester, 'Connections');
   }
 
   setUp(() {
@@ -127,11 +128,11 @@ void main() {
   ) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Scrobbling'));
+    await reveal(tester, find.text('Connections'));
 
-    // Section header + card body present, disabled by default. The
-    // Discord card also carries a "Status:" line, so scope to this card.
-    expect(find.text('Scrobbling'), findsOneWidget);
+    // Page title and card body present, disabled by default. The
+    // Discord row also carries a "Status:" line, so scope to this card.
+    expect(find.text('Connections'), findsOneWidget);
     expect(find.text('Scrobble to Last.fm'), findsOneWidget);
     final lastfmCard = find.ancestor(
       of: find.text('Scrobble to Last.fm'),
@@ -180,7 +181,7 @@ void main() {
   ) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Scrobbling'));
+    await reveal(tester, find.text('Connections'));
 
     // Enable + fill credentials so Connect is actionable.
     final switchFinder = find.descendant(
@@ -257,7 +258,7 @@ void main() {
   ) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Scrobbling'));
+    await reveal(tester, find.text('Connections'));
 
     // Toggle on, leave both credential fields empty.
     final switchFinder = find.descendant(
@@ -284,7 +285,7 @@ void main() {
   testWidgets('cog opens the custom-credentials modal', (tester) async {
     await pumpSettings(tester);
     await tester.pump();
-    await reveal(tester, find.text('Scrobbling'));
+    await reveal(tester, find.text('Connections'));
 
     // Fields live behind the Last.fm card's cog, not inline.
     expect(find.widgetWithText(TextField, 'Last.fm API key'), findsNothing);

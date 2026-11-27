@@ -365,20 +365,46 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
+      // The first screen is the category index: one row per category.
       expect(find.text('Settings'), findsOneWidget);
       expect(find.byTooltip('Back'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      // A phone has no session bus: the MPRIS row is gone and the
-      // section drops its "Desktop" title.
-      expect(find.text('Desktop integrations'), findsNothing);
-      expect(find.text('Integrations'), findsOneWidget);
+      expect(find.text('Account'), findsOneWidget);
+      expect(find.text('Connections'), findsOneWidget);
+      // Controls live behind their category, not on the index.
+      expect(find.text('Scrobble to Last.fm'), findsNothing);
+
+      // One page for every connection. A phone has no session bus, so
+      // the MPRIS row is gone.
+      await openSettingsCategory(tester, 'Connections');
       expect(find.text('MPRIS (media keys, playerctl)'), findsNothing);
-      // The sectioned structure is shared with desktop, and each
-      // scrobbler is a single named row — no separate service heading.
+      expect(find.text('Discord Rich Presence'), findsOneWidget);
+
+      // The back gesture leaves the page for the index, not Settings.
+      await tester.binding.handlePopRoute();
+      // The back press resolves through the navigator (the settings page
+      // refuses the pop and closes its category instead), so it lands a
+      // frame later; then the page dissolves over its cross-fade.
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+      expect(find.text('Settings'), findsOneWidget);
+      expect(find.text('Account'), findsOneWidget);
+
+      // The scrobblers sit on that same page, each a single named row
+      // with no separate service heading.
+      await openSettingsCategory(tester, 'Connections');
       expect(find.text('Scrobble to Last.fm'), findsOneWidget);
       expect(find.text('Scrobble to ListenBrainz'), findsOneWidget);
       expect(find.text('Last.fm'), findsNothing);
       expect(find.text('ListenBrainz'), findsNothing);
+
+      // The page's own back button returns to the index too.
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pump();
+      expect(find.text('Account'), findsOneWidget);
+
       // Settings belongs to the library tab it was opened from.
       final nav = tester.widget<NavigationBar>(find.byType(NavigationBar));
       expect(nav.selectedIndex, 2);
@@ -451,7 +477,9 @@ void main() {
 
     expect(find.text('Settings'), findsOneWidget);
     expect(find.byTooltip('Back'), findsNothing);
-    expect(find.text('Desktop integrations'), findsOneWidget);
+    // Desktop keeps the MPRIS row, at the top of the connections page.
+    await openSettingsCategory(tester, 'Connections');
+    expect(find.text('MPRIS (media keys, playerctl)'), findsOneWidget);
   });
 
   testWidgets('phone artist page keeps its back button below the status bar', (

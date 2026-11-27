@@ -12,6 +12,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/player/stream_proxy.dart';
 import '../../sys/discord.dart';
 import '../../sys/lastfm.dart';
 import '../../sys/listenbrainz.dart';
@@ -22,6 +23,7 @@ import '../../sys/updater.dart';
 import '../../sys/version.dart';
 import '../app_state.dart';
 import '../theme.dart';
+import '../widgets/page_swap.dart';
 import '../widgets/screen_list.dart';
 import '../widgets/browser_login_dialog.dart';
 import '../widgets/lastfm_auth_actions.dart';
@@ -29,9 +31,6 @@ import '../widgets/lastfm_auth_actions.dart';
 /// Whether the settings list has the MPRIS row at all: MPRIS is a Linux
 /// session-bus interface, so on any other host the integrations section
 /// is Discord only and says so in its heading.
-bool _showMprisRow(BuildContext context) =>
-    context.watch<MprisService>().supported;
-
 /// Account, playback, accessibility and app settings.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -40,283 +39,186 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
-  final _accountKey = GlobalKey();
-  final _playbackKey = GlobalKey();
-  final _appearanceKey = GlobalKey();
-  final _accessibilityKey = GlobalKey();
-  final _integrationsKey = GlobalKey();
-  final _scrobblingKey = GlobalKey();
-  final _updatesKey = GlobalKey();
-  final _debugKey = GlobalKey();
-  final _setupKey = GlobalKey();
+/// One entry of the settings index: what the category is called, what it
+/// holds, and the icon its row shows.
+enum _SettingsCategory {
+  account(
+    'Account',
+    'Sign in to YouTube Music and manage your session.',
+    Icons.person_rounded,
+  ),
+  playback(
+    'Playback',
+    'Listening history reporting and offline audio.',
+    Icons.play_circle_rounded,
+  ),
+  appearance(
+    'Appearance',
+    'Color source, seed and manual overrides.',
+    Icons.palette_rounded,
+  ),
+  accessibility(
+    'Accessibility',
+    'Contrast, motion and link styling.',
+    Icons.accessibility_new_rounded,
+  ),
+  connections(
+    'Connections',
+    'Media keys, Discord presence and play scrobbling.',
+    Icons.hub_rounded,
+  ),
+  updates(
+    'App updates',
+    'Check for and install new releases.',
+    Icons.system_update_rounded,
+  ),
+  debug('Debug', 'Cache and diagnostic actions.', Icons.bug_report_rounded),
+  setup('Setup', 'Run the first-run wizard again.', Icons.rocket_launch_rounded);
 
-  /// Guards against queueing the same post-frame scroll more than once
-  /// while the request is still set (it clears after the scroll runs).
-  bool _focusScheduled = false;
+  const _SettingsCategory(this.title, this.subtitle, this.icon);
+
+  /// The category name, used both by its index row and its page title.
+  final String title;
+
+  /// One line saying what the category holds, under the row's title.
+  final String subtitle;
+
+  final IconData icon;
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  /// The category the user opened, or null while the index is showing.
+  _SettingsCategory? _open;
+
+  /// Direction of the last index ↔ category move, so the page transition
+  /// rises into a category and sinks back to the index.
+  bool _forward = true;
+
+  void _openCategory(_SettingsCategory category) => setState(() {
+    _forward = true;
+    _open = category;
+  });
+
+  void _closeCategory() => setState(() {
+    _forward = false;
+    _open = null;
+  });
 
   @override
   Widget build(BuildContext context) {
-    // Select the toggle states so the switches rebuild when the
-    // setting flips. Reading them once via `read` would leave the
-    // Switch showing its pre-toggle value.
-    final reportPlayback = context.select<AppState, bool>(
-      (s) => s.config.reportPlayback,
-    );
-    final highContrast = context.select<AppState, bool>(
-      (s) => s.config.highContrast,
-    );
-    final reducedMotion = context.select<AppState, bool>(
-      (s) => s.config.reducedMotion,
-    );
-    final underlineLinks = context.select<AppState, bool>(
-      (s) => s.config.underlineLinks,
-    );
+    // The update banner opens Settings with App updates in mind: jump
+    // straight into that category instead of making the user find it.
     final state = context.read<AppState>();
-    // The update banner opens this screen with the App updates section
-    // in mind: scroll there once the first frame has laid the list out.
-    if (state.focusAppUpdates && !_focusScheduled) {
-      _focusScheduled = true;
+    if (state.focusAppUpdates && _open == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _focusScheduled = false;
         if (!mounted) return;
-        final target = _updatesKey.currentContext;
-        if (target != null) {
-          Scrollable.ensureVisible(
-            target,
-            alignment: 0.04,
-            duration: const Duration(milliseconds: 350),
-            curve: Curves.easeOutCubic,
-          );
-        }
-        context.read<AppState>().clearAppUpdatesFocus();
+        state.clearAppUpdatesFocus();
+        setState(() => _open = _SettingsCategory.updates);
       });
     }
-    final compact = isCompactLayout(context);
-    final sections = <Widget>[
-      if (!compact) ...[
-        Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 16),
+    final open = _open;
+    // A phone's back press asks the app to go back: while a category is
+    // open that means returning to the index, not leaving Settings.
+    // Vetoing the pop also keeps the system from previewing a pop this
+    // page would then refuse.
+    return PopScope(
+      canPop: open == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _closeCategory();
+      },
+      // The index and a category are two pages of one slot: swap them
+      // with the app's page motion instead of cutting between them.
+      child: PageSwap(
+        forward: _forward,
+        child: KeyedSubtree(
+          key: ValueKey(open),
+          child: open == null
+              ? _index(context, state)
+              : _category(context, state, open),
+        ),
+      ),
+    );
+  }
+
+  /// The first screen: one row per category, each opening its own page.
+  Widget _index(BuildContext context, AppState state) {
+    final scheme = Theme.of(context).colorScheme;
+    return _page(
+      context,
+      title: 'Settings',
+      // Settings is pushed from the rail, so the desktop header keeps the
+      // app's own back affordance on a phone.
+      onBack: state.canGoBack ? state.goBack : null,
+      children: [
+        _SettingsSegments(
+          // The list owns the tap, so the whole segment is the target —
+          // padding included — and the press animation covers it.
+          onTap: (i) => _openCategory(_SettingsCategory.values[i]),
+          children: [
+            for (final category in _SettingsCategory.values)
+              _CategoryRow(category: category),
+          ],
+        ),
+        const SizedBox(height: 24),
+        Text(
+          '${_shortVersion(appVersionLabel)} - build '
+          '${_buildNumber(appVersionLabel)}',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+        Text(
+          'Made with ♥  by TheTinkerersHaven :3',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ),
       ],
-      Container(
-        key: _accountKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'Account',
-              subtitle: 'Sign in to YouTube Music and manage your session.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsCard(child: const _AccountCard()),
-          ],
+    );
+  }
+
+  /// A category's own page: its controls, nothing else.
+  Widget _category(
+    BuildContext context,
+    AppState state,
+    _SettingsCategory category,
+  ) => _page(
+    context,
+    title: category.title,
+    subtitle: category.subtitle,
+    onBack: _closeCategory,
+    children: _controls(context, state, category),
+  );
+
+  /// The page shell shared by the index and every category: a large title
+  /// (with the app's back button on a phone) above the scrolling body.
+  Widget _page(
+    BuildContext context, {
+    required String title,
+    String? subtitle,
+    VoidCallback? onBack,
+    required List<Widget> children,
+  }) {
+    final compact = isCompactLayout(context);
+    final scheme = Theme.of(context).colorScheme;
+    final heading = <Widget>[
+      Text(title, style: Theme.of(context).textTheme.headlineMedium),
+      if (subtitle case final String text) ...[
+        const SizedBox(height: 2),
+        Text(
+          text,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _playbackKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'Playback',
-              subtitle: 'Listening history reporting.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsSegments(
-              children: [
-                _ToggleRow(
-                  title: 'Report listening history',
-                  subtitle:
-                      'Send watchtime beacons so plays appear in your '
-                      'YouTube history.',
-                  value: reportPlayback,
-                  onChanged: (v) {
-                    state.config.setBool('reportPlayback', v);
-                    state.refreshConfig();
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _appearanceKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'Appearance',
-              subtitle: 'Color source, seed and manual overrides.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsSegments(children: [const _ThemeCard()]),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _accessibilityKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'Accessibility',
-              subtitle: 'Contrast, motion and link styling.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsSegments(
-              children: [
-                _ToggleRow(
-                  title: 'High contrast',
-                  subtitle:
-                      'Brighter text, stronger borders and more '
-                      'distinct surfaces.',
-                  value: highContrast,
-                  onChanged: (v) {
-                    state.config.highContrast = v;
-                    state.refreshConfig();
-                  },
-                ),
-                _ToggleRow(
-                  title: 'Reduce motion',
-                  subtitle:
-                      'Freezes the shimmer, crossfades and slide '
-                      'transitions.',
-                  value: reducedMotion,
-                  onChanged: (v) {
-                    state.config.reducedMotion = v;
-                    state.refreshConfig();
-                  },
-                ),
-                _ToggleRow(
-                  title: 'Underline links',
-                  subtitle:
-                      'Underlines tappable links in the info tab. '
-                      'Off keeps them plain primary-colored text.',
-                  value: underlineLinks,
-                  onChanged: (v) {
-                    state.config.underlineLinks = v;
-                    state.refreshConfig();
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _integrationsKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _SectionTitle(
-              // Phones have no desktop to integrate with, but the
-              // Discord row is still worth showing (unavailable and
-              // saying why) rather than hiding a capability the user may
-              // have read about.
-              _showMprisRow(context) ? 'Desktop integrations' : 'Integrations',
-              subtitle: 'MPRIS media keys and Discord Rich Presence.',
-            ),
-            const SizedBox(height: 8),
-            _IntegrationsSegments(),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _scrobblingKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'Scrobbling',
-              subtitle: 'Send your plays to Last.fm and ListenBrainz.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsSegments(
-              children: [const _LastFmCard(), const _ListenBrainzCard()],
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _updatesKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'App updates',
-              subtitle: 'Check for and install new releases.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsSegments(children: [const _AppUpdatesCard()]),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _debugKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'Debug',
-              subtitle: 'Cache and diagnostic actions.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsSegments(
-              children: [
-                _DebugCard(
-                  onClearArtwork: () {
-                    state.clearArtworkCache();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Artwork cache cleared.')),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Container(
-        key: _setupKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionTitle(
-              'Setup',
-              subtitle: 'Run the first-run wizard again.',
-            ),
-            const SizedBox(height: 8),
-            _SettingsSegments(children: [const _OnboardingCard()]),
-          ],
-        ),
-      ),
-      const SizedBox(height: 24),
-      Text(
-        '${_shortVersion(appVersionLabel)} - build ${_buildNumber(appVersionLabel)}',
-        style: Theme.of(context).textTheme.bodySmall
-            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-      ),
-      Text(
-        'Made with ♥  by TheTinkerersHaven :3',
-        style: Theme.of(context).textTheme.bodySmall
-            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-      ),
+      ],
     ];
     if (!compact) {
-      return screenColumn(context: context, children: sections);
+      return screenColumn(
+        context: context,
+        children: [...heading, const SizedBox(height: 16), ...children],
+      );
     }
-    // Phones get the same structure as desktop — a large title above the
-    // sections — with a back button in front of it when the page was
-    // pushed. The bar aligns to the content gutter like the sections.
     return Column(
       children: [
         SafeArea(
@@ -330,18 +232,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             child: Row(
               children: [
-                if (state.canGoBack)
+                if (onBack != null)
                   IconButton(
                     icon: const Icon(Icons.arrow_back_rounded),
                     tooltip: 'Back',
-                    onPressed: state.goBack,
+                    onPressed: onBack,
                   ),
                 Expanded(
-                  child: Text(
-                    'Settings',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.headlineMedium,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: heading,
                   ),
                 ),
               ],
@@ -353,38 +253,219 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context: context,
             topInset: false,
             topPadding: 8,
-            children: sections,
+            children: children,
           ),
         ),
       ],
     );
   }
+
+  /// The controls a category holds, each group on its own surface.
+  List<Widget> _controls(
+    BuildContext context,
+    AppState state,
+    _SettingsCategory category,
+  ) {
+    switch (category) {
+      case _SettingsCategory.account:
+        return [_SettingsCard(child: const _AccountCard())];
+      case _SettingsCategory.playback:
+        // Selected here rather than in build: only this page rebuilds
+        // when the toggle flips.
+        final reportPlayback = context.select<AppState, bool>(
+          (s) => s.config.reportPlayback,
+        );
+        final audioCache = context.select<AppState, bool>(
+          (s) => s.config.audioCacheEnabled,
+        );
+        final cacheMb = context.select<AppState, int>(
+          (s) => s.config.audioCacheMb,
+        );
+        final downloadAhead = context.select<AppState, int>(
+          (s) => s.config.audioDownloadAhead,
+        );
+        return [
+          _SettingsSegments(
+            children: [
+              _ToggleRow(
+                title: 'Report listening history',
+                subtitle:
+                    'Send watchtime beacons so plays appear in your '
+                    'YouTube history.',
+                value: reportPlayback,
+                onChanged: (v) {
+                  state.config.setBool('reportPlayback', v);
+                  state.refreshConfig();
+                },
+              ),
+              _ToggleRow(
+                title: 'Keep audio on disk',
+                subtitle:
+                    'Stores played tracks and the next few in the queue, '
+                    'so a weak connection does not stop the music.',
+                value: audioCache,
+                action: audioCache
+                    ? M3ETextButton(
+                        onPressed: () {
+                          unawaited(StreamProxy.instance.cache?.clear());
+                        },
+                        child: const Text('Clear'),
+                      )
+                    : null,
+                onChanged: (v) {
+                  state.config.setBool('audio.cache', v);
+                  state.refreshConfig();
+                },
+              ),
+              // Both only make sense while the cache is on, and each
+              // shows its current value on its own row: the toggle's
+              // subtitle names the feature, not a number.
+              if (audioCache) ...[
+                _SteppedSliderRow(
+                  title: 'Cache size',
+                  subtitle:
+                      'What the stored tracks may use on disk. The oldest '
+                      'are deleted first.',
+                  values: audioCacheMbSteps,
+                  value: cacheMb,
+                  format: _formatCacheSize,
+                  onChanged: (v) {
+                    state.config.audioCacheMb = v;
+                    state.refreshConfig();
+                  },
+                ),
+                _SteppedSliderRow(
+                  title: 'Songs downloaded ahead',
+                  subtitle:
+                      'Rows after the playing one kept complete on disk, '
+                      'so a skip works with no connection.',
+                  values: [
+                    for (var i = 1; i <= maxAudioDownloadAhead; i++) i,
+                  ],
+                  value: downloadAhead,
+                  format: (v) => v == 1 ? '1 song' : '$v songs',
+                  onChanged: (v) {
+                    state.config.audioDownloadAhead = v;
+                    state.refreshConfig();
+                  },
+                ),
+              ],
+            ],
+          ),
+        ];
+      case _SettingsCategory.appearance:
+        return [_SettingsSegments(children: const [_ThemeCard()])];
+      case _SettingsCategory.accessibility:
+        final highContrast = context.select<AppState, bool>(
+          (s) => s.config.highContrast,
+        );
+        final reducedMotion = context.select<AppState, bool>(
+          (s) => s.config.reducedMotion,
+        );
+        final underlineLinks = context.select<AppState, bool>(
+          (s) => s.config.underlineLinks,
+        );
+        return [
+          _SettingsSegments(
+            children: [
+              _ToggleRow(
+                title: 'High contrast',
+                subtitle:
+                    'Brighter text, stronger borders and more '
+                    'distinct surfaces.',
+                value: highContrast,
+                onChanged: (v) {
+                  state.config.highContrast = v;
+                  state.refreshConfig();
+                },
+              ),
+              _ToggleRow(
+                title: 'Reduce motion',
+                subtitle:
+                    'Freezes the shimmer, crossfades and slide '
+                    'transitions.',
+                value: reducedMotion,
+                onChanged: (v) {
+                  state.config.reducedMotion = v;
+                  state.refreshConfig();
+                },
+              ),
+              _ToggleRow(
+                title: 'Underline links',
+                subtitle:
+                    'Underlines tappable links in the info tab. '
+                    'Off keeps them plain primary-colored text.',
+                value: underlineLinks,
+                onChanged: (v) {
+                  state.config.underlineLinks = v;
+                  state.refreshConfig();
+                },
+              ),
+            ],
+          ),
+        ];
+      case _SettingsCategory.connections:
+        return [const _ConnectionsSegments()];
+      case _SettingsCategory.updates:
+        return [
+          _SettingsSegments(children: const [_AppUpdatesCard()]),
+        ];
+      case _SettingsCategory.debug:
+        return [
+          _SettingsSegments(
+            children: [
+              _DebugCard(
+                onClearArtwork: () {
+                  state.clearArtworkCache();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Artwork cache cleared.')),
+                  );
+                },
+              ),
+            ],
+          ),
+        ];
+      case _SettingsCategory.setup:
+        return [
+          _SettingsSegments(children: const [_OnboardingCard()]),
+        ];
+    }
+  }
 }
 
-/// A section heading in the settings list, with an optional
-/// one-line description so the purpose of the section is clear
-/// before reading its controls.
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text, {this.subtitle});
+/// An index row: the category's icon, its name and what it holds. The
+/// segment itself is the tap target and says it opens a page through the
+/// list's own press animation, so no chevron is drawn.
+class _CategoryRow extends StatelessWidget {
+  const _CategoryRow({required this.category});
 
-  final String text;
-  final String? subtitle;
+  final _SettingsCategory category;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Text(text, style: Theme.of(context).textTheme.titleLarge),
-        if (subtitle != null) ...[
-          const SizedBox(height: 2),
-          Text(
-            subtitle!,
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+        Icon(category.icon, color: scheme.primary),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                category.title,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                category.subtitle,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
           ),
-        ],
+        ),
       ],
     );
   }
@@ -424,9 +505,15 @@ class _SettingsCard extends StatelessWidget {
 /// lines. Uses the M3E default outer radius and even inner padding so the
 /// segments and their content align on every width.
 class _SettingsSegments extends StatelessWidget {
-  const _SettingsSegments({required this.children});
+  const _SettingsSegments({required this.children, this.onTap});
 
   final List<Widget> children;
+
+  /// Makes each segment tappable as one surface: the list handles the
+  /// gesture, so the hit area is the segment's full bounds — including
+  /// the padding a widget-level [InkWell] would leave dead — and the
+  /// press animation and haptic come with it.
+  final void Function(int index)? onTap;
 
   @override
   Widget build(BuildContext context) => M3ESegmentedList(
@@ -434,6 +521,7 @@ class _SettingsSegments extends StatelessWidget {
     itemBuilder: (context, i) => children[i],
     outerRadius: _settingsSurfaceRadius,
     padding: _settingsSurfacePadding,
+    onTap: onTap,
   );
 }
 
@@ -497,6 +585,104 @@ class _ToggleRow extends StatelessWidget {
             onPressed: onSettings,
           ),
         Switch(value: value, onChanged: enabled ? onChanged : null),
+      ],
+    );
+  }
+}
+
+/// Human size for the cache slider: whole gigabytes once it gets there,
+/// megabytes below.
+String _formatCacheSize(int mb) => mb >= 1024 ? '${mb ~/ 1024} GB' : '$mb MB';
+
+/// A settings row that picks from a fixed list of steps: title and the
+/// current value share a line, an explanation sits under it, then an
+/// M3E slider that snaps to the steps and shows the value in its pill
+/// while dragging. The choice is written once the gesture ends, so a
+/// drag does not rewrite the settings file at every step.
+class _SteppedSliderRow extends StatefulWidget {
+  const _SteppedSliderRow({
+    required this.title,
+    required this.subtitle,
+    required this.values,
+    required this.value,
+    required this.format,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String subtitle;
+
+  /// The steps, ascending; the slider has one position per entry.
+  final List<int> values;
+  final int value;
+  final String Function(int value) format;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_SteppedSliderRow> createState() => _SteppedSliderRowState();
+}
+
+class _SteppedSliderRowState extends State<_SteppedSliderRow> {
+  late int _index = _nearestIndex(widget.values, widget.value);
+
+  /// The nearest step, matching how the config reads a stray value.
+  static int _nearestIndex(List<int> values, int value) {
+    var best = 0;
+    for (var i = 1; i < values.length; i++) {
+      if ((values[i] - value).abs() < (values[best] - value).abs()) best = i;
+    }
+    return best;
+  }
+
+  @override
+  void didUpdateWidget(_SteppedSliderRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != oldWidget.value) {
+      _index = _nearestIndex(widget.values, widget.value);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final label = widget.format(widget.values[_index]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(widget.title, style: theme.textTheme.titleMedium),
+            ),
+            Text(
+              label,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: scheme.primary,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          widget.subtitle,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        M3ESlider(
+          value: _index.toDouble(),
+          min: 0,
+          max: (widget.values.length - 1).toDouble(),
+          divisions: widget.values.length - 1,
+          label: label,
+          onChanged: (v) {
+            final next = v.round().clamp(0, widget.values.length - 1);
+            if (next == _index) return;
+            setState(() => _index = next);
+          },
+          onChangeEnd: (_) => widget.onChanged(widget.values[_index]),
+        ),
       ],
     );
   }
@@ -837,8 +1023,15 @@ class _DebugCard extends StatelessWidget {
 /// its row stays on a phone, disabled, because the presence is a feature
 /// users look for and "not available here" answers it better than a
 /// missing setting.
-class _IntegrationsSegments extends StatelessWidget {
-  const _IntegrationsSegments();
+/// Everything that leaves the app, on one list: the presence it
+/// publishes (media keys on a desktop, Discord elsewhere) and the
+/// services it scrobbles plays to.
+///
+/// Phones have no desktop to integrate with, but the Discord row is
+/// still worth showing (unavailable and saying why) rather than hiding
+/// a capability the user may have read about.
+class _ConnectionsSegments extends StatelessWidget {
+  const _ConnectionsSegments();
 
   @override
   Widget build(BuildContext context) {
@@ -888,6 +1081,8 @@ class _IntegrationsSegments extends StatelessWidget {
                   builder: (context) => const _DiscordAppIdDialog(),
                 ),
         ),
+        const _LastFmCard(),
+        const _ListenBrainzCard(),
       ],
     );
   }

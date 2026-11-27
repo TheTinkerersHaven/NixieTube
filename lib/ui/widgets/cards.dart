@@ -40,14 +40,11 @@ class BrowseCard extends StatelessWidget {
     final cardPadding = compact ? 2.0 : 4.0;
     // One art-to-text gap everywhere (desktop and phones); single-line
     // title and subtitle keep every card the same height, so no card
-    // can inflate its rail. Compact art leaves 2dp of slack for font
-    // rounding.
+    // can inflate its rail. The art fills the card's inner width, so no
+    // dead space sits beside a cover inside its card.
     const artGap = 8.0;
     final artSize = width != null
-        ? (width! - cardPadding * 2 - artGap - (compact ? 2 : 0)).clamp(
-            40.0,
-            200.0,
-          )
+        ? (width! - cardPadding * 2).clamp(40.0, 200.0)
         : 200.0;
     final card = InkWell(
       onTap: onTap,
@@ -121,14 +118,12 @@ class TrackRailCard extends StatelessWidget {
     final compact = isCompactLayout(context);
     final cardPadding = compact ? 2.0 : 4.0;
     // One art-to-text gap everywhere (desktop and phones); single-line
-    // texts keep every card the same height. Compact art leaves 2dp of
-    // slack for font rounding. Desktop keeps the 200dp cover.
+    // texts keep every card the same height. The art fills the card's
+    // inner width, so no dead space sits beside a cover. Desktop keeps
+    // the 200dp cover.
     const artGap = 8.0;
     final artSize = width != null
-        ? (width! - cardPadding * 2 - artGap - (compact ? 2 : 0)).clamp(
-            40.0,
-            200.0,
-          )
+        ? (width! - cardPadding * 2).clamp(40.0, 200.0)
         : 200.0;
     final card = InkWell(
       onTap: onTap,
@@ -344,7 +339,7 @@ class SimilarArtistCard extends StatelessWidget {
           children: [
             ArtworkImage(
               art,
-              size: compact ? 146 : 136,
+              size: compact ? 156 : 136,
               circular: true,
               iconSize: 40,
             ),

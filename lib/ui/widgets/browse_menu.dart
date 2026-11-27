@@ -68,16 +68,7 @@ bool _isAlbumId(String id) => id.startsWith('MPRE');
 
 Future<void> _showAlbumInfo(BuildContext context, BrowseItem item) async {
   final state = context.read<AppState>();
-  // The album page has to be fetched before the dialog can show it.
-  // Say so instead of looking unresponsive: right-clicking and seeing
-  // nothing for a second reads as a frozen app.
   final messenger = ScaffoldMessenger.of(context);
-  messenger.showSnackBar(
-    const SnackBar(
-      content: Text('Loading album info…'),
-      duration: Duration(seconds: 2),
-    ),
-  );
   final detail = await state.albumDetailFor(item);
   if (!context.mounted) return;
   if (detail == null) {

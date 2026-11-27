@@ -27,7 +27,7 @@ class _FakeEngine extends FakeEngine {
   bool playing = false;
 
   @override
-  Future<String?> play(String url) async {
+  Future<String?> play(String url, {String? nextUrl}) async {
     playing = true;
     return null;
   }
@@ -73,6 +73,7 @@ class _QuietTube extends InnerTube {
 }
 
 const _t1 = Track(videoId: 'v1', title: 'One', durationSec: 200);
+const _t2 = Track(videoId: 'v2', title: 'Two', durationSec: 200);
 
 /// Pumps a 400px-wide SeekSlider over a fresh AppState with
 /// one loaded track (200s), returning the state and the
@@ -191,6 +192,37 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(_sliderValue(tester), closeTo(value, 1));
     expect(r.state.player.state.positionMs, closeTo(value, 1));
+    r.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('a new track starts the bar at the start and keeps it there', (
+    tester,
+  ) async {
+    final r = await _setupSlider(tester);
+    r.engine.position = 500;
+    await tester.pump(const Duration(milliseconds: 600));
+    r.engine.position = 198000;
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(_sliderValue(tester), closeTo(198000, 1000));
+
+    // Another song takes over: the bar belongs to it, so it is back at
+    // the start at once instead of gliding across from the old song.
+    r.state.playSongs(const [_t1, _t2], 1);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(_sliderValue(tester), lessThan(1));
+
+    // The previous track's position is still what the engine reports
+    // for a poll or two: the bar stays put rather than following it.
+    r.engine.position = 198000;
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(_sliderValue(tester), lessThan(1));
+
+    // The new stream starts: progress flows again.
+    r.engine.position = 800;
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(_sliderValue(tester), closeTo(800, 500));
     r.player.dispose();
     await tester.pump();
   });

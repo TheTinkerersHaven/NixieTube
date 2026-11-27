@@ -1,19 +1,39 @@
-// Navigation state for the NixieTube app.
+// The app's navigation stack.
 //
-// Owns the current screen, the detail item and the back stack. The
-// owning AppState notifies its listeners after every navigation.
+// One entry per screen, and the shell renders that stack as a Navigator
+// with one route per entry. Back therefore walks the stack a step at a
+// time, and because every step is a real route the platform's back
+// gesture can preview the pop instead of guessing at a widget swap.
 
 import '../../core/innertube/metadata.dart' show canonical;
 import '../../core/models/models.dart';
 
-/// Navigation destinations for the single-window app.
+/// Navigation destinations for the app shell.
 enum Screen { home, search, library, settings, detail }
 
-/// History entry for back navigation.
-class HistoryEntry {
-  const HistoryEntry(this.screen, this.detail);
+/// One page of the navigation stack: the screen, and on a detail page
+/// the browse item it was opened for.
+class NavEntry {
+  const NavEntry({required this.id, required this.screen, this.detail});
+
+  /// Identity of the route built from this entry, never reused. The
+  /// [Navigator] keys a page on it and reports pops by it.
+  final int id;
+
+  /// The screen this entry shows.
   final Screen screen;
+
+  /// The item a [Screen.detail] page was opened for, null otherwise.
   final BrowseItem? detail;
+
+  /// True when [screen] and [detail] would show the same page: the same
+  /// screen, and for a detail page the same browse target.
+  bool shows(Screen screen, BrowseItem? detail) {
+    if (screen != this.screen) return false;
+    if (screen != Screen.detail) return true;
+    return this.detail?.browseId == detail?.browseId &&
+        this.detail?.browseParams == detail?.browseParams;
+  }
 }
 
 /// Normalizes a name for navigation matching.
@@ -26,41 +46,42 @@ bool sameNavigationName(String left, String right) {
   return a.isNotEmpty && a == navigationName(right);
 }
 
-/// Loads the detail content for [item] when a detail screen opens.
-typedef OnLoadDetail = void Function(BrowseItem item);
-
-/// Navigation state: current screen, detail item and back stack.
+/// The navigation stack: which page is showing, and what back returns to.
+///
+/// The [pages] snapshot only changes when the stack does, so the shell
+/// can select on it without rebuilding on every player tick.
 class NavigationState {
-  /// Creates a navigation state. [onLoadDetail] is invoked whenever a
-  /// detail screen becomes current, so the detail content is reloaded
-  /// on arrival instead of showing a stale page.
-  NavigationState({this._onLoadDetail});
+  static const _initial = NavEntry(id: 0, screen: Screen.home);
 
-  Screen _screen = Screen.home;
-  BrowseItem? _detailItem;
-  final List<HistoryEntry> _history = [];
-  bool _canGoBack = false;
-  bool _lastNavForward = true;
-  int _revision = 0;
-  final OnLoadDetail? _onLoadDetail;
+  /// Deep enough for any browsing session; each mounted route holds its
+  /// screen's state, so the stack is capped rather than unbounded.
+  static const maxDepth = 24;
 
-  /// The current screen being displayed.
-  Screen get screen => _screen;
+  final List<NavEntry> _stack = [_initial];
+  List<NavEntry> _pages = const [_initial];
+  int _nextId = 1;
 
-  /// Increments on every navigation, including a push that keeps the
-  /// same [Screen] (artist → album) or a back pop. The UI keys its
-  /// screen transition on this so those moves animate too.
-  int get revision => _revision;
+  /// The page showing now.
+  NavEntry get top => _stack.last;
+
+  /// The current screen.
+  Screen get screen => top.screen;
 
   /// The detail item being displayed, null outside detail screens.
-  BrowseItem? get detailItem => _detailItem;
+  BrowseItem? get detailItem => top.detail;
 
-  /// The most recent top-level destination before the current pushed
+  /// Whether the user can navigate back.
+  bool get canGoBack => _stack.length > 1;
+
+  /// The stack, oldest first, as an immutable snapshot.
+  List<NavEntry> get pages => _pages;
+
+  /// The most recent top-level destination below the current pushed
   /// screen (detail or settings), so the mobile bottom bar can keep the
-  /// section the user came from highlighted. Null on a root destination.
+  /// section the user came from highlighted. Null at a root destination.
   Screen? get parentScreen {
-    for (var i = _history.length - 1; i >= 0; i--) {
-      final screen = _history[i].screen;
+    for (var i = _stack.length - 2; i >= 0; i--) {
+      final screen = _stack[i].screen;
       if (screen != Screen.detail && screen != Screen.settings) {
         return screen;
       }
@@ -68,47 +89,36 @@ class NavigationState {
     return null;
   }
 
-  /// Whether the user can navigate back.
-  bool get canGoBack => _canGoBack;
-
-  /// Direction of the latest navigation: false only for back pops.
-  bool get lastNavForward => _lastNavForward;
-
-  /// Navigates forward, pushing the current screen for [goBack].
-  void go(Screen screen, {BrowseItem? detail}) {
-    _lastNavForward = true;
-    _revision++;
-    _history.add(HistoryEntry(_screen, _detailItem));
-    if (_history.length > 100) _history.removeAt(0);
-    _canGoBack = true;
-    _screen = screen;
-    _detailItem = detail;
-    _loadDetailIfNeeded(screen, detail);
-  }
-
-  /// Returns to the pushed screen, if any. Returns false when the
-  /// back stack is empty, so the caller can skip the notification.
-  bool goBack() {
-    if (_history.isEmpty) return false;
-    _lastNavForward = false;
-    _revision++;
-    final entry = _history.removeLast();
-    _canGoBack = _history.isNotEmpty;
-    _screen = entry.screen;
-    _detailItem = entry.detail;
-    _loadDetailIfNeeded(entry.screen, entry.detail);
+  /// Pushes [screen] on top of the current page, unless it is already
+  /// the page showing — tapping the tab you are on is not a move.
+  bool go(Screen screen, {BrowseItem? detail}) {
+    if (top.shows(screen, detail)) return false;
+    _stack.add(NavEntry(id: _nextId++, screen: screen, detail: detail));
+    if (_stack.length > maxDepth) _stack.removeAt(0);
+    _publish();
     return true;
   }
 
-  /// Reloads the current detail page in place, used after edits such
-  /// as removing a track from an open playlist.
-  void reloadDetail() {
-    final item = _detailItem;
-    if (item != null) _onLoadDetail?.call(item);
+  /// Returns to the page below, if any.
+  bool goBack() {
+    if (_stack.length < 2) return false;
+    _stack.removeLast();
+    _publish();
+    return true;
   }
 
-  void _loadDetailIfNeeded(Screen screen, BrowseItem? detail) {
-    if (screen != Screen.detail || detail == null) return;
-    _onLoadDetail?.call(detail);
+  /// Drops the page the [Navigator] popped for us — a system back gesture
+  /// or the platform's back button — returning to the page below. Does
+  /// nothing for an id this stack no longer holds, which is what happens
+  /// when [goBack] already removed it.
+  bool popped(int id) {
+    final index = _stack.indexWhere((entry) => entry.id == id);
+    if (index < 0) return false;
+    _stack.removeAt(index);
+    if (_stack.isEmpty) _stack.add(_initial);
+    _publish();
+    return true;
   }
+
+  void _publish() => _pages = List<NavEntry>.unmodifiable(_stack);
 }

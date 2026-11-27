@@ -8,8 +8,8 @@ import 'package:silky_scroll/silky_scroll.dart';
 
 import '../../core/models/models.dart';
 import '../app_state.dart';
-import '../a11y.dart';
 import '../theme.dart';
+import '../widgets/page_swap.dart';
 import '../widgets/screen_list.dart';
 import '../widgets/album_panel.dart';
 import '../widgets/artwork_image.dart';
@@ -63,28 +63,10 @@ class LibraryScreen extends StatelessWidget {
         // backdrop); only the header + content clear the status bar.
         SafeArea(
           bottom: false,
-          child: AnimatedSwitcher(
+          child: PageSwap(
             // Opening and closing the playlist view animate exactly like
             // a pushed screen (and like Settings), instead of popping in.
-            duration: motionDuration(
-              context,
-              const Duration(milliseconds: 220),
-            ),
-            switchInCurve: Curves.easeOut,
-            transitionBuilder: (child, animation) => FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position: Tween(
-                  begin: Offset(0, opened != null ? 0.05 : -0.04),
-                  end: Offset.zero,
-                ).animate(animation),
-                child: child,
-              ),
-            ),
-            layoutBuilder: (currentChild, previousChildren) => Stack(
-              fit: StackFit.expand,
-              children: [...previousChildren, ?currentChild],
-            ),
+            forward: opened != null,
             child: KeyedSubtree(
               key: ValueKey(opened?.playlist.id ?? '__library_root'),
               child: Column(

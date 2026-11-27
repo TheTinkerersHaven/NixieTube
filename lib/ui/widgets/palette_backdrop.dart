@@ -52,6 +52,107 @@ Color tameWashTint(Color color) {
       .toColor();
 }
 
+/// How far the accent is rotated away from the wash hue, in degrees.
+/// A page whose pills sit in exactly the same hue as its own backdrop
+/// reads as one flat color; a few degrees of separation keeps the accent
+/// on top of the wash instead of inside it.
+const double _accentHueShift = 12;
+
+/// Accent derived from a cover-art [palette]: the hue of its most vivid
+/// cell, rebuilt at a fixed saturation and lightness so a washed-out photo
+/// and a flat graphic both give a usable accent instead of a grey one.
+///
+/// Null when the artwork carries no color worth taking — a monochrome
+/// cover, or a palette that has not been computed yet — in which case the
+/// page keeps the scheme's own accent.
+Color? coverAccent(List<Color>? palette) {
+  if (palette == null || palette.length < 25) return null;
+  HSLColor? best;
+  var bestScore = 0.0;
+  for (final cell in palette) {
+    final hsl = HSLColor.fromColor(cell);
+    if (hsl.saturation < 0.22 ||
+        hsl.lightness < 0.06 ||
+        hsl.lightness > 0.94) {
+      continue;
+    }
+    // Vivid, mid-toned cells win: a dark or pastel cell is a weak seed
+    // for an accent even when it is the most saturated one.
+    final score = hsl.saturation * (1 - (hsl.lightness - 0.55).abs() * 1.4);
+    if (score > bestScore) {
+      bestScore = score;
+      best = hsl;
+    }
+  }
+  if (best == null) return null;
+  return best
+      .withHue((best.hue + _accentHueShift) % 360)
+      .withSaturation(0.62)
+      .withLightness(0.74)
+      .toColor();
+}
+
+/// Turns [base] into a scheme whose accent roles are the cover accent,
+/// keeping every surface and text tier the app resolved from the user's
+/// theme: a page tints its controls with the artwork, it does not change
+/// mood on every song change.
+ColorScheme coverAccentScheme(ColorScheme base, Color accent) {
+  final hsl = HSLColor.fromColor(accent);
+  Color tone(double saturation, double lightness) => hsl
+      .withSaturation(saturation)
+      .withLightness(lightness)
+      .toColor();
+  return base.copyWith(
+    primary: accent,
+    onPrimary: tone(0.45, 0.12),
+    primaryContainer: tone(0.45, 0.24),
+    onPrimaryContainer: tone(0.45, 0.92),
+    // The tonal pill (Play/Shuffle, the Sort chip) is the accent's
+    // container step, so it has to move with the accent too.
+    secondaryContainer: tone(0.28, 0.28),
+    onSecondaryContainer: tone(0.45, 0.90),
+  );
+}
+
+/// Scopes the cover accent to the content of one page.
+///
+/// Album and playlist pages and Now Playing sit under this: their pills,
+/// chips, like state and sliders take the artwork's hue, while the mini
+/// player, the navigation and every other page keep the scheme's accent —
+/// two accents on one screen would read as a bug. High contrast skips it
+/// for the same reason the wash does: separation must not depend on
+/// artwork luminance. The accent crossfades when the artwork changes,
+/// over the wash's own [PaletteBackdrop.paletteWash].
+class CoverAccent extends StatelessWidget {
+  const CoverAccent({super.key, required this.palette, required this.child});
+
+  /// 5x5 cover palette, as [coverBands] computes it.
+  final List<Color>? palette;
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (highContrastOf(context)) return child;
+    final accent = coverAccent(palette);
+    if (accent == null) return child;
+    final theme = Theme.of(context);
+    return TweenAnimationBuilder<Color?>(
+      duration: motionDuration(context, PaletteBackdrop.paletteWash),
+      tween: ColorTween(begin: accent, end: accent),
+      // The page subtree is passed through untouched: only its
+      // descendants that read the scheme rebuild with the accent.
+      builder: (context, color, child) => Theme(
+        data: theme.copyWith(
+          colorScheme: coverAccentScheme(theme.colorScheme, color ?? accent),
+        ),
+        child: child!,
+      ),
+      child: child,
+    );
+  }
+}
+
 /// Backdrop built from a cover-art [palette] (5x5 grid
 /// from `coverBands`, row-major TL→BR). Renders a plain
 /// surface color when no palette is available yet.

@@ -13,6 +13,7 @@ import 'core/artwork/artwork_store.dart';
 import 'core/innertube/inner_tube.dart';
 import 'core/innertube/stream_resolver.dart';
 import 'core/player/audio_backend.dart';
+import 'core/player/audio_cache.dart';
 import 'core/player/just_audio_player_engine.dart';
 import 'core/player/player_controller.dart';
 import 'core/player/stream_proxy.dart';
@@ -87,6 +88,9 @@ void main(List<String> args) async {
   WidgetsBinding.instance.addObserver(_ImageCachePressureObserver());
   _configureImageCache();
   JustAudioMediaKit.ensureInitialized();
+  // Opens the next entry of the two-track window while the current one
+  // plays, so the handover at a track boundary is already buffered.
+  JustAudioMediaKit.prefetchPlaylist = true;
   // Console and file logging for the stream resolver, updater and the
   // rest of the app.
   initLogging();
@@ -101,6 +105,23 @@ void main(List<String> args) async {
   // round trip from the user. Fire-and-forget: a failure is retried by
   // the normal resolve path.
   streamResolver.warmUp();
+  // Played tracks and the next few queue rows are kept on disk, so a
+  // connection that dies mid-queue only costs the track already playing.
+  // The cache resolves its own raw URL (unproxied, fresh visitor) instead
+  // of reusing the playback one, whose byte budget the play is spending.
+  final audioCache = AudioCache(
+    resolveUrl: (videoId) async {
+      final stream = await streamResolver.resolve(
+        videoId,
+        proxy: false,
+        force: true,
+      );
+      return stream?.url;
+    },
+    isEnabled: () => config.audioCacheEnabled,
+    maxBytes: () => config.audioCacheMb * 1024 * 1024,
+  );
+  StreamProxy.instance.cache = audioCache;
   // When the media edge's per-URL budget runs out mid-stream, the
   // loopback proxy asks for a fresh raw URL for the same video.
   StreamProxy.instance.resolveFresh = (videoId) async {
@@ -118,6 +139,8 @@ void main(List<String> args) async {
     refreshStream: streamResolver.refreshVisitor,
     resetStream: streamResolver.reset,
     createEngine: JustAudioPlayerEngine.new,
+    downloadTrack: audioCache.download,
+    downloadAhead: () => config.audioDownloadAhead,
   );
   // Phones suspend a backgrounded app, so playback has to be attached to
   // an OS media session (a foreground service on Android, the audio
@@ -245,13 +268,20 @@ void main(List<String> args) async {
   }
 
   unawaited(player.restoreSession());
-  unawaited(state.loadAuth());
+  // The session decides what the feeds are, so the feeds start once it is
+  // known: fetching home before the cookie is restored paints anonymous
+  // rows that the account's own fetch then replaces, wave after wave.
+  unawaited(
+    state.loadAuth().then((_) {
+      unawaited(state.loadLibrary());
+      unawaited(state.loadHome());
+    }),
+  );
   // Only an AppImage build can do anything with a found release, so a
   // phone never pays for a GitHub round trip it cannot act on.
   if (state.canInstallUpdates) {
     unawaited(state.checkForUpdates());
   }
-  unawaited(state.loadHome());
   runApp(
     NixieTubeApp(
       state: state,
@@ -508,22 +538,14 @@ class _SkeletonConfig extends StatelessWidget {
     final reduced =
         reducedMotion || (MediaQuery.maybeReduceMotionOf(context) ?? false);
     return SkeletonizerConfig(
-      // One high-contrast shimmer for every skeleton in the app (home
-      // feed, artwork tiles, …) — the package's dark-mode default is
-      // nearly invisible on this theme. Reduced motion swaps it for a
-      // static solid placeholder: skeletons stay, the movement goes.
+      // One shimmer for every skeleton in the app (home feed, artwork
+      // tiles, …); reduced motion swaps it for a static solid
+      // placeholder, so the bones stay and the movement goes.
       data: SkeletonizerConfigData(
         // Resolver form (the plain `effect` is deprecated in
-        // skeletonizer 3): brightness is ignored — the app
-        // is dark-only, so every skeleton shares the one
-        // high-contrast shimmer.
-        effectResolver: (_) => reduced
-            ? const SolidColorEffect(color: Color(0xFF2C2C2E))
-            : const ShimmerEffect(
-                baseColor: Color(0xFF2C2C2E),
-                highlightColor: Color(0xFF4B4B4F),
-                duration: Duration(milliseconds: 1400),
-              ),
+        // skeletonizer 3): brightness is ignored — the app is
+        // dark-only, so every skeleton shares the one shimmer.
+        effectResolver: (_) => skeletonEffect(reduced: reduced),
       ),
       child: child,
     );

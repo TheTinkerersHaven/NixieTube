@@ -87,6 +87,34 @@ void main() {
       expect(File(configPath).readAsStringSync(), isNot(contains('not ours')));
     });
 
+    test('the load asks for each credential by name', () async {
+      // Not a bulk read: the Android backend's "read all" only returns
+      // items written with the legacy key prefix, so a cookie the app
+      // saved itself was invisible on the next launch and every start
+      // looked signed out.
+      final store = _RecordingStore({
+        'cookie': 'SAPISID=abc',
+        'lastfm.username': 'bob',
+      });
+      final config = SysConfig(configPath: configPath, secure: store);
+
+      await config.loadCredentials();
+
+      expect(store.reads, contains('cookie'));
+      expect(config.get('cookie'), 'SAPISID=abc');
+      expect(config.get('lastfm.username'), 'bob');
+    });
+
+    test('a store that fails one key still restores the others', () async {
+      final store = _RecordingStore({'cookie': 'SAPISID=abc'})
+        ..failing.add('lastfm.secret');
+      final config = SysConfig(configPath: configPath, secure: store);
+
+      await config.loadCredentials();
+
+      expect(config.get('cookie'), 'SAPISID=abc');
+    });
+
     test('reads the credentials back on the next start', () async {
       final store = MemorySecureStore();
       final first = SysConfig(configPath: configPath, secure: store);
@@ -113,6 +141,33 @@ void main() {
   });
 }
 
+/// A store that records the keys it is asked for, and can refuse
+/// individual ones.
+class _RecordingStore implements SecureStore {
+  _RecordingStore([Map<String, String>? initial]) : _values = {...?initial};
+
+  final Map<String, String> _values;
+
+  /// Keys whose read throws, as a locked or missing keyring does.
+  final Set<String> failing = {};
+
+  /// Every key read, in order.
+  final List<String> reads = [];
+
+  @override
+  Future<String?> read(String key) async {
+    reads.add(key);
+    if (failing.contains(key)) throw StateError('no entry for $key');
+    return _values[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async => _values[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _values.remove(key);
+}
+
 /// A store that refuses every write.
 class _FailingStore implements SecureStore {
   @override
@@ -125,7 +180,4 @@ class _FailingStore implements SecureStore {
 
   @override
   Future<void> delete(String key) async {}
-
-  @override
-  Future<Map<String, String>> readAll() async => {};
 }

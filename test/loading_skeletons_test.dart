@@ -22,10 +22,12 @@ import 'package:nixietube/core/player/player_controller.dart';
 import 'package:nixietube/sys/sys_config.dart';
 import 'package:nixietube/ui/app_state.dart';
 import 'package:nixietube/ui/screens/detail_screen.dart';
+import 'package:nixietube/ui/screens/home_screen.dart';
 import 'package:nixietube/ui/screens/now_playing_screen.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:nixietube/ui/theme.dart';
 import 'package:nixietube/ui/widgets/album_panel.dart';
+import 'package:nixietube/ui/widgets/cards.dart';
 import 'package:nixietube/ui/widgets/loading_placeholders.dart';
 import 'package:nixietube/ui/widgets/lyrics_list.dart';
 import 'package:nixietube/ui/widgets/track_row.dart';
@@ -264,6 +266,78 @@ void main() {
     expect(env.state.lyricsLoading, isFalse);
     expect(env.state.lyrics, isEmpty);
     expect(find.text('No lyrics available'), findsOneWidget);
+    env.state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('a landed feed paints while a pending one shimmers', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final env = await _boot(tester, _QuietTube());
+    // Personalized shelves in, Explore and Charts still on their way.
+    env.state.home = HomeUiState(
+      loading: true,
+      shelvesLoading: false,
+      shelves: [
+        Shelf('Listen again', [
+          SongItem(
+            const Track(videoId: 'r1', title: 'Real Track', durationSec: 200),
+          ),
+        ]),
+      ],
+    );
+    await _pumpUnder(tester, env.state, const HomeScreen());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // The section whose feed answered is real...
+    expect(find.text('Real Track'), findsWidgets);
+    expect(
+      find.ancestor(
+        of: find.text('Real Track').first,
+        matching: _enabledSkeletons(),
+      ),
+      findsNothing,
+    );
+    // ...while the placeholders of the feeds still in flight keep their
+    // own shimmer instead of showing their stand-in text.
+    expect(
+      find.ancestor(
+        of: find.text('Album title').first,
+        matching: _enabledSkeletons(),
+      ),
+      findsWidgets,
+    );
+    env.state.player.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('quick picks shimmer across every grid cell', (tester) async {
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final env = await _boot(tester, _QuietTube());
+    env.state.testAccount = 'Tester';
+    // Phone first (three columns), then a wide window (four). The
+    // skeleton has to fill the grid's cells in both: a short count
+    // leaves the last row with real tiles missing.
+    for (final (size, cols) in [
+      (const Size(400, 800), 3),
+      (const Size(1400, 900), 4),
+    ]) {
+      tester.view.physicalSize = size;
+      await _pumpUnder(tester, env.state, const HomeScreen());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        find.byType(QuickPickCard),
+        findsNWidgets(cols * 3),
+        reason: 'every cell of the $size grid is a bone',
+      );
+      expect(_enabledSkeletons(), findsWidgets);
+    }
     env.state.player.dispose();
     await tester.pump();
   });

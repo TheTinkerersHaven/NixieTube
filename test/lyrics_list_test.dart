@@ -20,7 +20,11 @@ import 'package:nixietube/ui/widgets/lyrics_list.dart';
 
 class _IdleEngine implements PlayerEngine {
   @override
-  Future<String?> play(String url) async => null;
+  Future<String?> play(String url, {String? nextUrl}) async => null;
+  @override
+  Future<void> setNext(String? url) async {}
+  @override
+  Future<void> promoteNext() async {}
   @override
   Future<void> pause() async {}
   @override
@@ -104,8 +108,8 @@ void main() {
           .first,
     );
     expect(
-      styleOf('second line').style.fontSize,
-      isNot(styleOf('third line').style.fontSize),
+      styleOf('second line').style.color,
+      isNot(styleOf('third line').style.color),
     );
     // Settle the follow-scroll animation before teardown.
     await tester.pump(const Duration(seconds: 1));
@@ -171,11 +175,17 @@ void main() {
       styleOf('second line').style.color,
     );
 
-    // First line's turn: only it highlights.
+    // First line's turn: only it highlights. The metrics stay put —
+    // only the colour and the scale move — so the two rows keep one
+    // size and the sung line cannot re-wrap.
     await tester.pumpWidget(buildAt(5000));
     expect(
+      styleOf('first line').style.color,
+      isNot(styleOf('second line').style.color),
+    );
+    expect(
       styleOf('first line').style.fontSize,
-      isNot(styleOf('second line').style.fontSize),
+      styleOf('second line').style.fontSize,
     );
     await tester.pump(const Duration(seconds: 1));
   });
@@ -333,5 +343,80 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(ctrl.offset, closeTo(400, 1));
+  });
+
+  testWidgets('a row keeps its height when it becomes the active line', (
+    tester,
+  ) async {
+    final dir = Directory.systemTemp.createTempSync('nt-lyrics-size');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final tube = InnerTube();
+    addTearDown(tube.close);
+    final player = PlayerController(
+      engine: _IdleEngine(),
+      tube: tube,
+      configDirPath: dir.path,
+    );
+    addTearDown(player.dispose);
+    final state = AppState(
+      tube: tube,
+      player: player,
+      art: ArtworkStore(cacheDirPath: '${dir.path}/art'),
+      config: SysConfig(configPath: '${dir.path}/config.properties'),
+      openUrl: (_) async {},
+    );
+    addTearDown(state.dispose);
+    // Long enough to wrap once it is laid out in the active style: the
+    // interesting case is a line that needs a second row only when sung.
+    const long =
+        'and the words that were one line in the quiet part of the song '
+        'now need somewhere else to go';
+    const lines = [
+      LyricLine(timeMs: 0, text: 'first line'),
+      LyricLine(timeMs: 60000, text: long),
+    ];
+    final ctrl = ScrollController();
+    addTearDown(ctrl.dispose);
+    Widget buildAt(int positionMs) => ChangeNotifierProvider.value(
+      value: state,
+      child: MaterialApp(
+        home: Scaffold(
+          body: LyricsList(
+            ctrl: ctrl,
+            lyrics: lines,
+            positionMs: positionMs,
+            state: state,
+          ),
+        ),
+      ),
+    );
+
+    double rowHeight(String text) => tester
+        .getSize(
+          find
+              .ancestor(of: find.text(text), matching: find.byType(InkWell))
+              .first,
+        )
+        .height;
+
+    // The line's own layout: where its words break and how tall the
+    // paragraph is. This is the form that must not change.
+    Size textSize(String text) => tester.getSize(find.text(text));
+
+    // Line one is sung, the long line is not.
+    await tester.pumpWidget(buildAt(0));
+    final idleRow = rowHeight(long);
+    final idleText = textSize(long);
+
+    // The long line becomes the active one. Let the style animation
+    // finish: the highlight is colour and scale, so neither the row nor
+    // the paragraph may have taken a different shape — an extra wrapped
+    // row here would shove every line below it down on each change.
+    await tester.pumpWidget(buildAt(61000));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(rowHeight(long), closeTo(idleRow, 0.5));
+    expect(textSize(long), idleText);
+
+    await tester.pump(const Duration(seconds: 1));
   });
 }
